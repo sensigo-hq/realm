@@ -2,8 +2,8 @@
 // one cell per acceptance check, each shown red once by its named break. This file holds unit 1a-i's
 // half: check 1 (invisible characters leave first), check 2 (a mark stays with its letter, never with
 // a number), check 6 (the sets, read in the Basic Multilingual Plane) and check 7 (the spacing
-// accent). Unit 1a-ii adds checks 3, 4, 5 and 8 and the sets' reads outside the BMP. Every input is
-// written as code points.
+// accent). Unit 1a-ii adds checks 3, 4 and 5 and the sets' reads outside the BMP (check 6's other
+// half) here; check 8 is in locate-quote.test.ts. Every input is written as code points.
 import { describe, it, expect } from 'vitest';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -626,6 +626,622 @@ describe('#845 1a-i correction 1, check 2 (GROUNDING, not acceptance): the readi
     // (1) red when an accent is decided by the characters right beside it instead of past its run,
     //     or the scan past the run stops after 30 characters; (2) prints each group whose maps moved,
     //     with the first texts it reads now.
+    expect(moved).toEqual([]);
+  }, 120_000);
+});
+
+// ---------------------------------------------------------------------------------------------------
+// #845 unit 1a-ii (`prompts/fix-845-1a-ii-code-point-reads.md`): rules 3, 4 and 5, and the sets read
+// outside the Basic Multilingual Plane.
+
+/** A skip `F … second` against `F` + `between` + `second` and the rest of a sentence. */
+const skipOver = (between: string, second: string): string =>
+  state(`${F} … ${second}`, `${F}${between}${second} at the end of each year.`);
+const INSURANCE = 'The Tenant shall pay the insurance rent';
+const KEEP = 'Keep the Premises in good and substantial repair';
+
+describe('#845 check 3: every walk over raw text steps over invisible characters, in both texts', () => {
+  it('the cases: NEW-5, V-25, NEW-6, the honest `cost.`+X+` The` rows, a stop inside the quote, `9:`+U+200B+`30`', () => {
+    const rows: Row[] = [
+      // the abbreviation read (NEW-5, V-25): `e.`+X+`g.` is still `e.g.`, so no skip lands after it
+      ...[0x200b, 0x034f, 0xfe0f, 0x3164].map((x): Row => [
+        `e.${hex(x)}g. The`,
+        skipOver(` for its cost, e.${ch(x)}g. `, INSURANCE),
+        'not_found',
+      ]),
+      ['control e.g. The', skipOver(' for its cost, e.g. ', INSURANCE), 'not_found'],
+      // both cut_short reads (NEW-6, V-25): the stop's next character is read past them
+      [
+        'approx.+SP+U+200B+412',
+        state(
+          'The area is not less than approx.',
+          'The area is not less than approx. \u{200b}412 square metres.',
+        ),
+        'exact+cut_short',
+      ],
+      [
+        'approx.+U+200B+SP+412',
+        state(
+          'The area is not less than approx.',
+          'The area is not less than approx.\u{200b} 412 square metres.',
+        ),
+        'exact+cut_short',
+      ],
+      [
+        'approx.+U+034F+SP+412',
+        state(
+          'The area is not less than approx.',
+          'The area is not less than approx.\u{34f} 412 square metres.',
+        ),
+        'exact+cut_short',
+      ],
+      // the blanks before a part (AUD2-07): an honest skip after a stop and an invisible character
+      ...[0x034f, 0x3164, 0x200b, 0xfe0f, 0xfeff, 0x2060].map((x): Row => [
+        `cost.${hex(x)} The`,
+        skipOver(` for its full reinstatement cost.${ch(x)} `, INSURANCE),
+        'stitched',
+      ]),
+      // the sentence end inside a quote: `.`+U+FEFF+`The` has no space after the stop, so it is none
+      [
+        'a quote with .+U+FEFF+The inside it',
+        state(
+          `${F} for its cost.\u{feff}The Tenant shall pay the insurance rent`,
+          `${F} for its cost. The Landlord agrees. The Tenant shall pay the insurance rent at the end of each year.`,
+        ),
+        'not_found',
+      ],
+      [
+        'control: the same with . and a space',
+        state(
+          `${F} for its cost. The Tenant shall pay the insurance rent`,
+          `${F} for its cost. The Landlord agrees. The Tenant shall pay the insurance rent at the end of each year.`,
+        ),
+        'stitched',
+      ],
+      // the read after `:` (A-12): `9:`+U+200B+`30` is still a time, so no part opens on `30`
+      [
+        '9 in 9:+U+200B+30',
+        state('The meeting is at 9', 'The meeting is at 9:\u{200b}30 each day.'),
+        'not_found',
+      ],
+      [
+        'a part opening on 30 after 9:+U+200B',
+        state(
+          `${F} … 30 minutes later the Tenant shall pay the insurance rent`,
+          `${F} for its cost at 9:\u{200b}30 minutes later the Tenant shall pay the insurance rent.`,
+        ),
+        'not_found',
+      ],
+    ];
+    // (1) red when a walk reads an invisible character as a character (an `e.`+X+`g.` skip lands, the
+    //     honest skips are refused, `approx.` is left unmarked); (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it('the sweeps: every invisible character in each walk rule 3 lists, each read as the walk reads no character at all', () => {
+    const lc = 'the Tenant shall pay the insurance rent';
+    const walks: Array<[walk: string, read: (x: string) => string]> = [
+      ['the abbreviation read', (x) => skipOver(` for its cost, e.${x}g. `, INSURANCE)],
+      [
+        "the exact quote's cut_short read",
+        (x) =>
+          state(
+            'The area is not less than approx.',
+            `The area is not less than approx.${x} 412 square metres.`,
+          ),
+      ],
+      [
+        'the sentence end inside a quote',
+        (x) =>
+          state(
+            `The Tenant shall pay the Rent.${x} and the rates`,
+            'THE TENANT SHALL PAY THE RENT AND THE RATES ON THE USUAL QUARTER DAYS.',
+          ),
+      ],
+      [
+        'the blanks before a part',
+        (x) => skipOver(` for its full reinstatement cost.${x} `, INSURANCE),
+      ],
+      [
+        'the reads over closing marks',
+        (x) => skipOver(` for its full reinstatement cost.${x}) `, INSURANCE),
+      ],
+      [
+        'the line-start read',
+        (x) => skipOver(` for its full reinstatement cost.${x}\n`, INSURANCE),
+      ],
+      // the list-mark read back steps over them inside a run of `#` (before the run, `blanksBack` has)
+      [
+        'the list-mark read back',
+        (x) => skipOver(` for its full reinstatement cost.\n#${x}# `, lc),
+      ],
+      // the clause-number read back, inside the label
+      [
+        'the clause-number read back',
+        (x) => skipOver(` for its full reinstatement cost.\n(b${x}) `, KEEP),
+      ],
+      // the read of a clause number at a part's start, quoted with the label after `:`
+      [
+        "the clause number at a part's start",
+        (x) =>
+          state(
+            `${F} … 2) ${lc}`,
+            `${F} for its full reinstatement cost:\n2${x}) ${lc} at the end of each year.`,
+          ),
+      ],
+      // the span trim takes the brackets both texts have, past them
+      [
+        'the span trim',
+        (x) => {
+          const doc = `Clause 5 says (${x}The Landlord shall insure the Building) today.`;
+          releaseQuoteCache();
+          const part = locateQuote('(The Landlord shall insure the Building)', doc).parts[0];
+          const span = part === undefined ? '' : doc.slice(part.start, part.end);
+          return `${span.slice(0, 1)}…${span.slice(-1)}`;
+        },
+      ],
+      [
+        'the read after `:`',
+        (x) =>
+          skipOver(
+            ` for its cost at 9:${x}`,
+            '30 minutes later the Tenant shall pay the insurance rent',
+          ),
+      ],
+    ];
+    const differing = walks.flatMap(([walk, read]) => {
+      const want = read('');
+      return INVISIBLE.filter((x) => read(ch(x)) !== want).map(
+        (x) => `${walk}: ${hex(x)} ${read(ch(x))} (want ${want}, as with none)`,
+      );
+    });
+    // (1) red when a walk stops at an invisible character, or steps only over `\p{Cf}` (U+034F, U+FE0F
+    //     and U+3164 then read as characters); (2) prints the count swept and each differing member.
+    expect({ swept: atLeast(INVISIBLE, 4000), differing }).toEqual({
+      swept: 'at least 4000',
+      differing: [],
+    });
+  }, 60_000);
+
+  it('E4, the class that turns until 1b: a list mark directly before a word after `:` and a line break, with no blank or only invisible characters between, reads `stitched`; `2.`+U+200B+`Send` does not', () => {
+    const lc = 'the Tenant shall pay the insurance rent';
+    const marks = [
+      ...codePoints(/^\p{Pd}$/u),
+      0x2212,
+      0x2796,
+      0x02d7,
+      0x2a,
+      0x2b,
+      0x3e,
+      0x7c,
+      0x2022,
+      0x2023,
+      0x2043,
+      0x204c,
+      0x204d,
+      0x2219,
+      0x25d8,
+      0x25e6,
+      0x29be,
+      0x29bf,
+      0x2619,
+      0x2765,
+      0x2767,
+      0x25cb,
+      0x25cf,
+      0x25a0,
+      0x25aa,
+      0xb7,
+      0xf0b7,
+    ];
+    const rows: Row[] = [
+      ...marks.flatMap((m): Row[] => [
+        [`${hex(m)}the`, skipOver(` for its full reinstatement cost:\n${ch(m)}`, lc), 'stitched'],
+        [
+          `${hex(m)}+U+200B+the (extra2 row 123's class)`,
+          skipOver(` for its full reinstatement cost:\n${ch(m)}\u{200b}`, lc),
+          'stitched',
+        ],
+      ]),
+      [
+        '2.+U+200B+Send',
+        state(
+          `${F} … Send the notice to the Tenant`,
+          `${F} for its full reinstatement cost:\n2.\u{200b}Send the notice to the Tenant.`,
+        ),
+        'not_found',
+      ],
+    ];
+    // (1) red when E4's class changes before 1b closes it (a mark glued to its word is refused, or
+    //     `2.`+U+200B+`Send` opens a part); (2) prints the count and each differing row.
+    expect({ marks: marks.length, misses: misses(rows) }).toEqual({
+      marks: marks.length,
+      misses: [],
+    });
+  });
+});
+
+describe('#845 check 4: every neighbour is read by code point', () => {
+  it('the cases: the astral hyphens, U+10400 opening a part, item 13 after `approx. `, NEW-2, A9, and a quote opening or ending inside an astral number', () => {
+    const D = '\u{1d7ce}';
+    const rows: Row[] = [
+      ...[0x10d6e, 0x10ead].map((d): Row => [
+        `5 after ${hex(d)}`,
+        state('5 degrees', `The reading is ${ch(d)}5 degrees today.`),
+        'not_found',
+      ]),
+      [
+        'U+10400 opens a part after ". "',
+        skipOver(' for its cost. ', '\u{10400} shall pay the insurance rent'),
+        'stitched',
+      ],
+      [
+        'approx. U+1D41A (an astral lowercase letter)',
+        state(
+          'The area is not less than approx.',
+          'The area is not less than approx. \u{1d41a}bout 412 square metres.',
+        ),
+        'exact+cut_short',
+      ],
+      [
+        'approx. U+1D7CE (an astral digit)',
+        state(
+          'The area is not less than approx.',
+          'The area is not less than approx. \u{1d7ce}412 square metres.',
+        ),
+        'exact+cut_short',
+      ],
+      ...[0x1d400, 0x104a0, 0x1d7ce, 0x10107].map((c): Row => [
+        `5 after ${hex(c)}`,
+        state('5 rupees', `The fee is ${ch(c)}5 rupees.`),
+        'not_found',
+      ]),
+      [
+        'lawful in un+U+20000+lawful',
+        state(
+          'lawful use of the Premises',
+          'The Tenant shall not permit any un\u{20000}lawful use of the Premises.',
+        ),
+        'not_found',
+      ],
+      [
+        'The fee is 1+U+0336 in 1+U+0336+,000',
+        state('The fee is 1\u{336}', 'The fee is 1\u{336},000 a year'),
+        'not_found',
+      ],
+      // the number edges read the quote's own first and last characters by code point
+      [
+        'a quote opening on an astral digit inside a number',
+        state(`${D}${D} rupees`, `The fee is 7${D}${D} rupees.`),
+        'not_found',
+      ],
+      [
+        'a quote ending on an astral digit inside a number',
+        state(`The fee is 7${D}`, `The fee is 7${D}${D} rupees.`),
+        'not_found',
+      ],
+      [
+        'control: the whole astral number',
+        state(`The fee is 7${D}${D} rupees`, `The fee is 7${D}${D} rupees.`),
+        'exact',
+      ],
+      // the number edge alone decides here: after a number's separator the word edge has no letter
+      [
+        "a quote opening on an astral digit after a number's separator",
+        state(`${D}${D}${D} rupees`, `The fee is 1,${D}${D}${D} rupees.`),
+        'not_found',
+      ],
+      [
+        'control: the number with its separator',
+        state(`1,${D}${D}${D} rupees`, `The fee is 1,${D}${D}${D} rupees.`),
+        'exact',
+      ],
+    ];
+    // (1) red when a neighbour is read as one UTF-16 unit (a hyphen outside the BMP leaves `5` found,
+    //     U+10400 opens no part, a quote ends inside an astral number); (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it('nearest rounds the longest found piece down to a code-point boundary: `x`+U+20000+U+20001 gives 16–28 (E5)', () => {
+    releaseQuoteCache();
+    const r = locateQuote(
+      'the rent x\u{20000}\u{20001} now due',
+      'The Tenant pays the rent x\u{20000}\u{20002} here',
+    );
+    // (1) red when the round-down is removed (the piece ends inside U+20000); (2) prints the state and
+    //     where `nearest` lies.
+    expect({
+      state: r.state,
+      nearest: r.nearest === undefined ? null : [r.nearest.start, r.nearest.end],
+    }).toEqual({
+      state: 'not_found',
+      nearest: [16, 28],
+    });
+  });
+});
+
+describe('#845 check 5: initials and initialisms', () => {
+  it('the cases: items 8 and 8b, V-26, `U.S.`, `U.K.`, `U.S.A.`, `J.R.R.`, and the control `J. Smith`', () => {
+    const capital = 'Capital rules apply to the Tenant at all times';
+    const rows: Row[] = [
+      ['E+U+0301. (item 8)', skipOver(' for its cost to E\u{301}. ', capital), 'not_found'],
+      ['U+1D400. (item 8)', skipOver(' for its cost to \u{1d400}. ', capital), 'not_found'],
+      ['control: É. written whole', skipOver(' for its cost to \u{c9}. ', capital), 'not_found'],
+      ['ℝ. (item 8b)', skipOver(' for its cost to \u{211d}. ', capital), 'not_found'],
+      ['U+03D2. (item 8b)', skipOver(' for its cost to \u{3d2}. ', capital), 'not_found'],
+      ['Q+U+0301. (V-26)', skipOver(' for its cost to Q\u{301}. ', capital), 'not_found'],
+      ...['U.S.', 'U.K.', 'U.S.A.', 'J.R.R.'].map((a): Row => [
+        a,
+        skipOver(` for its cost in the ${a} `, capital),
+        'not_found',
+      ]),
+      [
+        'control: J. Smith',
+        skipOver(' for its cost to J. ', 'Smith shall pay the costs of entry'),
+        'not_found',
+      ],
+      [
+        'control: a.m. (a lowercase initialism) still ends a sentence',
+        skipOver(' for its cost before 9 a.m. ', capital),
+        'stitched',
+      ],
+    ];
+    // (1) red when an initial is only a letter that changes when lowercased (ℝ, U+03D2, U+1D400 and
+    //     the decomposed É then end a sentence), or the initialisms end one; (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it('the sweep: every `\\p{Lu}` and `\\p{Lt}` code point, in every plane, followed by `. ` and a capital, ends no sentence', () => {
+    const CAPITALS = codePoints(/^[\p{Lu}\p{Lt}]$/u);
+    const capital = 'Capital rules apply to the Tenant at all times';
+    const ending = CAPITALS.filter(
+      (c) => skipOver(` for its cost to ${ch(c)}. `, capital) !== 'not_found',
+    ).map(hex);
+    // (1) red when a capital, in any plane, is no initial; (2) prints the count swept and each capital
+    //     a skip lands after.
+    expect({ swept: atLeast(CAPITALS, 1800), ending }).toEqual({
+      swept: 'at least 1800',
+      ending: [],
+    });
+  }, 60_000);
+});
+
+describe('#845 check 6, outside the Basic Multilingual Plane: lowercase letters, digits, capitals and the two dashes', () => {
+  const approx = (c: string) =>
+    state(
+      'The area is not less than approx.',
+      `The area is not less than approx. ${c}412 square metres.`,
+    );
+  it('lowercase letters: every astral `\\p{Lowercase}` after `approx. ` marks the quote; control U+10400, a capital', () => {
+    const members = codePoints(/^\p{Lowercase}$/u, 0x10000);
+    const rows: Row[] = [
+      ...members.map((c): Row => [hex(c), approx(ch(c)), 'exact+cut_short']),
+      ['control U+10400', approx('\u{10400}'), 'exact'],
+    ];
+    // (1) red when the lowercase read is limited to the BMP; (2) prints the count and each differing row.
+    expect({ swept: atLeast(members, 900), misses: misses(rows) }).toEqual({
+      swept: 'at least 900',
+      misses: [],
+    });
+  });
+
+  it('digits: every astral `\\p{Nd}` after `approx. ` marks the quote; control U+10107, a number that is no digit', () => {
+    const members = codePoints(/^\p{Nd}$/u, 0x10000);
+    const rows: Row[] = [
+      ...members.map((c): Row => [hex(c), approx(ch(c)), 'exact+cut_short']),
+      ['control U+10107', approx('\u{10107}'), 'exact'],
+    ];
+    // (1) red when the digit read is limited to the BMP; (2) prints the count and each differing row.
+    expect({ swept: atLeast(members, 390), misses: misses(rows) }).toEqual({
+      swept: 'at least 390',
+      misses: [],
+    });
+  });
+
+  it('capitals: every astral `\\p{Lu}` or `\\p{Lt}` opens a part after `. `; control U+1D41A, a lowercase letter', () => {
+    const members = codePoints(/^[\p{Lu}\p{Lt}]$/u, 0x10000);
+    const opens = (c: string) => skipOver(' for its cost. ', `${c} shall pay the insurance rent`);
+    const rows: Row[] = [
+      ...members.map((c): Row => [hex(c), opens(ch(c)), 'stitched']),
+      ['control U+1D41A', opens('\u{1d41a}'), 'not_found'],
+    ];
+    // (1) red when the capital read is limited to the BMP; (2) prints the count and each differing row.
+    expect({ swept: atLeast(members, 740), misses: misses(rows) }).toEqual({
+      swept: 'at least 740',
+      misses: [],
+    });
+  });
+
+  it('dashes: the two astral `\\p{Pd}` read as `-` and open an item as a list mark; control U+1D400, a letter', () => {
+    const members = codePoints(/^\p{Pd}$/u, 0x10000);
+    const lc = 'the Tenant shall pay the insurance rent';
+    const asMinus = (c: string) => state('-5 degrees', `The reading is ${c}5 degrees today.`);
+    const opensItem = (c: string) => skipOver(` for its full reinstatement cost.\n${c} `, lc);
+    const rows: Row[] = [
+      ...members.flatMap((c): Row[] => [
+        [`${hex(c)} as -`, asMinus(ch(c)), 'reformatted'],
+        [`${hex(c)} a list mark`, opensItem(ch(c)), 'stitched'],
+      ]),
+      ['control U+1D400 as -', asMinus('\u{1d400}'), 'not_found'],
+      ['control U+1D400 a list mark', opensItem('\u{1d400}'), 'not_found'],
+    ];
+    // (1) red when the dash read is limited to the BMP; (2) prints the members and each differing row.
+    expect({ members: members.map(hex), misses: misses(rows) }).toEqual({
+      members: ['U+10D6E', 'U+10EAD'],
+      misses: [],
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------
+// #845 1a-ii correction 1 (`prompts/fix-845-1a-ii-correction-1.md`): a quote carrying a run of
+// invisible characters is read in time proportional to its length, and its readings do not move.
+
+/** correction 1's runs: the four invisible characters the walk found read in quadratic time. */
+const INVISIBLE_RUNS: Record<string, string> = {
+  'U+200B': '\u{200b}',
+  'U+00AD': '\u{ad}',
+  'U+FEFF': '\u{feff}',
+  'U+FE0F': '\u{fe0f}',
+};
+const RENT = 'The Tenant pays the rent monthly in advance.';
+/** correction 1's places: a quote and its document, with the run inside the quote. */
+const RUN_PLACES: Record<string, (run: string) => readonly [quote: string, doc: string]> = {
+  end_after_stop: (run) => [`the tenant pays the rent.${run}`, RENT],
+  mid_sentence: (run) => [`the tenant${run} pays the rent`, RENT],
+  stitched: (run) => [
+    `The Tenant pays the rent monthly in advance. … The Landlord${run} repairs the roof every spring`,
+    'The Tenant pays the rent monthly in advance. The deposit is due now. The Landlord repairs the roof every spring.',
+  ],
+};
+
+describe('#845 1a-ii correction 1, check 1: a quote carrying a run of invisible characters is read in time proportional to its length', () => {
+  const N = 1000;
+  for (const [name, invisible] of Object.entries(INVISIBLE_RUNS)) {
+    for (const [place, at] of Object.entries(RUN_PLACES)) {
+      it(`${name}, ${place}: reads at 2N at most 2.5 times those at N`, () => {
+        const readsAt = (n: number): number => {
+          const [quote, doc] = at(invisible.repeat(n));
+          releaseQuoteCache();
+          return readsOf(() => {
+            locateQuote(quote, doc);
+          });
+        };
+        const atN = readsAt(N);
+        const at2N = readsAt(2 * N);
+        const ratio = Math.round((at2N / atN) * 100) / 100;
+        console.log(
+          `correction 1 check 1 ${name} ${place}: ${String(atN)} → ${String(at2N)} reads, ×${String(ratio)}`,
+        );
+        // (1) red when each character of the run walks the rest of it (about ×4 at dfda322b);
+        //     (2) prints the reads at N and 2N and the ratio.
+        expect({ atN, at2N, ratio, linear: at2N <= 2.5 * atN }).toEqual({
+          atN,
+          at2N,
+          ratio,
+          linear: true,
+        });
+      }, 120_000);
+    }
+  }
+});
+
+describe('#845 1a-ii correction 1, check 2 (GROUNDING, not acceptance): the readings do not move', () => {
+  it("check 1's inputs at N and 2N, and the walk's W3 cells: each locateQuote result is dfda322b's", () => {
+    const fixture = JSON.parse(
+      readFileSync(new URL('../fixtures/invisible-runs-845.json', import.meta.url), 'utf8'),
+    ) as { cases: Record<string, { in: string; out: unknown }> };
+    const digest = (v: unknown): string =>
+      createHash('sha256').update(JSON.stringify(v), 'utf8').digest('hex').slice(0, 32);
+    const cases: Array<readonly [key: string, quote: string, doc: string]> = [];
+    for (const [name, invisible] of Object.entries(INVISIBLE_RUNS)) {
+      for (const [place, at] of Object.entries(RUN_PLACES)) {
+        for (const n of [1000, 2000])
+          cases.push([`run ${name} ${place} ${String(n)}`, ...at(invisible.repeat(n))]);
+      }
+    }
+    // The walk's W3 cells (845-WALK1AII), its inputs as written there.
+    const ZW = '\u{200b}';
+    const SHY = '\u{ad}';
+    const BOM = '\u{feff}';
+    const COST = 'The Tenant pays the full yearly … The Landlord repairs the roof every spring';
+    const FLAT = 'The flat measures approx.';
+    const ITEMS = (pre1: string, pre2: string): string =>
+      `During the whole lease term the Tenant shall:\n${pre1}- keep the flat clean and in good order;\n${pre2}- pay the heating costs every quarter;\n- return every key when the lease ends.`;
+    const Q1 =
+      'During the whole lease term the Tenant shall: … keep the flat clean and in good order';
+    const Q2 =
+      'During the whole lease term the Tenant shall: … pay the heating costs every quarter';
+    const NINE = (between: string): string => `The office opens at 9:${between}30 every weekday.`;
+    const SEND =
+      'The Tenant pays the rent every month. … Send every notice in writing to the Landlord';
+    const SEND2 =
+      'The Tenant pays the rent every month. … 2. Send every notice in writing to the Landlord';
+    const LABEL = (line: string): string =>
+      `The Tenant pays the rent every month.\n${line} Send every notice in writing to the Landlord.`;
+    const ITEMS2 = (pre: string): string =>
+      `During the whole lease term the Tenant shall, when asked:\n${pre}- keep the flat clean and in good order;\n- pay the heating costs every quarter.`;
+    const QF =
+      'During the whole lease term the Tenant shall … keep the flat clean and in good order';
+    const DEPOSIT = (line: string, word: string): string =>
+      `The Tenant pays the rent every month. The deposit is due now.\n${line} ${word} every notice in writing to the Landlord.`;
+    cases.push(
+      [
+        'W3.1a',
+        COST,
+        `The Tenant pays the full yearly heating cost.${ZW} The Landlord repairs the roof every spring.`,
+      ],
+      [
+        'W3.1b',
+        COST,
+        `The Tenant pays the full yearly heating cost. ${ZW}The Landlord repairs the roof every spring.`,
+      ],
+      [
+        'W3.1c',
+        COST,
+        `The Tenant pays the full yearly heating cost.${BOM} The Landlord repairs the roof every spring.`,
+      ],
+      [
+        'W3.1d',
+        COST,
+        'The Tenant pays the full yearly heating cost. The Landlord repairs the roof every spring.',
+      ],
+      [
+        'W3.1e',
+        'The Tenant pays the full yearly … the Landlord repairs the roof every spring',
+        `The Tenant pays the full yearly heating cost.${ZW} the Landlord repairs the roof every spring.`,
+      ],
+      ['W3.2a', FLAT, `The flat measures approx.${SHY} 412 square metres.`],
+      ['W3.2b', FLAT, `The flat measures approx.${ZW}412 square metres.`],
+      ['W3.2c', FLAT, `The flat measures approx.${SHY}\n412 square metres.`],
+      ['W3.2d', FLAT, 'The flat measures approx. 412 square metres.'],
+      ['W3.2e', `the tenant pays the rent.${ZW}`, RENT],
+      ['W3.3a', Q2, ITEMS('', ZW)],
+      ['W3.3b', Q1, ITEMS(ZW, '')],
+      ['W3.3c', Q1, ITEMS(SHY, '')],
+      ['W3.3d', Q2, ITEMS('', BOM)],
+      ['W3.3e', Q2, ITEMS('', '')],
+      ['W3.3f', Q2, ITEMS('', '').replace('- pay', `-${ZW} pay`)],
+      ['W3.4a', '9', NINE(ZW)],
+      ['W3.4b', 'The office opens at 9', NINE(ZW)],
+      ['W3.4c', 'the office opens at 9:30 every weekday', NINE(ZW)],
+      ['W3.4d', 'The office opens at 9: … 30 every weekday', NINE(ZW)],
+      ['W3.4e', '9', NINE('')],
+      ['W3.5a', SEND, LABEL(`2.${ZW}`)],
+      ['W3.5b', SEND2, LABEL(`2.${ZW}`)],
+      ['W3.5c', SEND, LABEL('2.')],
+      ['W3.5d', SEND, LABEL(`2${ZW}.`)],
+      ['W3.5e', SEND, LABEL(`${ZW}2.`)],
+      ['FIX W3.3b', QF, ITEMS2(ZW)],
+      ['FIX W3.3c', QF, ITEMS2(SHY)],
+      ['FIX W3.3g', QF, ITEMS2(BOM)],
+      ['FIX W3.3h', QF, ITEMS2('')],
+      ['FIX W3.3i', QF, ITEMS2('').replace(':\n', `:${ZW}\n`)],
+      ['FIX W3.5b', SEND2, DEPOSIT(`2.${ZW}`, 'Send')],
+      ['FIX W3.5f', SEND2, DEPOSIT('2.', 'Send')],
+      [
+        'FIX W3.5g',
+        'The Tenant pays the rent every month. … send every notice in writing to the Landlord',
+        DEPOSIT(`2.${ZW}`, 'send'),
+      ],
+    );
+    // The fixture's precondition: the same cases and inputs as at dfda322b.
+    expect({
+      keys: cases.map(([key]) => key).sort(),
+      inputs: cases
+        .filter(([key, quote, doc]) => fixture.cases[key]?.in !== digest([quote, doc]))
+        .map(([key]) => key),
+    }).toEqual({ keys: Object.keys(fixture.cases).sort(), inputs: [] });
+    const moved = cases
+      .map(([key, quote, doc]) => {
+        releaseQuoteCache();
+        const now = JSON.stringify(locateQuote(quote, doc));
+        const then = JSON.stringify(fixture.cases[key]?.out);
+        return now === then ? '' : `${key}: ${now}, at dfda322b ${then}`;
+      })
+      .filter((line) => line !== '');
+    // (1) red when a run of invisible characters is crossed only part of the way (the walk stopped
+    //     after 30 of them); (2) prints each case whose result moved, with dfda322b's beside it.
     expect(moved).toEqual([]);
   }, 120_000);
 });
