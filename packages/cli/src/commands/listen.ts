@@ -1698,7 +1698,8 @@ export function makeSweepRunner(
 /**
  * R1.3 C3b2: the callback sender of a server listening on `ownPort`: C3a's pass over `callbacks`, run
  * one pass at a time by the poll runner. Every line the pass says is printed with the `listen: `
- * prefix the start lines have.
+ * prefix the start lines have. C3d-B: with the count of its tries in flight, which the stop reads
+ * (this sender's own: one process can hold many servers).
  */
 function callbackRunnerOf(
   routes: Map<string, WorkflowEntry>,
@@ -1706,7 +1707,8 @@ function callbackRunnerOf(
   callbacks: CallbackStore,
   lists: CallbackLists,
   ownPort: number,
-): PollRunner {
+): { readonly runner: PollRunner; readonly inFlight: () => number } {
+  let inFlight = 0;
   const byWorkflow = new Map([...routes.values()].map((entry) => [entry.definition.id, entry]));
   const prefixed =
     (level: 'info' | 'warn' | 'error') =>
@@ -1728,8 +1730,9 @@ function callbackRunnerOf(
     lists,
     ownPort,
     logger: { info: prefixed('info'), warn: prefixed('warn'), error: prefixed('error') },
+    tries: { begin: () => void (inFlight += 1), end: () => void (inFlight -= 1) },
   });
-  return makePollRunner(pass, 'callbacks', deps.logger);
+  return { runner: makePollRunner(pass, 'callbacks', deps.logger), inFlight: () => inFlight };
 }
 
 function emptySweepResult(): SweepResult {
@@ -1760,6 +1763,8 @@ export function startListen(
   // R1.3 C3b2: the callback sender, built once the server listens (below); the handler is built first,
   // so its agent-exit hook reads this reference when it is called.
   let callbackRunner: PollRunner | undefined;
+  /** C3d-B: the sender's tries in flight, read by the stop. */
+  let callbacksInFlight: (() => number) | undefined;
   let callbackTimer: NodeJS.Timeout | undefined;
   const handler = makeListenHandler(routes, deps, {
     maxConcurrent: options.maxConcurrent,
@@ -1990,16 +1995,35 @@ export function startListen(
     const passesUnderWay = [reminders?.stop(), callbackRunner?.stop()].filter(
       (pass): pass is Promise<void> => pass !== undefined,
     );
+    // C3d-B: the stop says what it waits for, and what its end cuts (tries, never their ids).
+    const sending = callbacksInFlight?.() ?? 0;
+    if (sending > 0)
+      deps.logger.info(
+        `listen: callbacks: waiting for ${sending} ${sending === 1 ? 'callback' : 'callbacks'} to be sent`,
+      );
     const passWait =
       passesUnderWay.length === 0
         ? Promise.resolve()
         : new Promise<void>((resolve) => {
-            const timer = setTimeout(resolve, (drainSeconds + graceSeconds) * 1000);
-            endPassWait = () => {
+            // The wait's three exits (the drain and grace run out, the passes end, a second signal)
+            // all end it here, once; the count read then is what the stop cut.
+            let ended = false;
+            const end = (): void => {
+              if (ended) return;
+              ended = true;
               clearTimeout(timer);
+              const cutNow = callbacksInFlight?.() ?? 0;
+              if (cutNow > 0)
+                deps.logger.warn(
+                  cutNow === 1
+                    ? 'listen: callbacks: 1 callback was cut by the stop; it is sent again after the next start, with the same id'
+                    : `listen: callbacks: ${cutNow} callbacks were cut by the stop; they are sent again after the next start, with the same id`,
+                );
               resolve();
             };
-            void Promise.all(passesUnderWay).then(endPassWait);
+            const timer = setTimeout(end, (drainSeconds + graceSeconds) * 1000);
+            endPassWait = end;
+            void Promise.all(passesUnderWay).then(end);
           });
     // R1.2: the waits too, in this turn and before any drain: none is held through `--shutdown-drain`.
     stop.abort();
@@ -2068,8 +2092,15 @@ export function startListen(
       const callbacks = deps.runStore.callbacks;
       if (deps.callbackLists !== undefined && callbacks != null && !stopping) {
         const ownPort = (server.address() as AddressInfo).port;
-        const runner = callbackRunnerOf(routes, deps, callbacks, deps.callbackLists, ownPort);
+        const { runner, inFlight } = callbackRunnerOf(
+          routes,
+          deps,
+          callbacks,
+          deps.callbackLists,
+          ownPort,
+        );
         callbackRunner = runner;
+        callbacksInFlight = inFlight;
         callbackTimer = setInterval(() => void runner.wake(), CALLBACK_POLL_MS);
       }
       resolve({ server, shutdown });

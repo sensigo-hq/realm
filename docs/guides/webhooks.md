@@ -312,7 +312,7 @@ Check every token in `webhook-signature`, and reject a request whose timestamp i
 
 A `2xx` answer ends the callback: it is delivered. A `410` ends it too: the receiver has said to stop. Any other answer (a redirect is one: Realm does not follow it), no answer within 10 seconds, or no connection, is tried again, with the same body and the same `webhook-id` and a new timestamp and signature. The wait before a try is 1 second after the first failure and doubles each time up to 1 hour, with 20 % either way; a `Retry-After` of whole seconds raises it, to at most 1 hour. A wait is served at the next pass, so a retry can come up to 30 seconds after its wait has ended. It is given up 1 hour after the first try when the last answer was a `4xx` other than `408`, `425` and `429`, and otherwise 3 days after the run ended.
 
-A callback waits while no `realm listen` runs that has `--callback-allow` or `--callback-allow-private`, the workflow and a key it can read. A `realm listen` that has a flag but no entry for the receiver ends the callback at its next try and does not send it: the entry is checked again at every try. If `realm listen` is stopped while a try is in flight and the grace (`--shutdown-grace`) ends first, the exit code is still 0 and the try is made again after the next start (about a minute later: the cut try holds the callback that long), with the same `webhook-id`: ignore an id you have already handled.
+A callback waits while no `realm listen` runs that has `--callback-allow` or `--callback-allow-private`, the workflow and a key it can read. A `realm listen` that has a flag but no entry for the receiver ends the callback at its next try and does not send it: the entry is checked again at every try. If `realm listen` is stopped while a try is in flight and the grace (`--shutdown-grace`) ends first, the exit code is still 0 and the try is made again after the next start (about a minute later: the cut try holds the callback that long), with the same `webhook-id`: ignore an id you have already handled. The stop says so: `waiting for <n> callback(s) to be sent` when it begins, and `<n> callback(s) were cut by the stop` if the grace or a second signal cuts a try.
 
 Realm connects only to an address it has checked: a host name on `--callback-allow` whose address is private, local or shared is not called (the try fails and is made again later), and the receiver's certificate is always checked. Realm does not use `HTTP_PROXY` or `HTTPS_PROXY` for callbacks.
 
@@ -338,13 +338,13 @@ A request is refused before a run is made. A repeat of an event inside the [dupl
 ```text
 Callback: delivered to 127.0.0.1:5678 1s ago (2026-11-22T14:17:57Z), attempt 1
 Callback: pending, attempt 1, last answer 503, next try in 1m (2026-11-22T14:20:02Z)
-Callback: due since 2s ago (2026-11-22T14:19:30Z); sent only while realm listen with a matching allow-list runs
+Callback: due since 2s ago (2026-11-22T14:19:30Z), attempt 1, last answer 503; it waits for the next pass of a realm listen that can send it
 Callback: failed after 2 attempts, last answer 410
 Callback: expired at attempt 2, not delivered within its time limit
 Callback: waiting for the run to finish
 ```
 
-`pending` means the next try is still to come; `due` means a try is due now and waits for the next pass of a `realm listen` that can send it: one with `--callback-allow` or `--callback-allow-private`, the workflow, a key it can read and an entry for the receiver.
+`pending` means the next try is still to come; `due` means a try is due now and waits for the next pass of a `realm listen` that can send it: one with `--callback-allow` or `--callback-allow-private`, the workflow, a key it can read and an entry for the receiver. After a try the line also says the attempt and, when the try got an answer, the last answer; a callback never tried says only when it fell due, and one that expired before a first try says `expired before its first try`.
 
 A `GET` of the run's `status_path` carries `callback` once the run is no longer running or waiting at a question: `state` (`pending`, `delivered` or `failed`), `attempts` and, when they apply, `last_status` (an HTTP status, or `timeout`, `connection`, `redirect`, `refused_address`, `not_allowed` or `expired`) and `next_try`. After the example's callback was delivered:
 

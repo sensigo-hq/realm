@@ -29,6 +29,7 @@ vi.mock('../agent/gate/slack-call.js', async (orig) => ({
 import { settableClock, type SettableClock } from '@sensigo/realm-testing';
 import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
+  WorkflowError,
   abandonRun,
   writtenSnapshot,
   type OutboundLeaseRequest,
@@ -1754,5 +1755,279 @@ describe('#597 D3b — the built CLI', { timeout: 90_000 }, () => {
         off: [],
       },
     );
+  });
+});
+
+/**
+ * C3d-B: a callback receiver on 127.0.0.1 that holds each POST until `release` (or answers 200 at
+ * once), and keeps each POST's `webhook-id`.
+ */
+async function idReceiver(o: { hold: boolean }) {
+  const ids: string[] = [];
+  const waiting: Array<() => void> = [];
+  const server = createHttpServer((req, res) => {
+    req.resume();
+    req.on('end', () => {
+      ids.push(String(req.headers['webhook-id']));
+      const answer = (): void => {
+        res.writeHead(200);
+        res.end();
+      };
+      if (o.hold) waiting.push(answer);
+      else answer();
+    });
+  });
+  await new Promise<void>((ok) => server.listen(0, '127.0.0.1', () => ok()));
+  onTestFinished(
+    () =>
+      new Promise<void>((ok) => {
+        for (const answer of waiting.splice(0)) answer();
+        server.closeAllConnections();
+        server.close(() => ok());
+      }),
+  );
+  const host = `127.0.0.1:${(server.address() as { port: number }).port}`;
+  const parsed = parseCallbackEntry(`http://${host}`);
+  if (!parsed.ok) throw new Error('fixture: the receiver’s entry is refused');
+  return {
+    host,
+    url: `http://${host}/cb`,
+    lists: { public: [], private: [parsed.entry] } satisfies CallbackLists,
+    ids: () => [...ids],
+    held: () => waiting.length,
+    release: () => {
+      for (const answer of waiting.splice(0)) answer();
+    },
+  };
+}
+
+describe('C3d-B — the stop says what it waits for and what it cuts', { timeout: 60_000 }, () => {
+  const WEBHOOK_ID = '0c3db000-5d6f-4a1b-9c8d-7e6f5a4b3c2d';
+  const WAIT = 'listen: callbacks: waiting for 1 callback to be sent';
+  const CUT =
+    'listen: callbacks: 1 callback was cut by the stop; it is sent again after the next start, with the same id';
+  /** The stop's callback lines the rig's logger got, in the order said. */
+  const stopLines = (r: Rig): string[] =>
+    [...r.logger.lines.info, ...r.logger.lines.warn].filter((l) =>
+      /^listen: callbacks: (waiting for \d+ callbacks? to be sent|\d+ callbacks? (was|were) cut by the stop)/.test(
+        l,
+      ),
+    );
+
+  /**
+   * A rig with a finished run whose callback is due to `rcv` (its key made), the warn lines and the
+   * spied exit recorded in one order. `runStore` wraps the store the listeners read runs from.
+   */
+  async function withDueCallback(o: {
+    hold: boolean;
+    wrap?: (runId: string, store: RunStore) => RunStore;
+  }) {
+    const r = await rig({ sealer: true });
+    await r.clock.set(at(25 * MIN));
+    const rcv = await idReceiver({ hold: o.hold });
+    await r.store.callbacks!.keys.make(WF, rcv.host, '4d'.repeat(32));
+    const { record } = await r.store.create({
+      workflowId: WF,
+      workflowVersion: 1,
+      params: {},
+      callback: { url: rcv.url, host: rcv.host, webhook_id: WEBHOOK_ID },
+    });
+    await abandonRun(r.store, record.id);
+    const order: string[] = [];
+    const warn = r.logger.warn;
+    r.logger.warn = (m, d) => {
+      order.push(m);
+      warn(m, d);
+    };
+    vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+      order.push(`exit ${code}`);
+    }) as never);
+    return {
+      r,
+      rcv,
+      runId: record.id,
+      order,
+      exited: () => order.filter((x) => x.startsWith('exit ')),
+      row: () => r.store.callbacks!.read(record.id),
+      runStore: o.wrap?.(record.id, r.store),
+    };
+  }
+
+  /** A listening server; `wake` starts a run through the hook and lets its agent exit, which wakes
+   *  the callback pass (C3b2's seam). */
+  async function listener(
+    r: Rig,
+    o: { lists?: CallbackLists; graceSeconds?: number; runStore?: RunStore },
+  ) {
+    const exits: Array<() => void> = [];
+    const spawnAgent = async (): Promise<SpawnResult> => ({
+      pid: 1,
+      exited: new Promise<ChildExit>((res) => exits.push(() => res({ code: 0, signal: null }))),
+    });
+    const l = await listening(r, {
+      sendReminders: false,
+      spawnAgent,
+      ...(o.lists !== undefined ? { callbackLists: o.lists } : {}),
+      ...(o.graceSeconds !== undefined ? { graceSeconds: o.graceSeconds } : {}),
+      ...(o.runStore !== undefined ? { runStore: o.runStore } : {}),
+    });
+    const port = (l.handle.server.address() as { port: number }).port;
+    const wake = async (): Promise<void> => {
+      const started = await http(
+        port,
+        'POST',
+        '/hook',
+        { 'content-type': 'application/json' },
+        '{}',
+      );
+      if (started.status !== 202)
+        throw new Error(`fixture: the start was answered ${started.status}`);
+      await until(() => exits.length >= 1, 'the agent to start');
+      exits.shift()!();
+    };
+    return { ...l, wake };
+  }
+
+  it('a try in flight, answered within the grace: the first signal says it waits for 1, the try is delivered, no cut line, exit 0', async () => {
+    const w = await withDueCallback({ hold: true });
+    const l = await listener(w.r, { lists: w.rcv.lists, graceSeconds: 5 });
+    await l.wake();
+    await until(() => w.rcv.held() >= 1, 'the try to be held');
+    l.signal();
+    await until(() => stopLines(w.r).length >= 1, 'the wait line');
+    w.rcv.release();
+    await until(() => w.exited().length >= 1, 'the exit');
+    // (1) red when the counter does not move (no wait line), the wait line is said at another level
+    //     or count, or a cut line is said for a try that finished; (2) prints the lines, the exit and
+    //     the row.
+    expect({
+      lines: stopLines(w.r),
+      waitAtInfo: w.r.logger.lines.info.includes(WAIT),
+      exit: w.exited(),
+      row: (await w.row())?.status,
+    }).toEqual({ lines: [WAIT], waitAtInfo: true, exit: ['exit 0'], row: 'delivered' });
+  });
+
+  it('the grace cuts the try: ONE cut line, said before the exit with 0, even after a second signal; the row waits, and the next start sends it with the same webhook-id', async () => {
+    const w = await withDueCallback({ hold: true });
+    const l = await listener(w.r, { lists: w.rcv.lists, graceSeconds: 0 });
+    await l.wake();
+    await until(() => w.rcv.held() >= 1, 'the try to be held');
+    l.signal();
+    await until(() => w.exited().length >= 1, 'the exit');
+    l.signal();
+    await settle();
+    const cut = { order: [...w.order], row: await w.row() };
+    // The next start: a second listener on the same store, once the claim's lease has run out.
+    await w.r.clock.advance(61_000);
+    const l2 = await listener(w.r, { lists: w.rcv.lists, graceSeconds: 5 });
+    await l2.wake();
+    await until(() => w.rcv.ids().length >= 2, 'the try after the next start');
+    w.rcv.release();
+    await until(async () => (await w.row())?.status === 'delivered', 'the second try to end');
+    // (1) red when the cut line is said only where a second signal ends the wait (none here: the
+    //     grace ended it), said twice, said after the exit, lacks the same-id promise, or the cut try
+    //     is not sent again with its id; (2) prints the order of the warn lines and the exit, the row
+    //     after the cut and the ids the receiver got.
+    expect({
+      lines: stopLines(w.r),
+      cutBeforeExit: cut.order.filter((x) => x === CUT || x.startsWith('exit ')),
+      exit: w.exited(),
+      rowAfterCut: { status: cut.row?.status, attempts: cut.row?.attempts },
+      ids: w.rcv.ids(),
+    }).toEqual({
+      lines: [WAIT, CUT],
+      cutBeforeExit: [CUT, 'exit 0'],
+      exit: ['exit 0'],
+      rowAfterCut: { status: 'pending', attempts: 1 },
+      ids: [WEBHOOK_ID, WEBHOOK_ID],
+    });
+  });
+
+  it('a second signal during the wait cuts at once: ONE cut line, then the exit with 0', async () => {
+    const w = await withDueCallback({ hold: true });
+    const l = await listener(w.r, { lists: w.rcv.lists, graceSeconds: 600 });
+    await l.wake();
+    await until(() => w.rcv.held() >= 1, 'the try to be held');
+    l.signal();
+    await until(() => stopLines(w.r).length >= 1, 'the wait line');
+    const began = Date.now();
+    l.signal();
+    await until(() => w.exited().length >= 1, 'the exit', 3_000);
+    const took = Date.now() - began;
+    // (1) red when a second signal ends the wait with no cut line, or the cut waits for the 600 s
+    //     grace; (2) prints the lines, the order and how long the second signal took to end it.
+    expect({
+      lines: stopLines(w.r),
+      order: w.order.filter((x) => x === CUT || x.startsWith('exit ')),
+      'under 2 s': took < 2_000,
+    }).toEqual({ lines: [WAIT, CUT], order: [CUT, 'exit 0'], 'under 2 s': true });
+  });
+
+  it('the count cannot leak: a try whose run read rejects after the claim, and one whose run is not found (no mark), then a stop: no wait line and no cut line', async () => {
+    const seen: Record<string, unknown> = {};
+    for (const kind of ['rejects', 'not found'] as const) {
+      const w = await withDueCallback({
+        hold: false,
+        wrap: (target, store) =>
+          new Proxy(store, {
+            get(t, prop) {
+              if (prop === 'get') {
+                return (id: string, ...rest: unknown[]) =>
+                  id !== target
+                    ? (t.get as (...a: unknown[]) => unknown).call(t, id, ...rest)
+                    : Promise.reject(
+                        kind === 'rejects'
+                          ? new TypeError('the store went away')
+                          : new WorkflowError(`Run not found: ${id}`, {
+                              code: 'STATE_RUN_NOT_FOUND',
+                              category: 'STATE',
+                              agentAction: 'report_to_user',
+                              retryable: false,
+                              details: { runId: id },
+                            }),
+                      );
+              }
+              const v = Reflect.get(t, prop, t) as unknown;
+              return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(t) : v;
+            },
+          }),
+      });
+      const l = await listener(w.r, { lists: w.rcv.lists, graceSeconds: 5, runStore: w.runStore! });
+      await l.wake();
+      const said =
+        kind === 'rejects'
+          ? (): boolean =>
+              w.r.logger.lines.error.some((x) =>
+                x.includes(`unexpected error (TypeError) for run ${w.runId}`),
+              )
+          : (): boolean =>
+              w.r.logger.lines.warn.some((x) => x.includes(`run ${w.runId} was not found`));
+      await until(said, `the try to end (${kind})`);
+      l.signal();
+      await until(() => w.exited().length >= 1, `the exit (${kind})`);
+      seen[kind] = { lines: stopLines(w.r), exit: w.exited(), posts: w.rcv.ids().length };
+    }
+    // (1) red when the count goes down only on a mark (both tries end without one: the stop would
+    //     wait for 1 and cut 1); (2) prints the stop lines, the exit and the POSTs of each case.
+    expect(seen).toEqual({
+      rejects: { lines: [], exit: ['exit 0'], posts: 0 },
+      'not found': { lines: [], exit: ['exit 0'], posts: 0 },
+    });
+  });
+
+  it('a stop with nothing in flight, and a stop with no allow-list flag: no new line', async () => {
+    const idle = await withDueCallback({ hold: false });
+    await idle.r.store.callbacks!.deleteAllForRun(idle.runId);
+    const l = await listener(idle.r, { lists: idle.rcv.lists, graceSeconds: 5 });
+    l.signal();
+    await until(() => idle.exited().length >= 1, 'the idle exit');
+    const plain = await withDueCallback({ hold: false });
+    const l2 = await listener(plain.r, { graceSeconds: 5 });
+    l2.signal();
+    await until(() => plain.exited().length >= 1, 'the plain exit');
+    // (1) red when the wait line (or a cut line) is said with nothing in flight, or without a
+    //     sender; (2) prints the lines of each stop.
+    expect({ idle: stopLines(idle.r), plain: stopLines(plain.r) }).toEqual({ idle: [], plain: [] });
   });
 });

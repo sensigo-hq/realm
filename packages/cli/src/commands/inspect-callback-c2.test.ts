@@ -140,7 +140,7 @@ describe('C2 — realm run inspect: the Callback line', { timeout: 120_000 }, ()
           'Callback: pending, attempt 1, last answer 503, next try in 3m (2026-11-21T12:05:00Z)',
         ],
         due: [
-          'Callback: due since 2m ago (2026-11-21T12:00:00Z); sent only while realm listen with a matching allow-list runs',
+          'Callback: due since 2m ago (2026-11-21T12:00:00Z); it waits for the next pass of a realm listen that can send it',
         ],
         delivered: [
           'Callback: delivered to hooks.example.com:443 2m ago (2026-11-21T12:00:00Z), attempt 1',

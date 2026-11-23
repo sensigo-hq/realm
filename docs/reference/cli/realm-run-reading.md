@@ -254,13 +254,13 @@ After those two lines, or where they would be, a run whose request named a callb
 ```text
 Callback: delivered to 127.0.0.1:5678 1s ago (2026-11-22T14:17:57Z), attempt 1
 Callback: pending, attempt 1, last answer 503, next try in 1m (2026-11-22T14:20:02Z)
-Callback: due since 2s ago (2026-11-22T14:19:30Z); sent only while realm listen with a matching allow-list runs
+Callback: due since 2s ago (2026-11-22T14:19:30Z), attempt 1, last answer 503; it waits for the next pass of a realm listen that can send it
 Callback: failed after 2 attempts, last answer 410
 Callback: expired at attempt 2, not delivered within its time limit
 Callback: waiting for the run to finish
 ```
 
-A callback that was sent shows its host and when. For one that is waiting, `pending` means the next try is still to come, and `due` means a try is due now and waits for the next pass of a `realm listen` that can send it (one with `--callback-allow` or `--callback-allow-private`, the workflow, a key it can read and an entry for the receiver); `waiting for the run to finish` means the run has not ended.
+A callback that was sent shows its host and when. For one that is waiting, `pending` means the next try is still to come, and `due` means a try is due now and waits for the next pass of a `realm listen` that can send it (one with `--callback-allow` or `--callback-allow-private`, the workflow, a key it can read and an entry for the receiver); `waiting for the run to finish` means the run has not ended. After a try the line also says the attempt and, when the try got an answer, the last answer; a callback never tried says only when it fell due, and one that expired before a first try says `expired before its first try`.
 
 ### The blocks in the middle
 
