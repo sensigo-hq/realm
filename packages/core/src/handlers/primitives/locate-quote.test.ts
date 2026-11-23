@@ -22,8 +22,14 @@ import {
   segmentsOf,
   QUOTE_STATES,
   QUOTE_SEARCH_BUDGET,
+  releaseQuoteCache,
   type QuoteCheck,
 } from './locate-quote.js';
+
+/** #845 check 8 (a): the most character reads the A8 workload's 25 quotes may make. Measured on
+ *  #845 1a-ii's build: 16,210,425. A boundary array built per tile, with `Array.from(tile)` or with a
+ *  `codePointAt` loop, reads about 24.6 million (845-V-44's class), so the bound sits between. */
+const READS_BOUND = 20_000_000;
 
 const LEASE = readFileSync(
   fileURLToPath(new URL('../fixtures/lease-public.txt', import.meta.url)),
@@ -438,8 +444,8 @@ describe('locateQuote — the floor, the count, the offsets, the empty inputs, t
   });
 
   it(
-    'the cost: 25 quotes of 3,000 characters over a 40,000-character source in under a second',
-    { timeout: 10_000 },
+    'the cost: 25 quotes of 3,000 characters over a 40,000-character source in under ten seconds (a hang)',
+    { timeout: 40_000 },
     () => {
       const copies = [
         LEASE,
@@ -466,14 +472,15 @@ describe('locateQuote — the floor, the count, the offsets, the empty inputs, t
         passes.push(performance.now() - began);
       }
       const fastest = Math.min(...passes);
-      // (a) red when locating grows far slower — a coarse budget: tiling one character at a time
-      //     measured 0.44 s here, against 0.08 s, so the next cell carries that break's red; (b)
-      //     prints whether it was under a second and how many quotes were located, and the three
-      //     passes' times in the message.
+      // #845 check 8 (b): a smoke bound for a hang, at 10,000 ms (it failed at 1,000 ms on GitHub's
+      // node22 runner, passes of 3,910, 2,051 and 1,026 ms, with the locator unchanged). It no longer
+      // catches a slowdown: the read count on the A8 workload below does, whatever the machine.
+      // (a) red when locating hangs or takes ten seconds; (b) prints whether it finished in time and
+      //     how many quotes were located, and the three passes' times in the message.
       expect(
-        { underASecond: fastest < 1_000, located: states.length },
+        { underTenSeconds: fastest < 10_000, located: states.length },
         `passes ${passes.map((ms) => ms.toFixed(0)).join(', ')} ms`,
-      ).toEqual({ underASecond: true, located: 25 });
+      ).toEqual({ underTenSeconds: true, located: 25 });
     },
   );
 
@@ -754,6 +761,84 @@ describe('locateQuote — correction 1, A7–A9: `nearest`, the cost, the gaps',
         { states: [...states], withinBudget: most <= QUOTE_SEARCH_BUDGET + 50 },
         `most searches for one quote: ${String(most)} (bound ${String(QUOTE_SEARCH_BUDGET + 50)})`,
       ).toEqual({ states: ['not_found'], withinBudget: true });
+    },
+  );
+
+  it(
+    'A8, counted (#845 check 8 (a)): the 25 prose quotes over the 40,000-character source make at most 20,000,000 character reads, whatever the machine',
+    { timeout: 60_000 },
+    () => {
+      const words =
+        'the landlord tenant shall pay rent quarterly premises building repair insure lease term notice clause schedule party consent assign deposit interest rate annum review service charge cost structure roof window door spring autumn every each'.split(
+          ' ',
+        );
+      let seed = 7;
+      const next = (): number =>
+        (seed = (seed * 1_103_515_245 + 12_345) % 2_147_483_648) / 2_147_483_648;
+      const prose = (length: number): string => {
+        let text = '';
+        while (text.length < length)
+          text += `${words[Math.floor(next() * words.length)]}${next() < 0.08 ? '. ' : ' '}`;
+        return text.slice(0, length);
+      };
+      const source = [
+        LEASE,
+        LEASE.replace(/Lease/g, 'Agreement'),
+        LEASE.replace(/Tenant/g, 'Lessee'),
+      ]
+        .join('\n\n')
+        .slice(0, 40_000);
+      const quotes = Array.from({ length: 25 }, () => prose(3_000));
+      // A read is one call of `normalize`, `codePointAt`, `charCodeAt` or `slice`, or one step of a
+      // string iterator (its returned `next`, so an array built with `Array.from` counts each
+      // character). Plain counters, no call log (a recording spy runs a worker out of memory on a
+      // count this size), installed around the calls and restored in `finally`. An array built by
+      // indexing a string (`s[i]`) is not seen by it.
+      const proto = String.prototype as unknown as Record<string | symbol, unknown>;
+      const names = ['normalize', 'codePointAt', 'charCodeAt', 'slice'] as const;
+      const saved = names.map(
+        (n) => proto[n] as (this: string, a?: unknown, b?: unknown) => unknown,
+      );
+      const savedIterator = proto[Symbol.iterator] as (this: string) => Iterator<string>;
+      let reads = 0;
+      const states = new Set<string>();
+      try {
+        names.forEach((n, k) => {
+          const original = saved[k]!;
+          proto[n] = function (this: string, a?: unknown, b?: unknown) {
+            reads++;
+            return original.call(this, a, b);
+          };
+        });
+        proto[Symbol.iterator] = function (this: string) {
+          const it = savedIterator.call(this);
+          return {
+            next: () => {
+              reads++;
+              return it.next();
+            },
+            [Symbol.iterator]() {
+              return this;
+            },
+          };
+        };
+        for (const quote of quotes) {
+          releaseQuoteCache();
+          states.add(locateQuote(quote, source).state);
+        }
+      } finally {
+        names.forEach((n, k) => {
+          proto[n] = saved[k];
+        });
+        proto[Symbol.iterator] = savedIterator;
+      }
+      // (a) red when the tiler builds a boundary array per tile, with `Array.from(tile)` or with a
+      //     `codePointAt` loop (845-V-44: that made `nearest` quadratic); (b) prints the states and
+      //     whether the reads stayed inside the bound, with the count in the message.
+      expect(
+        { states: [...states], withinBound: reads <= READS_BOUND },
+        `character reads for the 25 quotes: ${String(reads)} (bound ${String(READS_BOUND)})`,
+      ).toEqual({ states: ['not_found'], withinBound: true });
     },
   );
 
