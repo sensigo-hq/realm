@@ -3036,7 +3036,10 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
               console.error(memberNotSettledLine(stepName, result));
           }
           if (!refused) {
-            const judged = judgedOf(result)?.record ?? currentRun;
+            // Correction 2: the snapshot the line's record comes from, held by name (the lease-facts
+            // census): the one the engine judged the reply on, else the drive's current one.
+            const judgedSnap = judgedOf(result) ?? currentSnap;
+            const judged = judgedSnap.record;
             console.log(
               outcomeNotRecordedLine(
                 notRecordedKindOf(judged, stepName),
@@ -3044,7 +3047,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                 stepName,
                 keepsClaims,
                 writerCtx(),
-                judgedOf(result) ?? currentSnap,
+                judgedSnap,
               ),
             );
           }
