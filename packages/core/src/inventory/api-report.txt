@@ -293,6 +293,12 @@ CACHE_AUTO_PRICE_CAUSES · value · public
       "rate_missing"
   ];
 
+CACHE_AUTO_PRICE_EXCLUSIONS · value · public
+  const CACHE_AUTO_PRICE_EXCLUSIONS: readonly [
+      "short",
+      "long"
+  ];
+
 CACHE_AUTO_RATES · value · public
   const CACHE_AUTO_RATES: readonly [
       "cache_read",
@@ -1484,8 +1490,20 @@ ExtensionIdentityEntry · type · public
       secret_names?: string[];
       override_active?: true;
       error?: string;
+      lockfile?: ExtensionIdentityLockfile;
       origin?: 'start';
   }
+
+ExtensionIdentityLockfile · type · public
+  type ExtensionIdentityLockfile = {
+      files: string[];
+      sha256: string;
+  } | {
+      absent: 'none_found';
+  } | {
+      files: string[];
+      absent: 'unreadable';
+  };
 
 ExtensionIdentityModule · type · public
   interface ExtensionIdentityModule {
@@ -4858,6 +4876,7 @@ expiryCarriedOutLine · value · internal
 expiryReceiptLine · value · internal
 expiryReceiptOf · value · internal
 extensionIdentityDiffers · value · internal
+extensionLockfileDiffers · value · internal
 failedRequestSends · value · internal
 failureModelTextView · value · internal
 failureTextMarkOf · value · internal

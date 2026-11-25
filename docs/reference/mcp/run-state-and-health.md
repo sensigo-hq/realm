@@ -495,33 +495,43 @@ Run Health (1 finding(s)):
 
 <!-- run-state.schema.json and run-state.added-after.json are written by scripts/generate-run-state-schema.mjs from the built mcp-server; a test regenerates them and fails when they differ. After `npm run build`, run `npm run docs:schema`. -->
 
-`get_run_state`'s reply is described by `docs/reference/mcp/run-state.schema.json` in the repository, a JSON Schema (draft 2020-12) built from the same word lists the engine uses, so the file and the code cannot drift: a test regenerates it and fails when they differ. Every list in it is open and every object accepts a key it does not know. The cost view (`steps.*.attempts[].cost`, `steps.*.total`, `run_cost`, `drive_failure_costs[].cost`, and a drive failure's `usage` and `model_attempts`) is described loosely until a later release. Added after version 0.50.0.
+`get_run_state`'s reply is described by `docs/reference/mcp/run-state.schema.json` in the repository, a JSON Schema (draft 2020-12) built from the same word lists the engine uses, so the file and the code cannot drift: a test regenerates it and fails when they differ. Every list in it is open and every object accepts a key it does not know. Added after version 0.50.0.
 
-The file describes both replies: the run's state, and a refusal (for example, the run is not found). Every field in it is kept under the rule of [Compatibility](../compatibility.md), so a new word or field is never a breaking change. When Realm withholds values (the receipt's `values` is `withheld`), a number or true/false inside `steps` can arrive as its shape, a string such as `‹number›`; the schema allows it.
+The file describes both replies: the run's state, and a refusal (for example, the run is not found). Every field in it is kept under the rule of [Compatibility](../compatibility.md), so a new word or field is never a breaking change. When Realm withholds values (the receipt's `values` is `withheld`), a number or true/false inside `steps` or a failed drive's cost (`drive_failure_costs[].cost`) can arrive as its shape, a string such as `‹number›`; the schema allows it.
 
 A program that reads the reply must accept a word it does not know in any list, and a key it does not know in any object. For a word it does not know, it acts as for the most cautious word of that list:
 
-| The list                                                                                                                         | What a word it does not know means                      |
-| -------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| `next_actions_status`                                                                                                            | Act as for `report_to_user`.                            |
-| `agent_action`                                                                                                                   | Act as for `report_to_user`.                            |
-| `failures[].stop_reason` (and `exhausted_by` inside a drive failure's `model_attempts`, described loosely until a later release) | Act as for `non_retryable`: do not retry.               |
-| `error_code` (`basis.enactor`'s, and a refusal's), `failures[].code`, `failures[].category`                                      | The error is not retryable: report it.                  |
-| `run_phase`                                                                                                                      | Read `terminal_state` for whether the run ended.        |
-| `run_health[].kind`                                                                                                              | A finding to show the person.                           |
-| `stuck_claims[].state`                                                                                                           | The step is stuck.                                      |
-| A status word                                                                                                                    | Not a success.                                          |
-| A skip's `kind` or `rule`                                                                                                        | The step did not run.                                   |
-| A drive failure's `error_class`                                                                                                  | The drive failed.                                       |
-| A seal arm (`sealed_by_arm`)                                                                                                     | How the run ended is not verified.                      |
-| `poll_reason`                                                                                                                    | Poll as for `fixed`.                                    |
-| `on_expiry`                                                                                                                      | The question may end without an answer: ask the person. |
-| The receipt's words (`declared`, `declared_cause`, `environment`, `question`)                                                    | Treat the value as withheld or unverified.              |
-| An absence cause, an admission word or a class word (`absent_cause`, `admitted_by`, `by_source`, …)                              | The fact is unknown.                                    |
+| The list                                                                                                                     | What a word it does not know means                      |
+| ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| `next_actions_status`                                                                                                        | Act as for `report_to_user`.                            |
+| `agent_action`                                                                                                               | Act as for `report_to_user`.                            |
+| `failures[].stop_reason`, and `exhausted_by` in a drive failure's `model_attempts`                                           | Act as for `non_retryable`: do not retry.               |
+| `error_code` (`basis.enactor`'s, and a refusal's), `failures[].code`, `failures[].category`                                  | The error is not retryable: report it.                  |
+| `run_phase`                                                                                                                  | Read `terminal_state` for whether the run ended.        |
+| `run_health[].kind`                                                                                                          | A finding to show the person.                           |
+| `stuck_claims[].state`                                                                                                       | The step is stuck.                                      |
+| A status word                                                                                                                | Not a success.                                          |
+| A skip's `kind` or `rule`                                                                                                    | The step did not run.                                   |
+| A drive failure's `error_class`, and a model attempt's                                                                       | The drive failed.                                       |
+| A model attempt's `kind`                                                                                                     | Do not retry; a person decides.                         |
+| A model attempt's `then`                                                                                                     | A re-send followed; its kind is unknown.                |
+| `cost_unrecorded`, a not-priced cause (`not_priced[].cause`)                                                                 | The cost is unknown: do not add it to a total.          |
+| A cache miss's `derived.cause` or `provider.reason`, a request's `cache_diagnostics.result` and its `type`                   | Why the cache missed is unknown.                        |
+| A cache miss's `derived.rule`                                                                                                | How the miss was judged is unknown.                     |
+| `cache_controls_rejected.proven` and its `fields`                                                                            | Treat the cache controls as not proven.                 |
+| The `auto` choice's `prices.from`, `prices.cause`, `prices.excluded[]` and `prices.missing[]`, a price's `source_class`      | Where the price came from is unknown.                   |
+| `predecessor.from`, `reference.from`                                                                                         | Which earlier request it was compared with is unknown.  |
+| A lifetime's source (`lifetime_from`), the `auto` choice's `basis`                                                           | How long the cache entry lives is unknown.              |
+| What a request asked of the cache (`cache_requested`, `cache_requested_source`, `cache_marked`, `marked`) and its `endpoint` | Treat the request's cache setting as unknown.           |
+| A seal arm (`sealed_by_arm`)                                                                                                 | How the run ended is not verified.                      |
+| `poll_reason`                                                                                                                | Poll as for `fixed`.                                    |
+| `on_expiry`                                                                                                                  | The question may end without an answer: ask the person. |
+| The receipt's words (`declared`, `declared_cause`, `environment`, `question`)                                                | Treat the value as withheld or unverified.              |
+| An absence cause, an admission word or a class word (`absent_cause`, `admitted_by`, `by_source`, …)                          | The fact is unknown.                                    |
 
 Where the reply types a field as a plain string, the file says so; the rule still applies to the word it carries.
 
-`docs/reference/mcp/run-state.added-after.json` says the release each field and each word arrived after: `"0.50.0"` marks what was there when the file was first published. A path in it is dotted keys, with `[]` for a list's entries and `.*` for a map's values (`steps.*.attempts[].status`), and `described_loosely` names the fields the schema does not yet describe in full. It is a file of its own because a validator in strict mode, Ajv's default, refuses a keyword it does not know, so a release marker inside the schema would stop such a client from using it.
+`docs/reference/mcp/run-state.added-after.json` says the release each field and each word arrived after: `"0.50.0"` marks what was there when the file was first published. A path in it is dotted keys, with `[]` for a list's entries and `.*` for a map's values (`steps.*.attempts[].status`), and `described_loosely` names the fields the schema does not yet describe in full (none today). It is a file of its own because a validator in strict mode, Ajv's default, refuses a keyword it does not know, so a release marker inside the schema would stop such a client from using it.
 
 ## See also
 

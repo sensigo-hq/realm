@@ -40,7 +40,10 @@ import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   WorkflowError,
   compileDisclosure,
+  priceFromEconomics,
   writeTestClockFile,
+  type CacheEconomics,
+  type PriceSource,
   type RunRecord,
   type WorkflowDefinition,
 } from '@sensigo/realm';
@@ -63,15 +66,8 @@ const SIDECAR = 'run-state.added-after.json';
 const REGENERATE = '`npm run build`, then `npm run docs:schema` (from the repository root)';
 // The script reads the built package; the declaration walk builds a TypeScript program.
 const BUDGET = 120_000;
-// The placeholders, as the prompt names them (d2b describes them in full).
-const LOOSE = [
-  'drive_failures.entries[].usage',
-  'drive_failures.entries[].model_attempts',
-  'steps.*.attempts[].cost',
-  'steps.*.total',
-  'drive_failure_costs[].cost',
-  'run_cost',
-];
+// The paths the file describes loosely: none since d2b, which described the cost view in full.
+const LOOSE: string[] = [];
 
 type Json = Record<string, unknown>;
 const committed = (name: string): string => readFileSync(join(DIR, name), 'utf8');
@@ -574,6 +570,340 @@ const PLANTED: Array<[string, RunRecord, Json]> = [
   ],
 ];
 
+// ─── The cost view (d2b): a priced run with every cost fact ─────────────────────────────────────
+// The requests of the cost-view parity fixtures (a gateway request, mixed models, the split cache
+// controls, a cache miss with its reference), with a request whose `auto` choice read the price
+// file, the five-minute and one-hour writes, and the provider's cache diagnostics; the same requests
+// on a failed drive, with its failed model tries and one usage entry that is not an object.
+const COSTS = flow('cost-flow', {
+  gateway_step: agentStep([]),
+  mixed_step: agentStep([]),
+  split_step: agentStep([]),
+  miss_step: agentStep([]),
+  list_miss_step: agentStep([]),
+  auto_step: agentStep([]),
+  no_prices_step: agentStep([]),
+});
+const GATEWAY_REQUEST = {
+  request_index: 0,
+  request_start: '2026-01-01T00:00:00.000Z',
+  model: 'claude-x-20260101',
+  provider: 'anthropic',
+  endpoint: 'custom',
+  cache_requested: 'lifetime',
+  cache_lifetime_s: 3600,
+  cache_ttl_sent: true,
+  cache_requested_source: 'stated',
+  cache_requested_by: 'realm agent',
+  prompt_tokens: 5000,
+  output_tokens: 10,
+  cache_read_input_tokens: 0,
+  cache_creation_input_tokens: 30,
+  cache_creation: { ephemeral_5m_input_tokens: 10, ephemeral_1h_input_tokens: 20 },
+};
+const MIXED_REQUESTS = [
+  {
+    request_index: 0,
+    request_start: '2026-01-01T00:00:00.000Z',
+    model: 'gpt-5',
+    prompt_tokens: 100,
+    output_tokens: 1,
+  },
+  {
+    request_index: 1,
+    request_start: '2026-01-01T00:00:00.200Z',
+    prompt_tokens: 100,
+    output_tokens: 1,
+  },
+];
+const SPLIT_FACTS = {
+  provider: 'openai',
+  endpoint: 'custom',
+  cache_requested: 'provider_rules',
+  cache_requested_source: 'stated',
+  cache_requested_by: 'realm agent',
+  prompt_tokens: 900,
+  output_tokens: 5,
+  prefix_sha256: 'a'.repeat(64),
+  prefix_chars: 48,
+  prefix_parts: { system: 'b'.repeat(64), prompt: 'a'.repeat(64) },
+  request_strict_sent: false,
+};
+const SPLIT_REQUESTS = [
+  {
+    request_index: 0,
+    request_start: '2026-01-01T00:00:00.000Z',
+    ...SPLIT_FACTS,
+    cache_marked: ['key'],
+    cache_key_sent: true,
+  },
+  {
+    request_index: 1,
+    request_start: '2026-01-01T00:00:01.000Z',
+    ...SPLIT_FACTS,
+    // An earlier request of the same step, whose `auto` read the price file.
+    reference: {
+      from: 'earlier_run',
+      request_start: '2025-12-31T00:00:00.000Z',
+      cache_auto: {
+        basis: 'step_gaps',
+        gaps_s: [300],
+        prices: { from: 'economics', excluded: ['short'], missing: ['cache_write_5m'] },
+      },
+    },
+    cache_controls_rejected: {
+      status: 400,
+      dropped: ['cache_fields'],
+      proven: 'cache_fields',
+      fields: ['prompt_cache_key'],
+    },
+  },
+];
+const MISS_FACTS = {
+  provider: 'openai',
+  model: 'gpt-5.6-luna',
+  endpoint: 'default',
+  cache_requested: 'provider_rules',
+  request_strict_sent: false,
+  prefix_parts: { tools: 'a'.repeat(64), system: 'b'.repeat(64), prompt: 'c'.repeat(64) },
+};
+const MISS_REQUESTS = [
+  {
+    request_index: 0,
+    request_in_call: 0,
+    request_start: '2026-11-08T05:00:00.000Z',
+    ...MISS_FACTS,
+    request_id: 'req_1',
+    response_id: 'resp_1',
+    prompt_tokens: 4015,
+    output_tokens: 40,
+    cache_split_offered: false,
+    cache_read_input_tokens: 0,
+    cache_write_tokens: 4012,
+    cache_diagnostics: {
+      asked: true,
+      reference_id: 'resp_0',
+      result: { type: 'messages_changed', cache_missed_input_tokens: 4012 },
+    },
+    reference: {
+      from: 'run',
+      request_start: '2026-11-07T05:00:00.000Z',
+      ...MISS_FACTS,
+      request_id: 'req_0',
+      cache_read_input_tokens: 0,
+      cache_write_tokens: 4012,
+      cache_creation_input_tokens: 4012,
+      cache_creation: { ephemeral_5m_input_tokens: 4000, ephemeral_1h_input_tokens: 12 },
+      cache_lifetime_s: 300,
+      cache_ttl_sent: false,
+      cache_auto: {
+        basis: 'step_gaps',
+        gaps_s: [420],
+        prices: { from: 'none', cause: 'model_unknown' },
+      },
+      prefix_parts: { ...MISS_FACTS.prefix_parts, format: 'd'.repeat(64) },
+      prefix_chars: 64,
+      cache_marked: ['system'],
+      agent_profile_changed: true,
+    },
+  },
+  {
+    request_index: 1,
+    request_in_call: 1,
+    request_start: '2026-11-08T05:00:02.000Z',
+    ...MISS_FACTS,
+    prompt_tokens: 4034,
+    output_tokens: 40,
+    cache_read_input_tokens: 4012,
+    cache_write_tokens: 19,
+    cache_diagnostics: {
+      asked: true,
+      cause: 'rejected',
+      reference_id: null,
+      result: 'no_divergence',
+    },
+  },
+];
+const AUTO_REQUEST = {
+  request_index: 0,
+  request_start: '2026-01-01T00:00:00.000Z',
+  model: 'claude-x-20260101',
+  provider: 'anthropic',
+  cache_requested: 'lifetime',
+  cache_lifetime_s: 300,
+  cache_requested_source: 'runner_default',
+  cache_auto: {
+    basis: 'step_gaps',
+    gaps_s: [420, 720],
+    prices: { from: 'economics', excluded: ['long'], missing: ['cache_write_1h'] },
+  },
+  prefix_parts: {
+    tools: 'a'.repeat(64),
+    system: 'b'.repeat(64),
+    prompt: 'c'.repeat(64),
+    format: 'd'.repeat(64),
+  },
+  prompt_tokens: 100,
+  uncached_input_tokens: 70,
+  output_tokens: 2,
+};
+const NO_PRICES_REQUEST = {
+  request_index: 0,
+  request_start: '2026-01-01T00:00:00.000Z',
+  model: 'claude-x-20260101',
+  cache_requested: 'lifetime',
+  cache_lifetime_s: 300,
+  cache_requested_source: 'runner_default',
+  cache_auto: {
+    basis: 'step_gaps',
+    gaps_s: [600],
+    prices: { from: 'none', cause: 'rate_missing', missing: ['cache_read'] },
+  },
+  prompt_tokens: 100,
+  output_tokens: 2,
+};
+/** Two requests of one call: the second missed the head the first wrote (a predecessor in the list). */
+const LIST_MISS_REQUESTS = [0, 1].map((i) => ({
+  request_index: i,
+  request_in_call: i,
+  request_start: `2026-11-08T05:00:0${2 * i}.000Z`,
+  ...MISS_FACTS,
+  prompt_tokens: 4015 + i,
+  output_tokens: 40,
+  cache_read_input_tokens: 0,
+  cache_write_tokens: 4012,
+}));
+/** A request recorded before request facts existed: counters only. */
+const BARE_REQUEST = {
+  request_index: 0,
+  request_start: '2026-01-01T00:00:00.000Z',
+  prompt_tokens: 5,
+  cache_read_input_tokens: 3,
+  cache_creation_input_tokens: 2,
+};
+const pricedAttempt = (step_id: string, requests: readonly Json[]) =>
+  exec(step_id, 'success', {
+    evidence_hash: `p-${step_id}`,
+    diagnostics: {
+      input_token_estimate: 1,
+      precondition_trace: [],
+      cache: { state: 'engaged', basis: 'provider_reported', requests },
+    },
+  });
+const ATTEMPTS = [
+  {
+    request: 0,
+    kind: 'transient',
+    error_class: 'api_status',
+    status: 429,
+    wait_ms: 30000,
+    retry_after_ms: 30000,
+  },
+  {
+    request: 0,
+    kind: 'transient',
+    error_class: 'api_status',
+    status: 429,
+    wait_ms: null,
+    retry_after_ms: 30000,
+    exhausted_by: 'attempts',
+  },
+  {
+    request: 1,
+    kind: null,
+    error_class: null,
+    status: null,
+    wait_ms: 0,
+    retry_after_ms: null,
+    then: 'gateway',
+  },
+];
+const COST_RUN = record('cost-1', COSTS.id, {
+  completed_steps: [
+    'gateway_step',
+    'mixed_step',
+    'split_step',
+    'miss_step',
+    'list_miss_step',
+    'auto_step',
+    'no_prices_step',
+  ],
+  evidence: [
+    pricedAttempt('gateway_step', [GATEWAY_REQUEST]),
+    pricedAttempt('mixed_step', MIXED_REQUESTS),
+    pricedAttempt('split_step', SPLIT_REQUESTS),
+    pricedAttempt('miss_step', MISS_REQUESTS),
+    pricedAttempt('list_miss_step', LIST_MISS_REQUESTS),
+    pricedAttempt('auto_step', [AUTO_REQUEST]),
+    pricedAttempt('no_prices_step', [NO_PRICES_REQUEST]),
+  ],
+  drive_failures: {
+    first_failed_at: '2026-11-08T05:01:00.000Z',
+    total: 7,
+    // The door shows three usage entries of a failed drive: each entry carries three at most.
+    entries: [
+      [GATEWAY_REQUEST, ...SPLIT_REQUESTS],
+      MISS_REQUESTS,
+      LIST_MISS_REQUESTS,
+      [AUTO_REQUEST],
+      [NO_PRICES_REQUEST],
+      [BARE_REQUEST],
+      // A foreign provider module's usage entry that is not an object, kept as recorded.
+      [null, MIXED_REQUESTS[0]],
+    ].map((usage, i) => ({
+      at: `2026-11-08T05:0${i + 1}:00.000Z`,
+      step: 'miss_step',
+      provider: i === 6 ? 'foreign' : 'openai',
+      error_class: 'api_status',
+      message: 'rate limited',
+      elapsed_ms: 1,
+      usage,
+      ...(i === 0 ? { model_attempts: ATTEMPTS } : {}),
+    })),
+  },
+});
+/** Prices: the economics file for `gpt-5.6-luna` and `claude-x` (an `extra_usd` on the miss), the
+ *  price list's shape for every other model. */
+const ECONOMICS: CacheEconomics = {
+  version: 1,
+  currency: 'USD',
+  models: {
+    'gpt-5.6-luna': {
+      prices: [{ per_million_tokens: { input: 2, output: 10, cache_read: 0.2, cache_write: 2.5 } }],
+    },
+    'claude-x': {
+      prices: [
+        { per_million_tokens: { input: 3, output: 15, cache_read: 0.3, cache_write: 3.75 } },
+      ],
+    },
+  },
+};
+const PRICES: PriceSource = {
+  price(input) {
+    if (input.model.startsWith('gpt-5.6') || input.model.startsWith('claude-x')) {
+      return priceFromEconomics(
+        ECONOMICS,
+        input.model.replace(/-\d{8}$/, ''),
+        input.at,
+        input.usage,
+      );
+    }
+    return {
+      priced: { total: 0.125, uncached_counterfactual: 0.125 },
+      priced_by: {
+        source_class: 'price_list',
+        source_ref: '@pydantic/genai-prices',
+        version: '0.1.12',
+        matched_model: input.model,
+        matched_provider: 'openai',
+        date_basis: 'current',
+        endpoint_note: "a custom endpoint, priced at the provider's list price",
+        source_note: 'the installed price list',
+      },
+    };
+  },
+};
+
 /** Each list of the reply plan, copied `n` times under new step names. */
 function inflated(reply: Json, n: number): Json {
   const out: Json = { ...reply };
@@ -615,8 +945,9 @@ beforeAll(async () => {
   root = await mkdtemp(join(tmpdir(), 'realm-run-state-schema-'));
   await writeTestClockFile(root, new Date('2026-01-01T00:10:00.000Z'));
   home = await makeTempHome({ home: root });
-  for (const d of [FRESH, RICH, WAIT, ELIGIBLE]) await home.stores.workflowStore.register(d);
+  for (const d of [FRESH, RICH, WAIT, ELIGIBLE, COSTS]) await home.stores.workflowStore.register(d);
   for (const [, run] of PLANTED) await seedRun(home.stores.runStore, run);
+  await seedRun(home.stores.runStore, COST_RUN);
   // The default answers setting: the agent never answers a question, so an open one is a wait.
   const server = createRealmMcpServer({ ...home.stores });
   const [ct, st] = InMemoryTransport.createLinkedPair();
@@ -663,6 +994,23 @@ beforeAll(async () => {
     JSON.parse((loadFailed.content as Array<{ text: string }>)[0]!.text) as Json,
   );
   await second.close();
+  // The cost view: the priced run read by a server that prices with `PRICES`.
+  const pricing = createRealmMcpServer({ ...home.stores, priceSourceProvider: async () => PRICES });
+  const [ct3, st3] = InMemoryTransport.createLinkedPair();
+  const third = new Client({ name: 'd2b-costs', version: '0' });
+  await Promise.all([pricing.connect(st3), third.connect(ct3)]);
+  // The reply ceiling pages the steps: read every page by its cursor, as a client does.
+  let cursor: string | undefined;
+  do {
+    const page = await third.callTool({
+      name: 'get_run_state',
+      arguments: { run_id: COST_RUN.id, include_steps: true, ...(cursor ? { cursor } : {}) },
+    });
+    const body = JSON.parse((page.content as Array<{ text: string }>)[0]!.text) as Json;
+    replies.ok.set(cursor === undefined ? 'costs' : `costs, steps after ${cursor}`, body);
+    cursor = body['next_cursor'] as string | undefined;
+  } while (cursor !== undefined);
+  await third.close();
   // The door withholding values (the declared values failed to load): each planted reply walked by
   // the tool's own table under that set.
   const stores = { runStore: home.stores.runStore, workflowStore: home.stores.workflowStore };
@@ -681,6 +1029,20 @@ beforeAll(async () => {
     );
     replies.withheld.set(label, JSON.parse(walked.content[0]!.text) as Json);
   }
+  const costsRaw = await handleGetRunState(
+    { run_id: COST_RUN.id, include_steps: true },
+    { ...stores, priceSourceProvider: async () => PRICES },
+  );
+  replies.withheld.set(
+    'costs',
+    JSON.parse(
+      toolContentOf(
+        { ...costsRaw },
+        { set: withheld, audience: 'agent', table: RUN_STATE_SUMMARY_TABLE },
+        RUN_STATE_PLAN,
+      ).content[0]!.text,
+    ) as Json,
+  );
   // Over the reply ceiling: the rich run's reply and the eligible run's three lists, each list many
   // times over, through the tool's own walk and plan (every list cut, its count left out kept).
   const rich = await handleGetRunState({ run_id: 'rich-1', include_steps: true }, stores);
@@ -715,6 +1077,22 @@ afterAll(async () => {
   await home?.cleanup();
   if (root !== undefined) rmSync(root, { recursive: true, force: true });
 });
+
+/** The cost view's six roots (d2b), and its fields no planted reply can carry, each with why. */
+const COST_VIEW = [
+  'steps.*.attempts[].cost',
+  'steps.*.total',
+  'run_cost',
+  'drive_failure_costs[].cost',
+  'drive_failures.entries[].usage',
+  'drive_failures.entries[].model_attempts',
+];
+const NO_COST_FIELD = [
+  // `composeDriveFailureCosts` never sets a failed drive's `basis` or `state` (step-view.ts): a
+  // drive failure's usage carries no cache classification.
+  'drive_failure_costs[].cost.basis',
+  'drive_failure_costs[].cost.state',
+];
 
 /** The word paths no planted reply can carry a value at, each with why. */
 const NO_UNKNOWN_WORD = [
@@ -751,7 +1129,7 @@ const wire = (): Json =>
 /** `reply` with an unknown word at every path the ok arm lists words at, and an unknown key in every
  *  object it describes; how many of each it planted. */
 function withUnknowns(reply: Json, nodes: Map<string, Json[]>) {
-  const counts = { words: new Set<string>(), keys: 0 };
+  const counts = { words: new Set<string>(), keys: 0, fields: new Set<string>() };
   const visit = (value: unknown, path: string): unknown => {
     const at = nodes.get(path) ?? [];
     // A word, or what stands beside one (`runnable_here`: true, false or 'unknown').
@@ -766,6 +1144,7 @@ function withUnknowns(reply: Json, nodes: Map<string, Json[]>) {
     }
     if (!at.some((n) => n['properties'] !== undefined)) return value;
     counts.keys += 1;
+    for (const k of Object.keys(value)) counts.fields.add(path === '' ? k : `${path}.${k}`);
     return {
       ...Object.fromEntries(
         Object.entries(value).map(([k, v]) => [k, visit(v, path === '' ? k : `${path}.${k}`)]),
@@ -779,18 +1158,18 @@ function withUnknowns(reply: Json, nodes: Map<string, Json[]>) {
 // ─── The words a reader reads (item 4) ──────────────────────────────────────────────────────────
 
 const PAGE_SECTION = [
-  "`get_run_state`'s reply is described by `docs/reference/mcp/run-state.schema.json` in the repository, a JSON Schema (draft 2020-12) built from the same word lists the engine uses, so the file and the code cannot drift: a test regenerates it and fails when they differ. Every list in it is open and every object accepts a key it does not know. The cost view (`steps.*.attempts[].cost`, `steps.*.total`, `run_cost`, `drive_failure_costs[].cost`, and a drive failure's `usage` and `model_attempts`) is described loosely until a later release. Added after version 0.50.0.",
-  "The file describes both replies: the run's state, and a refusal (for example, the run is not found). Every field in it is kept under the rule of [Compatibility](../compatibility.md), so a new word or field is never a breaking change. When Realm withholds values (the receipt's `values` is `withheld`), a number or true/false inside `steps` can arrive as its shape, a string such as `‹number›`; the schema allows it.",
+  "`get_run_state`'s reply is described by `docs/reference/mcp/run-state.schema.json` in the repository, a JSON Schema (draft 2020-12) built from the same word lists the engine uses, so the file and the code cannot drift: a test regenerates it and fails when they differ. Every list in it is open and every object accepts a key it does not know. Added after version 0.50.0.",
+  "The file describes both replies: the run's state, and a refusal (for example, the run is not found). Every field in it is kept under the rule of [Compatibility](../compatibility.md), so a new word or field is never a breaking change. When Realm withholds values (the receipt's `values` is `withheld`), a number or true/false inside `steps` or a failed drive's cost (`drive_failure_costs[].cost`) can arrive as its shape, a string such as `‹number›`; the schema allows it.",
   'A program that reads the reply must accept a word it does not know in any list, and a key it does not know in any object. For a word it does not know, it acts as for the most cautious word of that list:',
   'Where the reply types a field as a plain string, the file says so; the rule still applies to the word it carries.',
-  "`docs/reference/mcp/run-state.added-after.json` says the release each field and each word arrived after: `\"0.50.0\"` marks what was there when the file was first published. A path in it is dotted keys, with `[]` for a list's entries and `.*` for a map's values (`steps.*.attempts[].status`), and `described_loosely` names the fields the schema does not yet describe in full. It is a file of its own because a validator in strict mode, Ajv's default, refuses a keyword it does not know, so a release marker inside the schema would stop such a client from using it.",
+  "`docs/reference/mcp/run-state.added-after.json` says the release each field and each word arrived after: `\"0.50.0\"` marks what was there when the file was first published. A path in it is dotted keys, with `[]` for a list's entries and `.*` for a map's values (`steps.*.attempts[].status`), and `described_loosely` names the fields the schema does not yet describe in full (none today). It is a file of its own because a validator in strict mode, Ajv's default, refuses a keyword it does not know, so a release marker inside the schema would stop such a client from using it.",
 ];
 const CONSUMER_TABLE = [
   ['The list', 'What a word it does not know means'],
   ['`next_actions_status`', 'Act as for `report_to_user`.'],
   ['`agent_action`', 'Act as for `report_to_user`.'],
   [
-    "`failures[].stop_reason` (and `exhausted_by` inside a drive failure's `model_attempts`, described loosely until a later release)",
+    "`failures[].stop_reason`, and `exhausted_by` in a drive failure's `model_attempts`",
     'Act as for `non_retryable`: do not retry.',
   ],
   [
@@ -802,7 +1181,35 @@ const CONSUMER_TABLE = [
   ['`stuck_claims[].state`', 'The step is stuck.'],
   ['A status word', 'Not a success.'],
   ["A skip's `kind` or `rule`", 'The step did not run.'],
-  ["A drive failure's `error_class`", 'The drive failed.'],
+  ["A drive failure's `error_class`, and a model attempt's", 'The drive failed.'],
+  ["A model attempt's `kind`", 'Do not retry; a person decides.'],
+  ["A model attempt's `then`", 'A re-send followed; its kind is unknown.'],
+  [
+    '`cost_unrecorded`, a not-priced cause (`not_priced[].cause`)',
+    'The cost is unknown: do not add it to a total.',
+  ],
+  [
+    "A cache miss's `derived.cause` or `provider.reason`, a request's `cache_diagnostics.result` and its `type`",
+    'Why the cache missed is unknown.',
+  ],
+  ["A cache miss's `derived.rule`", 'How the miss was judged is unknown.'],
+  ['`cache_controls_rejected.proven` and its `fields`', 'Treat the cache controls as not proven.'],
+  [
+    "The `auto` choice's `prices.from`, `prices.cause`, `prices.excluded[]` and `prices.missing[]`, a price's `source_class`",
+    'Where the price came from is unknown.',
+  ],
+  [
+    '`predecessor.from`, `reference.from`',
+    'Which earlier request it was compared with is unknown.',
+  ],
+  [
+    "A lifetime's source (`lifetime_from`), the `auto` choice's `basis`",
+    'How long the cache entry lives is unknown.',
+  ],
+  [
+    'What a request asked of the cache (`cache_requested`, `cache_requested_source`, `cache_marked`, `marked`) and its `endpoint`',
+    "Treat the request's cache setting as unknown.",
+  ],
   ['A seal arm (`sealed_by_arm`)', 'How the run ended is not verified.'],
   ['`poll_reason`', 'Poll as for `fixed`.'],
   ['`on_expiry`', 'The question may end without an answer: ask the person.'],
@@ -818,7 +1225,7 @@ const CONSUMER_TABLE = [
 const COMPATIBILITY_SENTENCE =
   "The shape of `get_run_state`'s reply — every field and every word — is published as a JSON Schema in the repository, `docs/reference/mcp/run-state.schema.json`, built from the same lists the engine uses; every list in it is open and every object accepts a key it does not know, so a new word or field is never a breaking change. Added after version 0.50.0.";
 const CHANGELOG_LINE =
-  "- **`get_run_state`'s reply has a published schema.** `docs/reference/mcp/run-state.schema.json` describes every field and word of the reply, built from the same lists the engine uses, so the file and the code cannot drift (a test regenerates it). Every list in it is open and every object accepts a key it does not know: a new word or field is never a breaking change. `run-state.added-after.json` says the release each field and word arrived after, and the page says what a program does with a word it does not know. The cost view is described loosely until a later release.";
+  "- **`get_run_state`'s reply has a published schema.** `docs/reference/mcp/run-state.schema.json` describes every field and word of the reply, built from the same lists the engine uses, so the file and the code cannot drift (a test regenerates it). Every list in it is open and every object accepts a key it does not know: a new word or field is never a breaking change. `run-state.added-after.json` says the release each field and word arrived after, and the page says what a program does with a word it does not know.";
 
 describe('Q1 (#592) d2a — the published schema of get_run_state', () => {
   it(
@@ -926,8 +1333,8 @@ describe('Q1 (#592) d2a — the published schema of get_run_state', () => {
       //     each differing path with the type's side first.
       expect({ wordsDiffer, objectsDiffer }).toEqual({ wordsDiffer: [], objectsDiffer: [] });
       expect({ wordPaths: decl.words.size, objects: decl.objects.size }).toEqual({
-        wordPaths: 54,
-        objects: 50,
+        wordPaths: 122,
+        objects: 124,
       });
     },
     BUDGET,
@@ -1017,9 +1424,11 @@ describe('Q1 (#592) d2a — the published schema of get_run_state', () => {
     const [ok] = arms();
     const nodes = nodesByPath(ok!);
     const words = new Set<string>();
+    const fields = new Set<string>();
     const results = [...replies.ok].map(([label, reply]) => {
       const odd = withUnknowns(reply, nodes);
       odd.words.forEach((w) => words.add(w));
+      odd.fields.forEach((f) => fields.add(f));
       return {
         label,
         okArm: errorsOf(ok!, reply) ?? 'valid',
@@ -1046,10 +1455,18 @@ describe('Q1 (#592) d2a — the published schema of get_run_state', () => {
     const carried = new Set([...replies.ok.values()].flatMap((r) => Object.keys(r)));
     const top = Object.keys((ok!['properties'] as Json) ?? {});
     const listed = [...nodes].filter(([, n]) => wordsOf(n).length > 0).map(([p]) => p);
+    const costView = inventory(ok!).fields.filter((f) =>
+      COST_VIEW.some((root) => f.startsWith(`${root}.`) || f.startsWith(`${root}[]`)),
+    );
     expect({
       notCarried: top.filter((k) => !carried.has(k)),
       noUnknownWord: listed.filter((p) => !words.has(p)),
-    }).toEqual({ notCarried: [], noUnknownWord: NO_UNKNOWN_WORD });
+      costViewNotReached: costView.filter((f) => !fields.has(f)),
+    }).toEqual({
+      notCarried: [],
+      noUnknownWord: NO_UNKNOWN_WORD,
+      costViewNotReached: NO_COST_FIELD,
+    });
   });
 
   it('(e)(ii) #2464: every planted reply validates when the door withholds values (a leaf of steps arrives as its shape)', () => {
