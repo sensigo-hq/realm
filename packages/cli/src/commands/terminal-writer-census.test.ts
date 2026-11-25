@@ -182,6 +182,13 @@ const EXPECTED: Record<string, CensusEntry> = {
     reason: '#729 PR-3: no terminal write; the entry authorizes its one prose disable.',
     suppression: 'One message that names the program `realm agent` (L-2); no seal on it.',
   },
+  // Gap 2 (ii-b3): the drive's closing line after a failed step shares `no-restricted-syntax`.
+  'packages/cli/src/agent/run-agent.ts': {
+    count: 0,
+    classes: [],
+    reason: 'Gap 2 (ii-b3): no terminal write; the entry authorizes its one prose disable.',
+    suppression: 'One message that names the program `realm agent` (L-2); no seal on it.',
+  },
   // Q1 (#592) unit c: the startup mark's two prose sentences share `no-restricted-syntax`.
   'packages/cli/src/agent/startup-failure.ts': {
     count: 0,
@@ -456,7 +463,8 @@ describe('#367 — the terminal-writer census', () => {
     // #616 PR-2c c3: +1, run-scan.ts's facts-row read. c4-i: +1, in-memory-store.ts's facts-row read.
     // Q1 (#592) unit c: +1, startup-failure.ts's two prose disables.
     // Q1 (#592) d2a: +1, run-state-schema.ts's ok arm (a schema, not a write).
-    expect(claimed).toHaveLength(15);
+    // Gap 2 (ii-b3): +1, run-agent.ts's one prose disable (the closing line after a failed step).
+    expect(claimed).toHaveLength(16);
   });
 
   it("turbo.json globalDependencies matches the sweep table's join-list", () => {
