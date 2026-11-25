@@ -561,6 +561,30 @@ const _everyCacheAutoPricesFromWordsListed: [MissingCacheAutoPricesFromWords] ex
   : MissingCacheAutoPricesFromWords = true;
 void _everyCacheAutoPricesFromWordsListed;
 
+/** The words of `CacheAutoPrices.excluded`: the type the list below is checked against. */
+type CacheAutoPriceExclusion = NonNullable<
+  Extract<CacheAutoPrices, { from: 'economics' }>['excluded']
+>[number];
+/**
+ * Every lifetime the `auto` choice can exclude from the price file (`CacheAutoPrices.excluded`), in
+ * the type's order.
+ * Compile-checked both ways: a word added to the type and not to the list fails the build,
+ * and so does a word in the list the type does not have (Q1, #592, unit d2b).
+ * @public
+ */
+export const CACHE_AUTO_PRICE_EXCLUSIONS = [
+  'short',
+  'long',
+] as const satisfies readonly CacheAutoPriceExclusion[];
+type MissingCacheAutoPriceExclusions = Exclude<
+  CacheAutoPriceExclusion,
+  (typeof CACHE_AUTO_PRICE_EXCLUSIONS)[number]
+>;
+const _everyCacheAutoPriceExclusionsListed: [MissingCacheAutoPriceExclusions] extends [never]
+  ? true
+  : MissingCacheAutoPriceExclusions = true;
+void _everyCacheAutoPriceExclusionsListed;
+
 /**
  * A request's `cache_auto`: the basis of the `auto` choice, the gaps it read, and where its prices
  * came from. `prices` is absent when no price was needed (no kept gap).
