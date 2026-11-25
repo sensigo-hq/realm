@@ -75,8 +75,9 @@ export interface QuoteCheck {
   /** #845 (Q-C): on a `not_found` quote refused only for joining text across a blank line inside a
    *  sentence; each part, quoted on its own, may still be found. Absent otherwise. */
   readonly cause?: 'blank_line_join';
-  /** #845 (Q-C): the QUOTE's offsets where each refused join sits (where the piece after the join
-   *  begins), in quote order. Present with `cause`. */
+  /** #845 (Q-C): the QUOTE's offsets where each refused join sits: the first code unit after the
+   *  break the join replaces (after `…`, usually the space before the next piece), in quote order.
+   *  Present with `cause`. */
   readonly join_at?: readonly number[];
 }
 
