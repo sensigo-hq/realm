@@ -420,6 +420,8 @@ A step that ran more than once has one line for each attempt. `Input`, `Output` 
      Diagnostics (attempt 2/2): ~9 tokens (estimate, step input) | no preconditions
 ```
 
+A step that took its default answer after its model request failed (`on_model_failure: default`) ends with two attempts: the failed request, with its failure's line under its row (as on the `Failed:` line, without the step's name and the attempt), and then the default answer, which has no cost line. Its `Trace:` line is the failed request's. Added after version 0.50.0.
+
 A step with a gate prints, for each answer, the question as the person read it (when the gate has a message) and then the answer on one line. Nothing else from the answer's entry is printed: the choice is on the `Answer:` line, and the step's output, when there is one, is the `Output:` line above it.
 
 ```text

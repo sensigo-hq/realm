@@ -15,10 +15,11 @@ import { capText } from '../utils/redaction.js';
 import { readFailureWords, type FailureWordField } from './ways.js';
 
 /**
- * A failed step, as its last failed evidence entry records it. With the words: the error `code`,
- * its `category`, why Realm stopped retrying (`stop_reason`), the entry's action word
- * (`agent_action`) and the failure's kind (`failure_kind`: `transient` or `permanent`, on a step
- * that took its failure path after a failed model request), each as recorded and absent when the
+ * A failed step, as its last failed evidence entry records it (or, from
+ * {@link composeFailureOfEntry}, one error entry). With the words: the error `code`, its
+ * `category`, why Realm stopped retrying (`stop_reason`), the entry's action word (`agent_action`)
+ * and the failure's kind (`failure_kind`: `transient` or `permanent`, on the entry of a failed model
+ * request of a step with `on_model_failure`), each as recorded and absent when the
  * entry lacks it; a word outside its list is kept and named in `unknown`. Without them: `absent` says why — `written_before_failure_words`
  * (an entry an older Realm wrote, with its message) or `entry_not_found` (no failed entry on the
  * record). `message` is the entry's error text, bounded at 500 characters as `terminal_reason` is.
@@ -148,45 +149,62 @@ export function composeFailures(
   return names.map((step): FailureView => {
     const entry = lastFailed.get(step);
     if (entry === undefined) return { step, absent: 'entry_not_found' };
-    const message = messageOf(entry['error'] as string);
-    const attempt = typeof entry['attempt'] === 'number' ? entry['attempt'] : undefined;
-    // The recorded words, as strings: a newer Realm's word is outside our lists, which is what the
-    // reader exists to name, so the record's words are read as the entry's fields' type here.
-    const recorded = {
-      error_code: stringOr(entry['error_code']),
-      error_category: stringOr(entry['error_category']),
-      agent_action: stringOr(entry['agent_action']),
-      stop_reason: stringOr(entry['stop_reason']),
-    } as Pick<EvidenceSnapshot, FailureWordField>;
-    const read = readFailureWords(recorded);
-    if ('absent' in read) {
-      return {
-        step,
-        absent: read.absent,
-        message,
-        ...(attempt !== undefined ? { attempt } : {}),
-      };
-    }
-    const { words } = read;
-    // Gap 2, unit (ii-b1): the kind, read as the other words are — kept as recorded, and named in
-    // `unknown` when it is outside its list.
-    const kind = failureKindOf(entry);
-    const unknown: NonNullable<Extract<FailureView, { code: string }>['unknown']> = [
-      ...words.unknown.map((f) => VIEW_KEY[f]),
-      ...(kind !== undefined && !(FAILURE_KINDS as readonly string[]).includes(kind)
-        ? (['failure_kind'] as const)
-        : []),
-    ];
+    return composeFailureOfEntry(step, entry, { message: messageOf });
+  });
+}
+
+/**
+ * Gap 2, unit (iii): the per-entry half of {@link composeFailures} — one error entry's view, for a
+ * reader that has the entry itself: inspect's line under the error attempt of a step that took its
+ * default answer after its model request failed (the step is completed, so the composer, which
+ * walks `failed_steps`, never reaches it). `entry` is an evidence entry whose `error` is a string,
+ * read as the composer reads a stored one: a word that is not a string is read as absent.
+ */
+export function composeFailureOfEntry(
+  step: string,
+  stored: EvidenceSnapshot | Readonly<Record<string, unknown>>,
+  options: { message?: (text: string) => string } = {},
+): FailureView {
+  const entry = stored as Readonly<Record<string, unknown>>;
+  const messageOf = options.message ?? capText;
+  const message = messageOf(entry['error'] as string);
+  const attempt = typeof entry['attempt'] === 'number' ? entry['attempt'] : undefined;
+  // The recorded words, as strings: a newer Realm's word is outside our lists, which is what the
+  // reader exists to name, so the record's words are read as the entry's fields' type here.
+  const recorded = {
+    error_code: stringOr(entry['error_code']),
+    error_category: stringOr(entry['error_category']),
+    agent_action: stringOr(entry['agent_action']),
+    stop_reason: stringOr(entry['stop_reason']),
+  } as Pick<EvidenceSnapshot, FailureWordField>;
+  const read = readFailureWords(recorded);
+  if ('absent' in read) {
     return {
       step,
-      code: words.error_code,
-      ...(words.error_category !== undefined ? { category: words.error_category } : {}),
-      ...(words.stop_reason !== undefined ? { stop_reason: words.stop_reason } : {}),
-      ...(words.agent_action !== undefined ? { agent_action: words.agent_action } : {}),
-      ...(kind !== undefined ? { failure_kind: kind } : {}),
-      ...(attempt !== undefined ? { attempt } : {}),
+      absent: read.absent,
       message,
-      ...(unknown.length > 0 ? { unknown } : {}),
+      ...(attempt !== undefined ? { attempt } : {}),
     };
-  });
+  }
+  const { words } = read;
+  // Gap 2, unit (ii-b1): the kind, read as the other words are — kept as recorded, and named in
+  // `unknown` when it is outside its list.
+  const kind = failureKindOf(entry);
+  const unknown: NonNullable<Extract<FailureView, { code: string }>['unknown']> = [
+    ...words.unknown.map((f) => VIEW_KEY[f]),
+    ...(kind !== undefined && !(FAILURE_KINDS as readonly string[]).includes(kind)
+      ? (['failure_kind'] as const)
+      : []),
+  ];
+  return {
+    step,
+    code: words.error_code,
+    ...(words.error_category !== undefined ? { category: words.error_category } : {}),
+    ...(words.stop_reason !== undefined ? { stop_reason: words.stop_reason } : {}),
+    ...(words.agent_action !== undefined ? { agent_action: words.agent_action } : {}),
+    ...(kind !== undefined ? { failure_kind: kind } : {}),
+    ...(attempt !== undefined ? { attempt } : {}),
+    message,
+    ...(unknown.length > 0 ? { unknown } : {}),
+  };
 }

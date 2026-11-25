@@ -768,8 +768,9 @@ export function buildEvidenceByStep(run: ListedRecord): Record<string, Record<st
 }
 
 /**
- * One step's `$settlement` entry. Gap 2, unit (ii-a): `failure_kind` only on a step whose model
- * request failed and that took its failure path.
+ * One step's `$settlement` entry. Gap 2, units (ii-a) and (iii): `failure_kind` only on a step whose
+ * model request failed and that settled through `on_model_failure` (failed with `fail`, completed
+ * with its default answer with `default`).
  */
 type SettlementEntry = {
   settled_by_default: boolean;
@@ -826,8 +827,9 @@ type SettlementEntry = {
  *
  * **`failed` (issue #305) — STATUS ONLY, deliberately.** The entry says THAT a step failed; the one
  * "why" it carries is `failure_kind` (gap 2, unit (ii-a)), a closed word — `transient` or
- * `permanent` — on a step whose model request failed and that took its failure path, from that
- * entry's `diagnostics`; absent on every other step. Failure detail (messages, causes) stays on the
+ * `permanent` — on a step whose model request failed and that settled through `on_model_failure`
+ * (failed, or completed with its default answer, gap 2 unit (iii)), from that entry's
+ * `diagnostics`; absent on every other step, a default taken after refused answers included. Failure detail (messages, causes) stays on the
  * run record, which is where every surveyed
  * orchestrator keeps it: status enumeration is the field's in-band floor (GitHub Actions'
  * `needs.<job>.result`; Step Functions and Airflow make it query-reachable), while detail in a

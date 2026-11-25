@@ -33,7 +33,10 @@ export function assertStepSucceeded(evidence: EvidenceSnapshot[], stepId: string
 
 /**
  * Throws if no non-gate_response snapshot with step_id === stepId and status === 'error'
- * exists in evidence.
+ * exists in evidence. It passes on any step with an error entry, so also on a step that failed an
+ * attempt and then succeeded, and on a step that took its default answer after its model request
+ * failed (`on_model_failure: default`, whose error entry comes before the default); a step's
+ * outcome is `run.failed_steps`.
  */
 export function assertStepFailed(evidence: EvidenceSnapshot[], stepId: string): void {
   const found = evidence.some(

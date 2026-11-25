@@ -378,7 +378,7 @@ interface StepDefinition {
     preconditions?: string[];
     trust?: TrustLevel;
     llm_timeout_seconds?: number;
-    on_model_failure?: 'fail';
+    on_model_failure?: 'fail' | 'default';
     timeout_seconds?: number;
     retry?: RetryConfig;
     validation_exhaustion?: {

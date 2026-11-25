@@ -29,7 +29,7 @@
 // (AA-C1-03, AA-AUU1-03); a handler or adapter step's output declares no shape (AA-C1-02); a bare
 // auto step records its one dependency's output (docs/concepts/step-kinds.md); `$settlement.<s>`
 // holds three fields (AA-AUU1-04), and a fourth, `failure_kind`, only on a step whose model request
-// failed and that took its failure path (gap 2, unit (ii-a)); a reader with `all_success` runs only
+// failed and that has `on_model_failure` (gap 2, units (ii-a) and (iii)); a reader with `all_success` runs only
 // after each of its
 // dependencies completed (AA-MA4-01), and with exactly one dependency `one_success` is the same
 // rule (AA-MA4-07); a step that runs only after `<s>` failed finds `$settlement.<s>`, because a
@@ -183,13 +183,13 @@ export type AbsentCause =
   | { readonly rule: 'trigger_rule'; readonly step: string; readonly through?: string }
   /** A property its schema does not require. */
   | { readonly rule: 'optional'; readonly field: string }
-  /** A field only `default_output` carries (both schemas, `validation_exhaustion.mode: default`). */
+  /** A field only `default_output` carries (both schemas; `mode: default` or `on_model_failure: default`). */
   | { readonly rule: 'default_only'; readonly field: string }
   /** A position in a list, which may be shorter. */
   | { readonly rule: 'list_position'; readonly position: string }
   /**
    * Gap 2, unit (ii-a): `$settlement.<step>.failure_kind`, set only when the step's model request
-   * failed and the step took its failure path.
+   * failed and the step has `on_model_failure` (it failed, or took its default answer, unit (iii)).
    */
   | { readonly rule: 'model_failure_only'; readonly step: string };
 
@@ -617,8 +617,10 @@ function localShape(step: Obj, deps: readonly string[]): Shape {
     const schemas = [step['input_schema'], step['output_schema']].filter(isObj);
     if (schemas.length === 0) return { kind: 'none', choice: gated };
     const exhaustion = step['validation_exhaustion'];
+    // Gap 2, unit (iii): either trigger records `default_output` as written.
     const defaultOutput =
-      isObj(exhaustion) && exhaustion['mode'] === 'default'
+      isObj(exhaustion) &&
+      (exhaustion['mode'] === 'default' || step['on_model_failure'] === 'default')
         ? exhaustion['default_output']
         : undefined;
     return { kind: 'schemas', schemas, defaultOutput, choice: gated };
@@ -905,7 +907,8 @@ function judgeAnswer(
     (w): w is Extract<Walk, { kind: 'closed_miss' }> => w.kind === 'closed_miss',
   );
   if (refused !== undefined) {
-    // With `validation_exhaustion.mode: default` the step can record `default_output` as written,
+    // With `validation_exhaustion.mode: default` or `on_model_failure: default` (gap 2, unit (iii))
+    // the step can record `default_output` as written,
     // which the loader proves against `output_schema` alone (AA-AUU1-02, -21): a path it holds is
     // at most absent, never refused.
     if (resolvesIn(shape.defaultOutput, fields)) {

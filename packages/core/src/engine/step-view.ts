@@ -56,6 +56,7 @@ import {
   type GateClaimVerdict,
 } from './holder.js';
 import { answerAccountOf } from './answer-facts.js';
+import { isModelFailureDefault } from './defaulted-steps.js';
 
 /**
  * One figure and the scope it was summed over. Never a guess, never a default — `value` is the sum
@@ -964,7 +965,9 @@ function definitionSaysAgent(
  * Cost comes from `cache` alone, never from classification (rule 4) — this holds whatever the
  * definition says, and whether or not one exists at all: an `execution: 'auto'` step whose entry
  * still carries a `cache` object gets its cost rendered exactly like an agent step's would.
- * Classification (rule 5) only picks the ABSENCE cause for an entry with no `cache`.
+ * Classification (rule 5) only picks the ABSENCE cause for an entry with no `cache`, and picks none
+ * for the default answer of a step with `on_model_failure: default` (gap 2, unit (iii)): that entry
+ * makes no model call, and its request's cost is on the error entry before it.
  */
 export function composeStepViews(
   run: RunRecord,
@@ -1024,6 +1027,9 @@ export function composeStepViews(
       } else {
         attempt.cost_unreadable = true;
       }
+    } else if (isModelFailureDefault(entry)) {
+      // Gap 2, unit (iii): the default answer after a failed model request makes no model call; its
+      // request's cost, or its absence, is on the attempt before it.
     } else {
       // Rule 5 — classification, only ever for an entry with no `cache` at all.
       if (entry['tool_calls'] !== undefined) {

@@ -1477,7 +1477,13 @@ export const STEP_KEY_REGISTRY = {
     auto: { c: 'prohibited', by: [MINT], line: 'key', message_data: MSG_ON_MODEL_FAILURE },
     agent: {
       c: 'consumed',
-      where: [{ file: RA, pattern: "if (stepDef.on_model_failure !== 'fail') return undefined;" }],
+      where: [
+        {
+          file: RA,
+          pattern:
+            "if (stepDef.on_model_failure !== 'fail' && stepDef.on_model_failure !== 'default')",
+        },
+      ],
     },
     guard: {
       c: 'prohibited',

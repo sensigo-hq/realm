@@ -2174,24 +2174,38 @@ function parseWorkflowString(
         );
       }
 
-      // Gap 2, unit (ii-b2): on_model_failure's one value is 'fail'; 'default' (Words 8) comes later.
-      // As structured_output's value check: only on an agent step (a wrong-kind step gets only the
+      // Gap 2, units (ii-b2) and (iii): on_model_failure takes 'fail' or 'default'. As
+      // structured_output's value check: only on an agent step (a wrong-kind step gets only the
       // minted refusal, never the value noise).
       const onModelFailure = step['on_model_failure'];
+      const keyDefault = onModelFailure === 'default' && step['execution'] === 'agent';
       if (
         onModelFailure !== undefined &&
         step['execution'] === 'agent' &&
-        onModelFailure !== 'fail'
+        onModelFailure !== 'fail' &&
+        onModelFailure !== 'default'
       ) {
         errors.push(
           withStepLine(
             stepName,
-            onModelFailure === 'default'
-              ? `Step '${stepName}': on_model_failure: 'default' is not available yet: only 'fail' is. ` +
-                  "With 'fail', a failed model request fails the step; without the key, the drive " +
-                  "stops and the run stays open. Write 'fail', or remove the key. 'default' (complete " +
-                  'the step with its default answer) comes in a later version.'
-              : `Step '${stepName}': 'on_model_failure' must be the literal string 'fail' (got ${JSON.stringify(onModelFailure)})`,
+            `Step '${stepName}': 'on_model_failure' must be 'fail' or 'default' (got ${JSON.stringify(onModelFailure)})`,
+          ),
+        );
+      }
+      // Gap 2, unit (iii): 'default' needs the answer, with or without a validation_exhaustion block
+      // (a block that is not an object gets its own refusal below, and only that one).
+      const exhaustionDeclared = step['validation_exhaustion'];
+      if (
+        keyDefault &&
+        (exhaustionDeclared === undefined ||
+          (typeof exhaustionDeclared === 'object' &&
+            exhaustionDeclared !== null &&
+            !('default_output' in exhaustionDeclared)))
+      ) {
+        errors.push(
+          withStepLine(
+            stepName,
+            `Step '${stepName}': on_model_failure: 'default' requires 'validation_exhaustion.default_output' (the answer the step takes when its model request fails)`,
           ),
         );
       }
@@ -2280,7 +2294,8 @@ function parseWorkflowString(
       // own `output_schema` (REFUSE — B5, an unvalidatable default) against which `default_output` is
       // then AJV-proven AT LOAD TIME (REFUSE — B10, reusing the runtime validator so load-time and
       // runtime verdicts can never diverge); `default_output` present without `mode: 'default'` WARNS
-      // as dead config (never rejects — it's simply inert); an unknown sub-key WARNS.
+      // as dead config (never rejects — it's simply inert); an unknown sub-key WARNS. Gap 2, unit
+      // (iii): `on_model_failure: 'default'` reads `default_output` too, so it triggers the same checks.
       // #517 re-gate: kind half minted above; else-semantics preserved by the explicit conjunct.
       if (step['validation_exhaustion'] !== undefined && step['execution'] === 'agent') {
         if (
@@ -2335,15 +2350,20 @@ function parseWorkflowString(
           }
 
           const hasDefaultOutput = 'default_output' in exhaustionBlock;
-          if (modeValue === 'default') {
+          // Gap 2, unit (iii): the default answer is read under either trigger, so it is checked
+          // under either (a missing one is the key's refusal above when the key is set).
+          if (modeValue === 'default' || keyDefault) {
             if (!hasDefaultOutput) {
-              errors.push(
-                withStepLine(
-                  stepName,
-                  `Step '${stepName}': 'validation_exhaustion.mode: default' requires ` +
-                    `'default_output' (nothing to substitute on exhaustion)`,
-                ),
-              );
+              // With the key set, its refusal above is the one refusal.
+              if (!keyDefault) {
+                errors.push(
+                  withStepLine(
+                    stepName,
+                    `Step '${stepName}': 'validation_exhaustion.mode: default' requires ` +
+                      `'default_output' (nothing to substitute on exhaustion)`,
+                  ),
+                );
+              }
             } else if (refusedSchemaKeys.has('output_schema')) {
               // #586: the output_schema was already refused as a schema on its own line — the
               // B10 proof below would only restate the same compile failure in a worse voice.
@@ -2397,8 +2417,9 @@ function parseWorkflowString(
               }
             }
           } else if (hasDefaultOutput) {
-            // default_output present without mode: 'default' (mode: 'fail' or absent) — inert, not
-            // an error: WARN as dead config rather than silently ignoring it.
+            // default_output present with neither trigger (mode 'fail' or absent, and no
+            // on_model_failure: default) — inert, not an error: WARN as dead config rather than
+            // silently ignoring it.
             warnings.push({
               code: 'DEAD_VALIDATION_EXHAUSTION_CONFIG',
               severity: resolveSeverity('DEAD_VALIDATION_EXHAUSTION_CONFIG'),
@@ -2406,7 +2427,7 @@ function parseWorkflowString(
               step: stepName,
               message:
                 `Step '${stepName}': 'validation_exhaustion.default_output' is ignored without ` +
-                `'mode: default' — set 'validation_exhaustion.mode: default' to enable it, or ` +
+                `'mode: default' or 'on_model_failure: default' — set one of them to use it, or ` +
                 `remove 'default_output'.`,
             });
           }

@@ -1,6 +1,7 @@
 // Q1 (#592) unit a: a failed attempt's words, written on its evidence entry at the moment of
 // failure by the code that has them in hand — the error's code, category and action word, and on
-// the last entry of a step that failed, why retrying stopped.
+// the last entry of a step that failed (or, with `on_model_failure: default`, the error entry
+// before its default answer), why retrying stopped.
 import type { EvidenceSnapshot, StopReason } from '../types/run-record.js';
 import type { WorkflowError } from '../types/workflow-error.js';
 

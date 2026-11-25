@@ -58,8 +58,9 @@ async function call(d: WorkflowDefinition, mf: ModelFailure) {
 
 const refusal = (...clauses: string[]) =>
   `executeChain was called with ${clauses.length} invalid option(s): ${clauses.join('; ')}. Nothing was read or written.`;
+// Gap 2, unit (iii): clause (a) admits `default` too.
 const A =
-  "options.modelFailure must be given only for a step that declares on_model_failure: fail ('classify' does not)";
+  "options.modelFailure must be given only for a step that declares on_model_failure: fail or default ('classify' does not)";
 const B = (r: string) =>
   `options.modelFailure.stop_reason must be non_retryable or no_retry_policy for a step that declares no retry ('classify' declares none; '${r}' says its retry used up its tries or its time)`;
 const C =
