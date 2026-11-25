@@ -318,7 +318,7 @@ describe('the language unit §3: a match never splits a character, and its edges
     });
   });
 
-  it('the read after a match steps past every mark, the needle’s last character past its own: a quote ending inside a word is `not_found`; `The fee is 1\u0336` in `1\u0336,000` stays `exact` (#845’s R-A2)', () => {
+  it('the read after a match steps past every mark, the needle’s last character past its own: a quote ending inside a word is `not_found`, and so is `The fee is 1\u0336` in `1\u0336,000` (#845’s R-A2)', () => {
     const rows: Array<[string, string, string]> = [
       [
         'If any Rent is un, U+034F, paid',
@@ -330,12 +330,13 @@ describe('the language unit §3: a match never splits a character, and its edges
       [
         'The fee is 1\u0336 in 1\u0336,000',
         state('The fee is 1\u0336', 'The fee is 1\u0336,000 a year'),
-        'exact',
+        // #845 (R-A2) re-pin: the needle's `1` is read past its mark, so its number goes on
+        'not_found',
       ],
     ];
-    // (a) red when the read after a match no longer steps past marks (the first three read `exact`);
-    //     the `1\u0336,000` row is the stated limit (`rightNumberEdgeHolds` reads the needle's last
-    //     character as before); (b) prints each differing row's label and state.
+    // (a) red when the read after a match no longer steps past marks (the first three read `exact`),
+    //     or the needle's last character is read as one UTF-16 unit (the `1\u0336,000` row reads
+    //     `exact`); (b) prints each differing row's label and state.
     expect(misses(rows)).toEqual([]);
   });
 

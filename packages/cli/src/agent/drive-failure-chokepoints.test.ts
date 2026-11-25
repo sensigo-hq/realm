@@ -538,9 +538,12 @@ describe('#401 chokepoint (4) — codes that mint NOTHING', () => {
 
   it('EVERY OTHER CODE ⇒ no entry — the step SETTLED, and failed_steps plus evidence carry it', async () => {
     // A registered handler that throws. The observable that matters: the run is NOT terminal (a
-    // second, independent step is still eligible) and the step settled — so the visibility already
+    // second, independent step is still pending) and the step settled — so the visibility already
     // exists and an entry would duplicate it. Two steps deliberately: a single-step construction
     // SEALS the run, and the fence's terminal-skip would then mask a mint-on-everything mutant.
+    // Gap 2 (ii-b3): the drive goes on after `first` fails, so `second` is a step this program has
+    // no handler for (a capability block, which mints nothing, #401): the drive stops there with the
+    // run still open. A second throwing step would fail too and end the run.
     const store = new InMemoryStore({ leases: createLeaseDouble() });
     const registry = new ExtensionRegistry();
     registry.register('handler', 'boom', {
@@ -555,7 +558,12 @@ describe('#401 chokepoint (4) — codes that mint NOTHING', () => {
       schema_version: 1,
       steps: {
         first: { description: 'First', execution: 'auto', handler: 'boom' },
-        second: { description: 'Second', execution: 'auto', handler: 'boom', depends_on: [] },
+        second: {
+          description: 'Second',
+          execution: 'auto',
+          handler: 'not_registered',
+          depends_on: [],
+        },
       },
     } as unknown as WorkflowDefinition;
     const deps = makeDeps({ store, registry });
@@ -565,6 +573,7 @@ describe('#401 chokepoint (4) — codes that mint NOTHING', () => {
     await runAgent(deps, { definition: wf, params: {} });
 
     const run = await onlyRun(store);
+    expect(run.failed_steps).toEqual(['first']);
     expect(run.terminal_state).toBe(false);
     expect(run.drive_failures).toBeUndefined();
     vi.restoreAllMocks();

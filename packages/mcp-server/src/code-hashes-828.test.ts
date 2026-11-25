@@ -39,6 +39,8 @@ describe('#828 unit 1 — the code-hashes subpath', () => {
         'clearCodeHashes',
         'hashFile',
         'joinSweeps',
+        // #828 PR B: the lockfile read from the disk now, for the pure identity and the recompute.
+        'lockfileNow',
         'sha256Hex',
         'sweepFolder',
         'sweepTree',

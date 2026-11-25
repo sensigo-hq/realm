@@ -756,6 +756,10 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
   // decision C179: the agent steps this drive answered — the `Result` line names the program that
   // gave any other answer. Decision C189: filled from each engine call's reply (`answerRecordedByCall`).
   const answeredHere = new Set<string>();
+  // Gap 2, unit (ii-b3): the steps this drive's own calls failed, in order, on a run the failure left
+  // open — the drive went on after each. Never read from the record: an earlier drive's failure is
+  // not this drive's. Any one makes the exit 1, and the completed run's last line names them.
+  const failedHere: string[] = [];
   // decision C179: the drive stopped on a step another process holds (the 60s watch ended unchanged,
   // or, #729 CW-5b, every step it watched is one only a person can free, at the take-back cap).
   let stoppedOnInFlight = false;
@@ -3025,7 +3029,13 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             console.error(
               `• Step '${stepName}' failed (${result.error_code}): its model request failed, and the step has on_model_failure: fail.`,
             );
-            if (errorSnapshot?.record.terminal_state === true) endingSaid = true;
+            // Gap 2, unit (ii-b3): the run is still open — the drive goes on (as below).
+            if (errorSnapshot?.record.terminal_state !== true) {
+              failedHere.push(stepName);
+              hold(errorSnapshot!);
+              continue;
+            }
+            endingSaid = true;
             printResumeLine(errorSnapshot);
             return 'failed';
           }
@@ -3200,6 +3210,16 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                 model_text: failureText(callsSaved ? undefined : textsForStep),
                 ...(wedgeTries !== undefined ? { model_attempts: wedgeTries } : {}),
               });
+            }
+            // Gap 2, unit (ii-b3): the step this drive's call ran is on the record as failed (core's
+            // classifier; a wedge or a refusal leaves it open and stops below), and the run is still
+            // open. The `✗` line above said it; the drive goes on with whatever became ready — core
+            // never offers a failed step again — and its exit says it at the end. A failure whose
+            // own reply ended the run stops as before: its `Resume:` line, exit 1.
+            if (resultStop?.kind === 'failed' && errorSnapshot?.record.terminal_state !== true) {
+              failedHere.push(stoppedStep);
+              hold(errorSnapshot!);
+              continue;
             }
           }
           printResumeLine(errorSnapshot);
@@ -3442,6 +3462,15 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
       console.log(formatted);
     }
 
+    // Gap 2, unit (ii-b3): a step failed during this drive — the exit is 1, as before the drive went
+    // on after a failure, and this line says why.
+    if (failedHere.length > 0) {
+      console.error(
+        // eslint-disable-next-line no-restricted-syntax -- prose naming the program, not a command to copy (#729 PR-3, L-2); the interpolated value is the step list, outside it.
+        `\n✗ The run completed, but a step failed during this drive (${failedHere.join(', ')}); realm agent exits with code 1.`,
+      );
+      return 'failed';
+    }
     return 'completed';
   }
 

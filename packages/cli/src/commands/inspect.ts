@@ -111,7 +111,11 @@ import type {
   PriceSource,
   RunCost,
 } from '@sensigo/realm';
-import { recomputeIdentity } from '../extensions/extension-identity.js';
+import {
+  lockfileDiffers,
+  lockfileWords,
+  recomputeIdentity,
+} from '../extensions/extension-identity.js';
 import { modelTextLines } from './model-text-lines.js';
 import { autoEvidence, autoPricesText, lifetimeText } from '../agent/prompt-cache.js';
 import {
@@ -352,6 +356,8 @@ function renderExtensionIdentity(
       if (entry.signals.git_head !== undefined) sig.push(`git_head ${entry.signals.git_head}`);
       lines.push(`     signals: ${sig.join(', ')}`);
     }
+    // #828 PR B: the lockfile, one line in one of four forms; an entry with `error` prints none.
+    if (entry.error === undefined) lines.push(`     lockfile: ${lockfileLine(entry.lockfile)}`);
     lines.push(
       chalk.dim(
         `     coverage (${entry.coverage}): covers files under ${entry.tree.roots.join(', ') || '(none)'} matching ${entry.tree.rules}; imports outside these roots, node_modules, and runtime dynamic imports are NOT covered.`,
@@ -423,6 +429,21 @@ function renderExtensionIdentity(
         ),
       );
     }
+    // #828 PR B: the lockfile, re-located and re-hashed, when the entry recorded one.
+    if (result.lockfile !== undefined) {
+      const { recorded, current } = result.lockfile;
+      if (current === undefined) {
+        lines.push(chalk.yellow("  lockfile: not checked (the project's folder is not known)"));
+      } else if (!lockfileDiffers(recorded, current)) {
+        lines.push(chalk.green('  lockfile: same'));
+      } else {
+        lines.push(
+          chalk.yellow(
+            `  lockfile: DIFFERS (recorded ${lockfileWords(recorded)}, current ${lockfileWords(current)})`,
+          ),
+        );
+      }
+    }
     if (result.signals !== undefined || last.signals !== undefined) {
       lines.push(
         chalk.dim(
@@ -433,6 +454,16 @@ function renderExtensionIdentity(
   }
 
   return lines;
+}
+
+/** #828 PR B: an identity entry's lockfile line, after `lockfile: ` (inspect only). */
+function lockfileLine(lockfile: ExtensionIdentityEntry['lockfile']): string {
+  if (lockfile === undefined) return 'not recorded (added after version 0.50.0)';
+  if ('sha256' in lockfile)
+    return `${lockfile.files.join(', ')} (sha256 over these files: ${lockfile.sha256})`;
+  return lockfile.absent === 'none_found'
+    ? 'none found'
+    : `${lockfile.files.join(', ')} cannot be read`;
 }
 
 /** Truncates a JSON-serialised summary to a readable single line. */

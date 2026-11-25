@@ -254,13 +254,13 @@ After those two lines, or where they would be, a run whose request named a callb
 ```text
 Callback: delivered to 127.0.0.1:5678 1s ago (2026-11-22T14:17:57Z), attempt 1
 Callback: pending, attempt 1, last answer 503, next try in 1m (2026-11-22T14:20:02Z)
-Callback: due since 2s ago (2026-11-22T14:19:30Z); sent only while realm listen with a matching allow-list runs
+Callback: due since 2s ago (2026-11-22T14:19:30Z), attempt 1, last answer 503; it waits for the next pass of a realm listen that can send it
 Callback: failed after 2 attempts, last answer 410
 Callback: expired at attempt 2, not delivered within its time limit
 Callback: waiting for the run to finish
 ```
 
-A callback that was sent shows its host and when. For one that is waiting, `pending` means the next try is still to come, and `due` means a try is due now and waits for the next pass of a `realm listen` that can send it (one with `--callback-allow` or `--callback-allow-private`, the workflow, a key it can read and an entry for the receiver); `waiting for the run to finish` means the run has not ended.
+A callback that was sent shows its host and when. For one that is waiting, `pending` means the next try is still to come, and `due` means a try is due now and waits for the next pass of a `realm listen` that can send it (one with `--callback-allow` or `--callback-allow-private`, the workflow, a key it can read and an entry for the receiver); `waiting for the run to finish` means the run has not ended. After a try the line also says the attempt and, when the try got an answer, the last answer; a callback never tried says only when it fell due, and one that expired before a first try says `expired before its first try`.
 
 ### The blocks in the middle
 
@@ -271,7 +271,7 @@ Each block is printed only when the run has something for it.
 | `Drive failures`     | `realm agent` gave up on the run at least once | The time, the step, the model provider, the kind of failure, and what the provider had billed; with prices, what that cost (added after version 0.47.0). |
 | `Run Health`         | Realm finds something wrong with the run       | One line for each finding: its name, the step, and a sentence.                                                                                           |
 | `Extension Identity` | The run used code from the project             | Each time the code was loaded: the files, their hashes, and which folder the hashes cover.                                                               |
-| `Drift check`        | `--check-drift` was given                      | For each recorded file, `same`, `DIFFERS` or `MISSING`.                                                                                                  |
+| `Drift check`        | `--check-drift` was given                      | For each recorded file, `same`, `DIFFERS` or `MISSING`; for the lockfile, `same`, `DIFFERS` or `not checked` (added after version 0.50.0).               |
 | `Trace Summary`      | A step recorded trace entries                  | How many steps have entries, how many entries were kept and dropped, and the most frequent events.                                                       |
 
 ```text
@@ -302,6 +302,7 @@ Drift check (pure recompute of the last execution entry under its recorded rules
   module /srv/shop/handlers.mjs: DIFFERS (recorded 074edb9b29c550845e841aa1cc5a50a3e3db987fcb7d0507578386c94636c5a2, current 47deda97f85b1ad782597ae27a4d52018e681f1d12faed33d081fbe507609fa4)
   manifest /srv/shop/realm.yaml: same
   tree: DIFFERS (recorded 651600beac492f14fe9677119e5a98e61490fb3f28dca090d5eae80fbb9e4f0a, current 6dec55f0ef0b606aa70ea9c0414b86d3749fe594b4efd9dfb47acfd3b37d7fa4)
+  lockfile: same
 ```
 
 The check reads the files and computes their hashes. It does not load or run them. For a run that used no project code, it prints `Drift check: no extension identity recorded for this run.`; for a run whose only entry is the one written when it was created, `Drift check: no execution has recorded project code yet; the run's creation entry is not compared.`
