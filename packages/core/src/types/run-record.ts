@@ -1076,8 +1076,9 @@ export type OutputSource = (typeof OUTPUT_SOURCES)[number];
  * `StepMeta.modelText` as it is given: it neither masks nor cuts it. Each of `requests` names what
  * one request sent and what came back by their places in `messages`, its tool list by its place in
  * `tools`, and carries its `request_id` (the id of its entry in `diagnostics.cache.requests`). On
- * the error entry of a step that failed because its model request failed (`on_model_failure:
- * fail`), the last request may have had no answer: its `request_id` and `reply` are `null`.
+ * the error entry of a step whose model request failed and that settled through `on_model_failure`
+ * (`fail` or `default`), the last request may have had no answer: its `request_id` and `reply` are
+ * `null`.
  *
  * A message's text is its parts in order with no separator: a text part as it is; any other part
  * as compact JSON, of a tool part's `type`, `id`, `tool_use_id`, `tool_call_id`, `name`, `input`,
@@ -1305,10 +1306,11 @@ export interface EvidenceSnapshot {
    */
   clipped_to_ms?: number;
   /**
-   * Issue #140: present ONLY on the FINAL attempt's snapshot of a step that stopped retrying
-   * because either its attempt budget or its total-time cap ran out — `'attempts'` when
-   * `attemptsUsed === maxAttempts` drove the stop, `'total_timeout'` when the cap did (wins the
-   * both-true tie). Durable even when the settle path does NOT wrap the error into
+   * Issue #140: present ONLY on the FINAL attempt's snapshot (on a step that then took its default
+   * answer under `on_model_failure: default`, the error entry before that answer) of a step that
+   * stopped retrying because either its attempt budget or its total-time cap ran out — `'attempts'`
+   * when `attemptsUsed === maxAttempts` drove the stop, `'total_timeout'` when the cap did (wins
+   * the both-true tie). Durable even when the settle path does NOT wrap the error into
    * `STEP_RETRY_EXHAUSTED` (the issue #134 recoverable-incapability carve-out never wraps) — this
    * evidence stamp is then the only record of *why* the step stopped.
    *
@@ -1337,8 +1339,9 @@ export interface EvidenceSnapshot {
    */
   agent_action?: AgentAction;
   /**
-   * On the last entry of a step that failed, and on the entry of a step handed back because this
-   * runner has no handler or adapter for it (the step is not failed): why Realm stopped retrying —
+   * On the last entry of a step that failed, on the error entry before the default answer of a step
+   * with `on_model_failure: default`, and on the entry of a step handed back because this runner
+   * has no handler or adapter for it (the step is not failed): why Realm stopped retrying —
    * `no_retry_policy` (the step has no `retry` block), `total_timeout` (its `total_timeout_seconds`
    * ran out), `non_retryable` (the error is not retried), or `attempts` (its `max_attempts` were
    * used).

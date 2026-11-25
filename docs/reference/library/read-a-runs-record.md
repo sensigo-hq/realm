@@ -1161,8 +1161,9 @@ code-point boundary (`cut` gives the bytes kept and the text's full size). The e
 `StepMeta.modelText` as it is given: it neither masks nor cuts it. Each of `requests` names what
 one request sent and what came back by their places in `messages`, its tool list by its place in
 `tools`, and carries its `request_id` (the id of its entry in `diagnostics.cache.requests`). On
-the error entry of a step that failed because its model request failed (`on_model_failure:
-fail`), the last request may have had no answer: its `request_id` and `reply` are `null`.
+the error entry of a step whose model request failed and that settled through `on_model_failure`
+(`fail` or `default`), the last request may have had no answer: its `request_id` and `reply` are
+`null`.
 
 A message's text is its parts in order with no separator: a text part as it is; any other part
 as compact JSON, of a tool part's `type`, `id`, `tool_use_id`, `tool_call_id`, `name`, `input`,

@@ -101,11 +101,13 @@ describe('gap 2 (ii-b2), check 9 — the words', () => {
     );
     claim(
       'docs/reference/run-record-and-export.md',
-      'On the error entry of a step that failed because its model request failed (`on_model_failure: fail`), the last request may have had no answer: its `request_id` and `reply` are `null`.',
+      // Gap 2 (iii), wording correction 1, items 3 and 4: both values.
+      'On the error entry of a step whose model request failed and that settled through `on_model_failure` (`fail` or `default`), the last request may have had no answer: its `request_id` and `reply` are `null`.',
     );
     claim(
       'docs/reference/library/read-a-runs-record.md',
-      'On the error entry of a step that failed because its model request failed (`on_model_failure: fail`), the last request may have had no answer: its `request_id` and `reply` are `null`.',
+      // Gap 2 (iii), wording correction 1, items 3 and 4: both values.
+      'On the error entry of a step whose model request failed and that settled through `on_model_failure` (`fail` or `default`), the last request may have had no answer: its `request_id` and `reply` are `null`.',
     );
   });
 

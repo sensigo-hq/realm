@@ -66,7 +66,7 @@ describe('gap 2 (ii-b3), check 9 — the words', () => {
     // default-answer-drive-g2iii.test.ts, check 1 (a `✗` line, then Words 1, the step completed).
     claim(
       AGENT,
-      "| `✗ Step '<step>' … failed: …` or `• Step '<step>' failed (<CODE>): …` | A step was recorded as failed (`realm run inspect` lists it under `Failed:`), and the run is still open | The failure's reason, as in [When it stops](#when-it-stops). The drive goes on with whatever became ready: a step that runs on the failure, and other branches. Added after version 0.50.0, which stopped there. A `✗` line followed by `• Step '<step>': this drive let its claim go …` is a step left open, not failed: the drive stops (the next row). A `✗` line followed by `• Step '<step>' took its default answer …` is a step completed with its default answer, not failed. |",
+      "| `✗ Step '<step>' … failed: …` or `• Step '<step>' failed (<CODE>): …` | A step was recorded as failed (`realm run inspect` lists it under `Failed:`), and the run is still open | The failure's reason, as in [When it stops](#when-it-stops). The drive goes on with whatever became ready: a step that runs on the failure, and other branches. Added after version 0.50.0, which stopped there. A `✗` line followed by `• Step '<step>': this drive let its claim go …` is a step left open, not failed: the drive stops (the next row). A `✗` line, then later `• Step '<step>' took its default answer …` for the same step, is a step completed with its default answer, not failed; when another step runs straight after it, that step's lines can come between the two. |",
     );
     // Executed by check 5 (a failure that ended the run) and check 7 (a step left open).
     claim(

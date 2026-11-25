@@ -97,7 +97,26 @@ describe('gap 2 (iii), check 12 — the words', () => {
     // Executed by the drive's check 1 (the default attempt's view has neither) and core's check 1c.
     claim(
       'docs/reference/mcp/run-state-and-health.md',
-      "so does an agent step with no agent profile when the run's workflow cannot be read, because Realm then cannot tell it from a step that runs code; so does the default answer of a step with `on_model_failure: default`, whose request's cost is on the attempt before it.",
+      "so does an agent step with no agent profile when the run's workflow cannot be read, because Realm then cannot tell it from a step that runs code; so does the default answer of a step with `on_model_failure: default`, whose request's cost, or why it has none, is on the attempt before it.",
+    );
+  });
+
+  it('realm-run-reading.md and run-record-and-export.md: where the failure is on a defaulted step', () => {
+    // Wording correction 1, item 2. Executed by the drive's check 1 (the failure line under attempt
+    // 1/2, no cost line for attempt 2/2) and the trace cell (the Trace line is the error entry's).
+    claim(
+      'docs/reference/cli/realm-run-reading.md',
+      "A step that took its default answer after its model request failed (`on_model_failure: default`) ends with two attempts: the failed request, with its failure's line under its row (as on the `Failed:` line, without the step's name and the attempt), and then the default answer, which has no cost line. Its `Trace:` line is the failed request's. Added after version 0.50.0.",
+    );
+    // Items 5 and 7. Executed by the drive's check 1 (the record: `exhausted_by` and `stop_reason`
+    // on the error entry, none on the default entry).
+    claim(
+      'docs/reference/run-record-and-export.md',
+      '`attempts` or `total_timeout`, on the last attempt of a step that ran out of either; on a step that then took its default answer (`on_model_failure: default`), on the error entry before that answer.',
+    );
+    claim(
+      'docs/reference/run-record-and-export.md',
+      'On the last entry of a step that failed, on the error entry before the default answer of a step with `on_model_failure: default`, and on the entry of a step handed back',
     );
   });
 
@@ -105,7 +124,7 @@ describe('gap 2 (iii), check 12 — the words', () => {
     // Executed by core's check 11 (the default completes the step after the error entry).
     claim(
       'CHANGELOG.md',
-      'Core settles the step failed with one error entry, or, for a step with `on_model_failure: default`, completes it with its default answer after that entry and mints the code:',
+      'Core settles the step failed with one error entry, or, for a step with `on_model_failure: default`, completes it with its default answer after that entry, and mints the code:',
     );
     // Executed by the drive's checks 1–9 and the loader's cells.
     claim(
