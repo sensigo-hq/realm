@@ -42,7 +42,8 @@ describe('gap 2 (ii-b2), check 9 — the words', () => {
     claim('docs/reference/workflow/step-fields.md', '| `on_model_failure` | no | yes | no | no |');
     claim(
       'docs/reference/workflow/step-fields.md',
-      '| `on_model_failure` | `fail` | None | What happens to the step when its model request fails, under `realm agent`: see [Agent-step controls](agent-step-controls.md#on_model_failure). |',
+      // Gap 2, unit (iii), Words 11: both values.
+      '| `on_model_failure` | `fail` or `default` | None | What happens to the step when its model request fails, under `realm agent`: see [Agent-step controls](agent-step-controls.md#on_model_failure). |',
     );
   });
 
@@ -75,10 +76,11 @@ describe('gap 2 (ii-b2), check 9 — the words', () => {
       CONTROLS,
       'After the step fails, `realm agent` goes on with whatever became ready, and exits with code 1 at the end.',
     );
-    // Executed by check 8 (refused on auto, guard, finalizer; `default` and another value refused).
+    // Executed by check 8 (refused on auto, guard, finalizer; another value refused). Gap 2, unit
+    // (iii), Words 10: `default` is the second value (on-model-failure-default-g2iii.test.ts).
     claim(
       CONTROLS,
-      '`fail` is the one value. The key is refused on `auto`, `guard` and `finalizer` steps. A run an assistant drives over MCP makes no model call through Realm, so the key does nothing there.',
+      'The key takes `fail` or `default`. The key is refused on `auto`, `guard` and `finalizer` steps. A run an assistant drives over MCP makes no model call through Realm, so the key does nothing there.',
     );
   });
 
@@ -86,7 +88,8 @@ describe('gap 2 (ii-b2), check 9 — the words', () => {
     // Executed by check 2's retry row (STEP_RETRY_EXHAUSTED, the tries on the error entry).
     claim(
       'docs/reference/workflow/retry-and-timeouts.md',
-      'After the last try, the drive stops and the run stays open, as after any failed model call, unless the step declares [`on_model_failure: fail`](agent-step-controls.md#on_model_failure), which fails the step (`STEP_RETRY_EXHAUSTED`) and keeps the tries on its error entry.',
+      // Gap 2, unit (iii), Words 15: both values.
+      'After the last try, the drive stops and the run stays open, as after any failed model call, unless the step declares [`on_model_failure`](agent-step-controls.md#on_model_failure): `fail` fails the step (`STEP_RETRY_EXHAUSTED`), `default` completes it with its default answer, and either way the tries stay on its error entry.',
     );
   });
 
@@ -136,7 +139,8 @@ describe('gap 2 (ii-b2), check 9 — the words', () => {
     // retry) and check 3 (a 401 stays).
     claim(
       AGENT,
-      "With `on_model_failure: fail`, a model request that failed for good fails the step instead (the seventh row), and `realm run inspect` lists it under `Failed:`: a lost connection, a timeout, a `5xx` or a `400` answer, or an answer Realm cannot use, once the step's `retry`, if it has one, has stopped. A refused key and a model that does not exist stay as above.",
+      // Gap 2, unit (iii), Words 14: the sentence for `default` (the eighth row) between the two.
+      "With `on_model_failure: fail`, a model request that failed for good fails the step instead (the seventh row), and `realm run inspect` lists it under `Failed:`: a lost connection, a timeout, a `5xx` or a `400` answer, or an answer Realm cannot use, once the step's `retry`, if it has one, has stopped. With `on_model_failure: default`, it completes the step with its default answer instead (the eighth row). A refused key and a model that does not exist stay as above.",
     );
   });
 
@@ -157,7 +161,8 @@ describe('gap 2 (ii-b2), check 9 — the words', () => {
     // Executed by check 7 (the three refusals and the legal pairs) and check 2 (the drive passes it).
     claim(
       'CHANGELOG.md',
-      "`realm agent` and `realm listen` pass it for a step that declares `on_model_failure: fail`, and `executeChain` refuses it for a step that does not, or with a `stop_reason` the step's `retry` contradicts (`attempts` or `total_timeout` without one, `no_retry_policy` with one).",
+      // Gap 2, unit (iii), Words 15: made true in place.
+      "`realm agent` and `realm listen` pass it for a step that declares `on_model_failure: fail` or `default`, and `executeChain` refuses it for a step that declares neither, or `default` without `validation_exhaustion.default_output`, or with a `stop_reason` the step's `retry` contradicts (`attempts` or `total_timeout` without one, `no_retry_policy` with one).",
     );
     // Executed by checks 2–4 and 8.
     claim(

@@ -3,10 +3,10 @@
 //
 // `on_model_failure: fail` lets an agent step fail when its model request fails, so the workflow's
 // failure route runs. It decides what happens to a model request, so only an agent step can carry
-// it; its one value is `fail` (`default` comes later). The loader refuses the key on any other kind
-// of step with the registry's four-clause message, `default` with its own sentence, and any other
-// value as `structured_output`'s value is refused. Every assertion carries (a) the break that turns
-// it red and (b) what it prints.
+// it; it takes `fail` or (gap 2, unit (iii)) `default`. The loader refuses the key on any other kind
+// of step with the registry's four-clause message, `default` without its answer with Words 4, and
+// any other value with Words 6. Every assertion carries (a) the break that turns it red and (b) what
+// it prints.
 import { describe, expect, it } from 'vitest';
 import { loadWorkflowFromString } from './yaml-loader.js';
 
@@ -25,8 +25,11 @@ function refusalOf(yaml: string): string | null {
 const WORDS_7_ELSEWHERE =
   "'on_model_failure' is only valid on execution: agent steps — it decides what happens when the step's model request fails, and no other kind makes one, so here it would decide nothing. Move it to the agent step whose failure it should decide, or remove it.";
 const AUTO_TAIL = " An auto step already fails after its handler's last try.";
-const WORDS_8 =
-  "Step 's': on_model_failure: 'default' is not available yet: only 'fail' is. With 'fail', a failed model request fails the step; without the key, the drive stops and the run stays open. Write 'fail', or remove the key. 'default' (complete the step with its default answer) comes in a later version.";
+// Gap 2, unit (iii): 'default' arrived; without its answer it gets Words 4 (its own cells are in
+// on-model-failure-default-g2iii.test.ts), and the (ii-b2) "not available yet" sentence is gone.
+const WORDS_8_GONE = "on_model_failure: 'default' is not available yet";
+const WORDS_4 =
+  "Step 's': on_model_failure: 'default' requires 'validation_exhaustion.default_output' (the answer the step takes when its model request fails)";
 
 const agentWith = (value: string) =>
   [
@@ -99,15 +102,21 @@ describe('gap 2 (ii-b2), check 8 — on_model_failure at load', () => {
     }).toEqual({ shared: true, autoTail: kind === 'auto' });
   });
 
-  it("'default' is refused with Words 8", () => {
-    // (a) red when the 'default' sentence is removed or changed; (b) prints the message.
-    expect(refusalOf(agentWith('default'))).toContain(WORDS_8);
+  it("'default' without its answer gets Words 4 (unit (iii)), never the old sentence", () => {
+    const got = refusalOf(agentWith('default'));
+    // (a) red when the (ii-b2) refusal of 'default' is kept; (b) prints the message.
+    expect({ words4: got?.includes(WORDS_4), old: got?.includes(WORDS_8_GONE) }, got ?? '').toEqual(
+      {
+        words4: true,
+        old: false,
+      },
+    );
   });
 
-  it('any other value is refused as structured_output’s value is', () => {
+  it('any other value is refused, naming both values (unit (iii), Words 6)', () => {
     // (a) red when the value check is removed (the file loads); (b) prints the message.
     expect(refusalOf(agentWith('always'))).toContain(
-      `Step 's': 'on_model_failure' must be the literal string 'fail' (got "always")`,
+      `Step 's': 'on_model_failure' must be 'fail' or 'default' (got "always")`,
     );
   });
 });

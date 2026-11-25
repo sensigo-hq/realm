@@ -841,14 +841,16 @@ export interface StepDefinition {
    */
   llm_timeout_seconds?: number;
   /**
-   * Gap 2, unit (ii-b2): what happens to this agent step when its model request fails. `'fail'`, the
-   * one value: `realm agent` fails the step, so the workflow's failure route can run (a
-   * `trigger_rule: one_failed` step, a finalizer), when the request failed for good
+   * Gap 2, unit (ii-b2): what happens to this agent step when its model request fails for good
    * (`STEP_RETRY_EXHAUSTED` or `MODEL_REQUEST_FAILED`, with `$settlement.<step>.failure_kind`).
-   * Absent: the drive stops and gives the step back, and the run stays open. Only valid on
-   * `execution: agent` steps; `'default'` is refused (a later version).
+   * `'fail'`: `realm agent` fails the step, so the workflow's failure route can run (a
+   * `trigger_rule: one_failed` step, a finalizer). `'default'` (gap 2, unit (iii)): it completes the
+   * step with `validation_exhaustion.default_output`, which is then required and checked against
+   * the step's `output_schema` at load; the record keeps the error entry, then the default answer
+   * marked `settled_by_default`. Absent: the drive stops and gives the step back, and the run stays
+   * open. Only valid on `execution: agent` steps.
    */
-  on_model_failure?: 'fail';
+  on_model_failure?: 'fail' | 'default';
   timeout_seconds?: number;
   retry?: RetryConfig;
   /**
@@ -865,8 +867,9 @@ export interface StepDefinition {
    * `default_output` once the threshold is reached — bounded, declared, and disclosed (never a
    * silent fallback): the run proceeds as if the agent had submitted `default_output` itself.
    *
-   * `default_output` (PR-2): REQUIRED when `mode: 'default'`; ignored (and warned as dead config)
-   * otherwise. Only legal when the step also declares `output_schema` (an undeclared schema makes
+   * `default_output` (PR-2): REQUIRED when `mode: 'default'` or (gap 2, unit (iii))
+   * `on_model_failure: 'default'`, the answer the step takes when its model request fails; ignored
+   * (and warned as dead config) otherwise. Only legal when the step also declares `output_schema` (an undeclared schema makes
    * the substitute unvalidatable — refused at load) — `default_output` is then AJV-validated
    * against that `output_schema` AT LOAD TIME, so a fallback that would itself fail runtime
    * validation is refused before the workflow ever registers. Typed `unknown` here; every runtime

@@ -781,8 +781,9 @@ describe('fix 1, unit 1 — check 14: the both-schemas exception', () => {
     //     (2) prints both lists.
     expect(findings(yaml).messages).toEqual([
       "Step 'refund': input_map 'reason' reads 'context.resources.propose.fallback_reason', which " +
+        // gap 2, unit (iii), Words 7: the reason covers both ways to the default answer.
         "may be absent when this step runs ('fallback_reason' is only in default_output, which the " +
-        'step records only when its answers are refused too often); the step then receives no ' +
+        'step records only when it takes its default answer); the step then receives no ' +
         `value for 'reason'. (line ${lineOf(yaml, '      reason: ')})`,
     ]);
   });

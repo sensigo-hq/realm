@@ -50,9 +50,10 @@ ${notify}`;
 const gate = (message: string): string =>
   `    execution: auto\n    trust: human_confirmed\n    gate:\n      choices: [ok]\n      message: ${JSON.stringify(message)}\n`;
 
+// Gap 2, unit (iii), Words 7: the reason names the key, which `default` also takes.
 const WHY =
-  "'failure_kind' is set only when step 'classify''s model request failed and the step took its " +
-  'failure path';
+  "'failure_kind' is set only when step 'classify''s model request failed and the step has " +
+  'on_model_failure';
 
 describe('gap 2, unit (ii-a) — the loader judges failure_kind may be absent (check 8)', () => {
   it('a gate message reading it without | default is refused TEMPLATE_PATH_NO_DEFAULT', () => {

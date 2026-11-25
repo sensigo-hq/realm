@@ -315,23 +315,29 @@ export interface StepDiagnostics {
    * rejections") — free diagnostic, never gates anything. Also present on the synthesized
    * evidence snapshot a `VALIDATION_EXHAUSTED` terminalization mints (the just-persisted count),
    * and on the synthesized SUCCESS snapshot a declared default-settle mints (issue #220 PR-2 —
-   * see `settled_by_default` below). Optional-additive: absent on every pre-#220 snapshot and on
-   * any snapshot for a step that was never rejected.
+   * see `settled_by_default` below), where it is the step's real count: on the default answer of
+   * a step with `on_model_failure: default` (gap 2, unit (iii)) it is 0 when no answer was refused.
+   * Optional-additive: absent on every pre-#220 snapshot and on any other snapshot for a step that
+   * was never rejected.
    */
   validation_rejections?: number;
   /**
    * Issue #220 PR-2 (declared fail-open): `true` on the ONE synthesized SUCCESS evidence snapshot
-   * minted when a step's exhausted schema-rejection budget is settled via its declared
-   * `validation_exhaustion.default_output` rather than by the agent's own submission. Never present
-   * on any other snapshot (absent, never `false`) — a step that succeeded on its own submission,
-   * even one that previously accrued rejections, carries only `validation_rejections` here.
+   * minted when a step is settled via its declared `validation_exhaustion.default_output` rather
+   * than by the agent's own submission: after its exhausted schema-rejection budget, or (gap 2,
+   * unit (iii)) after its model request failed under `on_model_failure: default`, where the entry
+   * also carries `failure_kind` and follows the request's error entry. Never present on any other
+   * snapshot (absent, never `false`) — a step that succeeded on its own submission, even one that
+   * previously accrued rejections, carries only `validation_rejections` here.
    */
   settled_by_default?: boolean;
   /**
-   * Gap 2, unit (ii-a): on the entry of an agent step that failed because its model request failed
-   * and it took its failure path, why: `transient` (a later try might pass) or `permanent` (it will
-   * fail the same way). A later step reads it as `$settlement.<step>.failure_kind`. Absent on every
-   * other entry, and on every entry written before this field existed.
+   * Gap 2, unit (ii-a): on the entry of an agent step whose model request failed and that settled
+   * through `on_model_failure` (its error entry, and with `default` also the default entry after
+   * it, unit (iii)), why: `transient` (a later try might pass) or `permanent` (it will fail the
+   * same way). A later step reads it as `$settlement.<step>.failure_kind`. Absent on every other
+   * entry, a default taken after refused answers included, and on every entry written before this
+   * field existed.
    */
   failure_kind?: 'transient' | 'permanent';
   /** Issue #236 — disclosure for a `structured_output: 'strict'`-declared step's attempt. See

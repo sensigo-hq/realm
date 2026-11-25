@@ -3744,7 +3744,7 @@ StepDefinition · type · public
       preconditions?: string[];
       trust?: TrustLevel;
       llm_timeout_seconds?: number;
-      on_model_failure?: 'fail';
+      on_model_failure?: 'fail' | 'default';
       timeout_seconds?: number;
       retry?: RetryConfig;
       validation_exhaustion?: {
@@ -4723,6 +4723,7 @@ compileDisclosure · value · internal
 compileSchema · value · internal
 composeCostView · value · internal
 composeDriveFailureCosts · value · internal
+composeFailureOfEntry · value · internal
 composeFailures · value · internal
 composeGateClaimSentence · value · internal
 composeNextActionsStatusWord · value · internal
@@ -4940,6 +4941,7 @@ isFenceRunReader · value · internal
 isFinalReminder · value · internal
 isGateTrust · value · internal
 isIdleForCleanup · value · internal
+isModelFailureDefault · value · internal
 isPastDeadline · value · internal
 isRaceStop · value · internal
 isRetryableArtifactErrno · value · internal

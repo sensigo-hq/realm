@@ -519,7 +519,7 @@ export { adoptsLine, partitionBufferedEntries } from './engine/trace-adoption.js
 export type { BufferedEntryPartition } from './engine/trace-adoption.js';
 // The shared default-settled-step derivation (issue #232) — the ONE authoritative scan of
 // `evidence[].diagnostics.settled_by_default`; see defaulted-steps.ts's own module doc.
-export { deriveDefaultedSteps } from './engine/defaulted-steps.js';
+export { deriveDefaultedSteps, isModelFailureDefault } from './engine/defaulted-steps.js';
 // Atomic settlement (issue #279, increment 1, PR-A) — the pure transform + finalizer selection.
 // DORMANT: no engine/mcp call site constructs a SettlementDelta or calls settleStep in this
 // release (enforced by an in-repo source-text guard — see its own test for the exact scope).
@@ -744,7 +744,7 @@ export type {
 } from './engine/step-view.js';
 // Q1 (#592) unit b: a run's failures, read from the record — one composer, shown by get_run_state's
 // `failures[]` and by `realm run inspect` under `Failed:`.
-export { composeFailures } from './engine/failure-view.js';
+export { composeFailures, composeFailureOfEntry } from './engine/failure-view.js';
 // Q1 (#592) d1b: the words a failure's `unknown` and `absent` can hold.
 export { FAILURE_UNKNOWN_WORDS, FAILURE_ABSENT_CAUSES } from './engine/failure-view.js';
 export type { FailureView } from './engine/failure-view.js';

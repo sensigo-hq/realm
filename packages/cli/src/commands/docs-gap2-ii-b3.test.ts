@@ -61,11 +61,12 @@ describe('gap 2 (ii-b3), check 9 — the words', () => {
       AGENT,
       `| \`${WORDS3}\` | The run completes after a step failed during the drive | The steps that failed, in order; the exit code is 1. Added after version 0.50.0. |`,
     );
-    // Wording correction 1: its last sentence is executed by check 7's give-back cell (a `✗` line,
-    // then the give-back line, and the drive stops).
+    // Wording correction 1: its last sentence but one is executed by check 7's give-back cell (a `✗`
+    // line, then the give-back line, and the drive stops). Gap 2, unit (iii), Words 14: the last, by
+    // default-answer-drive-g2iii.test.ts, check 1 (a `✗` line, then Words 1, the step completed).
     claim(
       AGENT,
-      "| `✗ Step '<step>' … failed: …` or `• Step '<step>' failed (<CODE>): …` | A step was recorded as failed (`realm run inspect` lists it under `Failed:`), and the run is still open | The failure's reason, as in [When it stops](#when-it-stops). The drive goes on with whatever became ready: a step that runs on the failure, and other branches. Added after version 0.50.0, which stopped there. A `✗` line followed by `• Step '<step>': this drive let its claim go …` is a step left open, not failed: the drive stops (the next row). |",
+      "| `✗ Step '<step>' … failed: …` or `• Step '<step>' failed (<CODE>): …` | A step was recorded as failed (`realm run inspect` lists it under `Failed:`), and the run is still open | The failure's reason, as in [When it stops](#when-it-stops). The drive goes on with whatever became ready: a step that runs on the failure, and other branches. Added after version 0.50.0, which stopped there. A `✗` line followed by `• Step '<step>': this drive let its claim go …` is a step left open, not failed: the drive stops (the next row). A `✗` line followed by `• Step '<step>' took its default answer …` is a step completed with its default answer, not failed. |",
     );
     // Executed by check 5 (a failure that ended the run) and check 7 (a step left open).
     claim(

@@ -482,6 +482,10 @@ export interface ExecuteChainOptions {
    * Gap 2, unit (ii-a): the named agent step failed because its model request failed, and it takes
    * its failure path. Core settles the step failed with one error evidence entry, written as a
    * validation-exhausted step's is: nothing is dispatched or validated, and `input` must be `{}`.
+   * For a step that declares `on_model_failure: default` (gap 2, unit (iii)), core instead completes
+   * it with its `validation_exhaustion.default_output` after that entry: a second entry, the default
+   * answer, with `settled_by_default`, the same `failure_kind` and the step's count of refused
+   * answers, and no usage, texts or tries (those stay on the error entry).
    * The caller passes facts only; core mints the code, its category, its action and `retryable`:
    * `STEP_RETRY_EXHAUSTED` when the step's `retry` used up its tries (`stop_reason: 'attempts'`) or
    * its time (`'total_timeout'`), otherwise `MODEL_REQUEST_FAILED`. Five pairs of `kind` and
@@ -489,7 +493,8 @@ export interface ExecuteChainOptions {
    * step's `retry` does not try it again) or `no_retry_policy` (the step has no `retry`);
    * `permanent` with `non_retryable`. Any other pair, a value outside its type, a step that is not
    * an agent step or a non-empty `input` is refused before anything is read or written. So are (gap
-   * 2, unit (ii-b2)) a step that does not declare `on_model_failure: fail`, a `stop_reason` of
+   * 2, unit (ii-b2)) a step that declares neither `on_model_failure: fail` nor `default` (or
+   * `default` with no `validation_exhaustion.default_output`, unit (iii)), a `stop_reason` of
    * `attempts` or `total_timeout` for a step that declares no `retry`, and `no_retry_policy` for a
    * step that declares one. The entry's `diagnostics.failure_kind` is `kind`, which a later step reads as
    * `$settlement.<step>.failure_kind`.
@@ -2297,7 +2302,10 @@ type StepDiagnosticsArm =
   | { kind: 'default_settle'; rejections: number }
   | { kind: 'exhausted'; rejections: number }
   // gap 2, unit (ii-a): the model-failure path's entry — `failure_kind`, no rejection count.
-  | { kind: 'model_failure'; failureKind: 'transient' | 'permanent' };
+  | { kind: 'model_failure'; failureKind: 'transient' | 'permanent' }
+  // gap 2, unit (iii): the default answer after that entry (`on_model_failure: default`) — the
+  // answer, not a model call: no usage and no `structured_output` stamp; the step's real count.
+  | { kind: 'model_failure_default'; failureKind: 'transient' | 'permanent'; rejections: number };
 
 /**
  * Gap 2, unit (ii-a): the error core mints for an agent step whose model request failed and that
@@ -2376,6 +2384,11 @@ function buildStepDiagnostics(
   } else if (arm.kind === 'model_failure') {
     // gap 2, unit (ii-a): why the step's model request failed; no rejection was counted.
     diag.failure_kind = arm.failureKind;
+  } else if (arm.kind === 'model_failure_default') {
+    diag.settled_by_default = true;
+    diag.failure_kind = arm.failureKind;
+    diag.validation_rejections = arm.rejections;
+    return diag;
   } else {
     if (arm.kind === 'default_settle') diag.settled_by_default = true;
     diag.validation_rejections = arm.rejections;
@@ -3641,8 +3654,13 @@ async function executeStepBody(
   // substitution (exhaustion armed above AND the step opted into mode: 'default') — computed once,
   // function-scoped (not inside the `if (bypassDispatch)` block below, which closes long before
   // D5's Step-6 envelope build reads this local) so it survives to every downstream read site.
-  const settledByDefault =
+  // Gap 2, unit (iii): or the step's model request failed and it declares `on_model_failure:
+  // default` — keyed on the member itself, never on the bypass (an exhaustion under the key alone
+  // still fails the step). The two never meet: Steps 2b and 2c run only without the member.
+  const modelFailureDefault = modelFailureError !== null && stepDef?.on_model_failure === 'default';
+  const exhaustionDefault =
     exhaustion !== null && stepDef?.validation_exhaustion?.mode === 'default';
+  const settledByDefault = exhaustionDefault || modelFailureDefault;
   let attemptsUsed = 0;
   const allEvidence: EvidenceSnapshot[] = [];
   let currentWarn: string | undefined;
@@ -4095,7 +4113,7 @@ async function executeStepBody(
     }
   } // end issue #220 `if (!bypassDispatch)` — the dispatch loop
 
-  if (bypassDispatch && settledByDefault) {
+  if (exhaustionDefault) {
     // issue #220 PR-2 (D4): declared fail-open. The step opted into `validation_exhaustion.mode:
     // 'default'` and its schema-rejection budget is exhausted — SETTLE the step SUCCESSFULLY with
     // the declared `default_output` instead of terminalizing. `dispatchError` stays `null` here
@@ -4172,7 +4190,9 @@ async function executeStepBody(
     // `!bypassDispatch` guards keep the caller's stop reason and core's code. ONE error entry, built
     // as #220's below is: every `stepMeta` member and the trace spread, so Step 5's buffer delete
     // never destroys adopted lines unrecorded. `input` is `{}` (admission), so no `_debug` rides it.
-    dispatchError = modelFailureError;
+    // Gap 2, unit (iii): with `on_model_failure: default` the same entry, then the default answer;
+    // `dispatchError` stays null, so the step settles complete through #220's Step 6.
+    if (!modelFailureDefault) dispatchError = modelFailureError;
     const failure = modelFailure!;
     // #715 (b) (A.9): an EVENT instant on the store's clock.
     const failedAt = store.clock.now();
@@ -4225,6 +4245,46 @@ async function executeStepBody(
         ? { exhausted_by: failure.stop_reason }
         : {}),
     });
+    if (modelFailureDefault) {
+      // The answer, not a second model call: the profile, input `{}` and the default; the failed
+      // request's usage, texts, tries, tool calls and trace stay once, on the entry above.
+      const defaultOutput = stepDef!.validation_exhaustion!.default_output as Record<
+        string,
+        unknown
+      >;
+      output = defaultOutput;
+      allEvidence.push(
+        captureEvidence({
+          stepId: options.command,
+          ...(options.driver !== undefined ? { drivenBy: options.driver } : {}),
+          startedAt: failedAt,
+          completedAt: failedAt,
+          input: effectiveInput,
+          output: defaultOutput,
+          diagnostics: buildStepDiagnostics(
+            {
+              kind: 'model_failure_default',
+              failureKind: failure.kind,
+              rejections: run.validation_rejections?.[options.command] ?? 0,
+            },
+            {
+              inputTokenEstimate,
+              preconditionTrace,
+              stepDef,
+              structuredOutputMeta: undefined,
+              usage: undefined,
+            },
+          ),
+          ...(failedProfileData !== undefined
+            ? { agentProfile: failedProfile!, agentProfileHash: failedProfileData.content_hash }
+            : {}),
+        }),
+      );
+      traceWarnings.push(
+        `Step '${options.command}' settled with its declared default_output after its model ` +
+          `request failed (${modelFailureError.code}; on_model_failure: 'default')`,
+      );
+    }
   } else if (bypassDispatch) {
     // issue #220: terminalize. `dispatchError` is PRE-SET to the minted VALIDATION_EXHAUSTED error
     // HERE, BEFORE the retry-wrap block below — that block's own `!bypassDispatch` guard is what
