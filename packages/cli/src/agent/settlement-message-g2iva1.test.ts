@@ -250,16 +250,31 @@ describe('gap 2 (iv-a1), check 1 — an agent step fails under on_model_failure:
 describe('gap 2 (iv-a1), check 2 — a handler’s text with fake secrets: hidden in the question and the Slack post, unmasked for the next step', () => {
   const RAW = `token=${PAT_VALUE} and ${ENV_VALUE} again`;
   const MESSAGE = `Handler 'boom' threw: ${RAW}`;
-  // `truncate: N` keeps N characters with its ellipsis: N lands 9 characters into the environment
-  // value, so a cut made after the hiding would show its first six.
-  const N = MESSAGE.indexOf(ENV_VALUE) + 10;
+  const HIDDEN = "Handler 'boom' threw: token=[REDACTED] and [REDACTED] again";
+  // `truncate: N` keeps the text before the last space at or before N, then `…`: it never keeps
+  // part of a word, so a cut on the raw text keeps a space-free secret whole or not at all. What
+  // tells the two orders apart is where the cut lands. N is the space after the environment
+  // secret's marker in the hidden text, so a cut on the hidden text keeps that marker; on the raw
+  // text N falls 7 characters into the environment secret, and the cut backs up to "and".
+  const N = HIDDEN.indexOf(' again') + 1;
   const GATE_MESSAGE = [
     'plain: {{ context.resources.$settlement.boom.message }}',
     `cut: {{ context.resources.$settlement.boom.message | truncate: ${N} }}`,
+    'lower: {{ context.resources.$settlement.boom.message | lower }}',
     'dump: {{ context.resources.$settlement.boom }}',
   ].join('\n');
 
-  it('plain, | truncate: N (N inside the environment secret) and the whole-entry dump each hide both; the handler gets the text', async () => {
+  it('the fixture: N falls inside the environment secret in the raw text', () => {
+    const at = MESSAGE.indexOf(ENV_VALUE);
+    // (a) red when the texts change so N no longer lands inside the secret; (b) prints the indexes.
+    expect({ inside: N > at && N < at + ENV_VALUE.length, N, at }).toEqual({
+      inside: true,
+      N,
+      at,
+    });
+  });
+
+  it('plain, | truncate: N (N inside the environment secret), | lower and the whole-entry dump each hide both; the handler gets the text', async () => {
     const def = wf('g2iva1-c2', {
       boom: { description: 'Fail.', execution: 'auto', handler: 'boom' },
       next: onFailure('boom', { handler: 'capture', ...readsMessage('boom') }),
@@ -290,18 +305,24 @@ describe('gap 2 (iv-a1), check 2 — a handler’s text with fake secrets: hidde
     await postGateViaApi('xoxb-fake', 'C1', run.pending_gate!, record.id, true);
     const posted = slackBodies.join('\n');
     const shows = (text: string) => ({
-      env: text.includes(ENV_VALUE),
-      envPrefix: text.includes(ENV_VALUE.slice(0, 6)),
-      pattern: text.includes(PAT_VALUE),
+      env: text.toLowerCase().includes(ENV_VALUE.toLowerCase()),
+      envPrefix: text.toLowerCase().includes(ENV_VALUE.slice(0, 6).toLowerCase()),
+      pattern: text.toLowerCase().includes(PAT_VALUE.toLowerCase()),
     });
+    const line = (name: string): string | undefined =>
+      question.split('\n').find((l) => l.startsWith(`${name}: `));
     // (a) red when the field is masked at the declared tier only (both secrets show), when the
-    //     stronger hiding runs after the filters (the truncated prefix shows), or when it matches
-    //     the exact path only (the dump shows them); (b) prints what shows where.
+    //     stronger hiding runs after the filters (the cut lands on the raw text and loses the
+    //     marker, and the lowered environment secret shows), or when it matches the exact path
+    //     only (the dump shows them); (b) prints what shows where, and the question.
     expect(
       {
         field: buildSettlementNamespace(run)['boom']?.message,
         question: shows(question),
-        lines: question.split('\n').map((l) => l.split(':')[0]),
+        plain: line('plain'),
+        cut: line('cut'),
+        lower: line('lower'),
+        dump: question.includes('"message": "' + HIDDEN + '"'),
         slack: shows(posted),
         handler: captured.map((p) => p['why']),
       },
@@ -309,7 +330,10 @@ describe('gap 2 (iv-a1), check 2 — a handler’s text with fake secrets: hidde
     ).toEqual({
       field: MESSAGE,
       question: { env: false, envPrefix: false, pattern: false },
-      lines: expect.arrayContaining(['plain', 'cut', 'dump']),
+      plain: `plain: ${HIDDEN}`,
+      cut: "cut: Handler 'boom' threw: token=[REDACTED] and [REDACTED]…",
+      lower: `lower: ${HIDDEN.toLowerCase()}`,
+      dump: true,
       slack: { env: false, envPrefix: false, pattern: false },
       handler: [MESSAGE],
     });
