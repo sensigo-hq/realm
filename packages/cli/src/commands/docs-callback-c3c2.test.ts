@@ -502,7 +502,7 @@ describe('C3c-2 — cell 2: the log rows are real', { timeout: 60_000 }, () => {
       await w.pass(port, { lists: privateList('http://127.0.0.1:1') })(live);
       said['notAllowed'] = w.rows();
     }
-    // C3d-A: never sent: 3 days after the run finished, no try made (the sweep ends it).
+    // C3d-A: never sent: 3 days after the run finished, no try made (the sweep expires it).
     {
       const w = await world();
       const port = await receiver(200);
@@ -512,7 +512,7 @@ describe('C3c-2 — cell 2: the log rows are real', { timeout: 60_000 }, () => {
       await w.pass(port)(live);
       said['neverSent'] = w.rows();
     }
-    // stopped: one try made (503), then 3 days after the run finished (the sweep ends it).
+    // stopped: one try made (503), then 3 days after the run finished (the sweep expires it).
     {
       const w = await world();
       const port = await receiver(503);
@@ -839,8 +839,8 @@ describe('C3c-2 — cell 5: the callers are the code’s', () => {
         /callbacks\?\.deleteAllForRun\(run\.id\)/,
       ),
       'listen: the pass': has('commands/listen.ts', /makeCallbackPass\(\{/),
-      'pass: endOverdue, due, claim, freezeBody, mark': [
-        'endOverdue',
+      'pass: expireOverdue, due, claim, freezeBody, mark': [
+        'expireOverdue',
         'due',
         'claim',
         'freezeBody',
@@ -863,7 +863,7 @@ describe('C3c-2 — cell 5: the callers are the code’s', () => {
       'listen: keys.list': true,
       'listen: deleteAllForRun (a run that did not start)': true,
       'listen: the pass': true,
-      'pass: endOverdue, due, claim, freezeBody, mark': true,
+      'pass: expireOverdue, due, claim, freezeBody, mark': true,
       'inspect: read': true,
       'read address: read': true,
       'purge: read (its hold)': true,

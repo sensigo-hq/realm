@@ -173,10 +173,10 @@ export type CallbackMarkResult =
   | { readonly applied: false; readonly reason: 'no_row' | 'not_pending' | 'lost_claim' };
 
 /**
- * A row `endOverdue` ended, as it ended it: `attempts` is how many tries began (0: never sent).
+ * A row `expireOverdue` expired, as it expired it: `attempts` is how many tries began (0: never sent).
  * @beta
  */
-export interface CallbackEnded {
+export interface CallbackExpiredItem {
   readonly run_id: string;
   readonly workflow_id: string;
   readonly host: string;
@@ -185,7 +185,7 @@ export interface CallbackEnded {
 
 /**
  * A store's callback store (`RunStore.callbacks`): one row per run, written by `create`.
- * `due`, `claim`, `endOverdue` and a `retry` mark each take ONE raw reading of the store's clock,
+ * `due`, `claim`, `expireOverdue` and a `retry` mark each take ONE raw reading of the store's clock,
  * refused or applied; `read`, `countPending`, `countWaiting`, `freezeBody`, the other marks and the
  * purge pair take none; a malformed request throws before any reading. A run without a row is no
  * error.
@@ -199,10 +199,10 @@ export interface CallbackStore extends PerRunArtifactStore {
   /** At most `limit` (1–1,000) rows to send now, one per host per round. */
   due(limit: number): Promise<CallbackItem[]>;
   /**
-   * Ends, `failed` with `expired`, at most `limit` (1–1,000) rows that are due and whose run
-   * finished 3 days or more before the reading, oldest first; what it ended, in that order.
+   * Expires, `failed` with `expired`, at most `limit` (1–1,000) rows that are due and whose run
+   * finished 3 days or more before the reading, oldest first; what it expired, in that order.
    */
-  endOverdue(limit: number): Promise<CallbackEnded[]>;
+  expireOverdue(limit: number): Promise<CallbackExpiredItem[]>;
   claim(runId: string, request: CallbackClaimRequest): Promise<CallbackClaimResult>;
   freezeBody(runId: string, token: string, body: string): Promise<CallbackFreezeResult>;
   mark(runId: string, token: string, result: CallbackMarkRequest): Promise<CallbackMarkResult>;
@@ -462,18 +462,18 @@ export function countWaitingCallbacks(
 }
 
 /**
- * What `endOverdue` ends at `at`, pure: `pending` rows whose `next_attempt_at` is at or before `at`,
+ * What `expireOverdue` expires at `at`, pure: `pending` rows whose `next_attempt_at` is at or before `at`,
  * whose run is finished (`runOf`: `undefined` when it does not exist), and whose anchor (the row's
  * `finished_at`, else the run's `updatedAt`, as the purge's hold reads it) is 3 days or more before
  * `at`; oldest anchor first, ties by `run_id`, at most `limit`. Each is written as a `failed` mark
  * writes it, with `expired`.
  */
-export function endOverdueCallbacks(
+export function expireOverdueCallbacks(
   rows: readonly CallbackRow[],
   runOf: (runId: string) => { readonly finished: boolean; readonly updatedAt: string } | undefined,
   at: Date,
   limit: number,
-): { ended: CallbackEnded[]; writes: CallbackRow[] } {
+): { expired: CallbackExpiredItem[]; writes: CallbackRow[] } {
   const overdue: Array<{ row: CallbackRow; anchor: string }> = [];
   for (const row of rows) {
     if (row.status !== 'pending' || !isPastDeadline(row.next_attempt_at, at)) continue;
@@ -487,7 +487,7 @@ export function endOverdueCallbacks(
   overdue.sort((a, b) => binary(a.anchor, b.anchor) || binary(a.row.run_id, b.row.run_id));
   const taken = overdue.slice(0, limit).map(({ row }) => row);
   return {
-    ended: taken.map(({ run_id, workflow_id, host, attempts }) => ({
+    expired: taken.map(({ run_id, workflow_id, host, attempts }) => ({
       run_id,
       workflow_id,
       host,

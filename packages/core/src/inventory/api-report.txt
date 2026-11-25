@@ -592,8 +592,8 @@ CallbackClaimedItem · type · beta
       readonly first_attempt_at: string;
   };
 
-CallbackEnded · type · beta
-  interface CallbackEnded {
+CallbackExpiredItem · type · beta
+  interface CallbackExpiredItem {
       readonly run_id: string;
       readonly workflow_id: string;
       readonly host: string;
@@ -779,7 +779,7 @@ CallbackStore · type · beta
       countPending(): Promise<number>;
       countWaiting(): Promise<number>;
       due(limit: number): Promise<CallbackItem[]>;
-      endOverdue(limit: number): Promise<CallbackEnded[]>;
+      expireOverdue(limit: number): Promise<CallbackExpiredItem[]>;
       claim(runId: string, request: CallbackClaimRequest): Promise<CallbackClaimResult>;
       freezeBody(runId: string, token: string, body: string): Promise<CallbackFreezeResult>;
       mark(runId: string, token: string, result: CallbackMarkRequest): Promise<CallbackMarkResult>;
@@ -4849,7 +4849,6 @@ dueExpiryWords · value · internal
 dueReminderWork · value · internal
 durationWords · value · internal
 emptyDisclosureSet · value · internal
-endOverdueCallbacks · value · internal
 endedByLine · value · internal
 endedRunWayOutOf · value · internal
 endedRunWaysSentence · value · internal
@@ -4873,6 +4872,7 @@ executeEngineStep · value · public
 executeStep · value · public
   function executeStep(store: RunStore, definition: WorkflowDefinition, options: ExecuteStepOptions): Promise<EngineReply>;
 
+expireOverdueCallbacks · value · internal
 expiryCarriedOutLine · value · internal
 expiryReceiptLine · value · internal
 expiryReceiptOf · value · internal
