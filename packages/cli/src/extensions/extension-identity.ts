@@ -4,18 +4,20 @@
 // and manipulates paths — which is exactly why read-only commands (`realm run inspect
 // --check-drift`) may use it without ever gaining the capability to execute project code.
 // A structural test (read-only-no-extensions.test.ts) enforces this.
-import { readFileSync } from 'node:fs';
+import { readFileSync, realpathSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type {
   ExtensionIdentityEntry,
+  ExtensionIdentityLockfile,
   ExtensionIdentityModule,
   ExtensionIdentitySignals,
 } from '@sensigo/realm';
-import { extensionIdentityDiffers } from '@sensigo/realm';
+import { extensionIdentityDiffers, extensionLockfileDiffers } from '@sensigo/realm';
 // #828 unit 1: the dir_tree_v1 sweep lives in the one hashing home, the realm-mcp subpath (loads no
 // code either); this module re-exports its rule string and keeps its pure functions.
 import {
   DIR_TREE_V1_RULES,
+  lockfileNow,
   sha256Hex,
   sweepTree,
   type TreeSweepResult,
@@ -43,6 +45,8 @@ export interface ComputeIdentityValues {
   tree?: (roots: string[]) => TreeSweepResult;
   /** The signals (`undefined` is a value: none). */
   signals?: () => ExtensionIdentitySignals | undefined;
+  /** #828 PR B: the project's lockfile, as the process read it once. */
+  lockfile?: () => ExtensionIdentityLockfile;
 }
 
 export interface ComputeIdentityOptions {
@@ -60,6 +64,11 @@ export interface ComputeIdentityOptions {
   secretNames?: string[];
   /** #828 unit 1: the loader's values, taken before the code first loaded. */
   values?: ComputeIdentityValues;
+  /**
+   * #828 PR B: the project's folder (a real path), where the lockfile's walk starts when no loader
+   * value is given; with neither, the member is `{ absent: 'none_found' }`.
+   */
+  projectFolder?: string;
 }
 
 /** sha256 hex of raw bytes/text — exported for the loader's manifest content hash. */
@@ -126,6 +135,8 @@ export function computeExtensionIdentity(
   const tree = values?.tree !== undefined ? values.tree(roots) : sweepTree(roots);
 
   const signals = values?.signals !== undefined ? values.signals() : collectSignals(opts.trustRoot);
+  const lockfile =
+    values?.lockfile !== undefined ? values.lockfile() : lockfileNow(opts.projectFolder);
   return {
     captured_at: opts.capturedAt ?? new Date().toISOString(),
     pid: opts.pid ?? process.pid,
@@ -138,8 +149,21 @@ export function computeExtensionIdentity(
       ? { secret_names: opts.secretNames }
       : {}),
     ...(opts.overrideActive === true ? { override_active: true as const } : {}),
+    lockfile,
   };
 }
+
+/**
+ * #828 PR B: one recorded or current lockfile in words, for `--check-drift` and the drift warning
+ * (one wording, R13): `sha256 <hash>`, `none found` or `unreadable`.
+ */
+export function lockfileWords(lockfile: ExtensionIdentityLockfile): string {
+  if ('sha256' in lockfile) return `sha256 ${lockfile.sha256}`;
+  return lockfile.absent === 'none_found' ? 'none found' : 'unreadable';
+}
+
+/** #828 PR B: whether two lockfiles differ, by the comparison's own table. */
+export { extensionLockfileDiffers as lockfileDiffers };
 
 /**
  * Builds an identity entry that records a capture/load FAILURE — the failure is itself
@@ -180,6 +204,12 @@ export interface RecomputeResult {
    */
   manifest?: { path: string; recorded_hash: string; current_hash?: string };
   signals?: ExtensionIdentitySignals;
+  /**
+   * #828 PR B: the lockfile re-located and re-hashed from the walk's start (the folder of
+   * `entry.manifest.path`, else the definition's trust root), when the entry recorded one. `current`
+   * absent: the project's folder is not known.
+   */
+  lockfile?: { recorded: ExtensionIdentityLockfile; current?: ExtensionIdentityLockfile };
 }
 
 export interface RecomputeNotComparable {
@@ -236,6 +266,14 @@ export function recomputeIdentity(
   }
 
   const signals = collectSignals(opts.trustRoot);
+  let lockfileResult: RecomputeResult['lockfile'];
+  if (entry.lockfile !== undefined) {
+    const start = entry.manifest !== undefined ? dirname(entry.manifest.path) : opts.trustRoot;
+    lockfileResult = {
+      recorded: entry.lockfile,
+      ...(start !== undefined ? { current: lockfileNow(realOrSelf(start)) } : {}),
+    };
+  }
   return {
     comparable: true,
     modules,
@@ -246,5 +284,15 @@ export function recomputeIdentity(
     },
     ...(manifestResult !== undefined ? { manifest: manifestResult } : {}),
     ...(signals !== undefined ? { signals } : {}),
+    ...(lockfileResult !== undefined ? { lockfile: lockfileResult } : {}),
   };
+}
+
+/** The real path of `path`, or `path` itself when it cannot be resolved (fail-soft). */
+export function realOrSelf(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
 }

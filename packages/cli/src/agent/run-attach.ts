@@ -28,7 +28,12 @@ import {
   loadProjectExtensions,
   type LoadedProjectExtensions,
 } from '../extensions/load-project-extensions.js';
-import { identityDiffers, errorExtensionIdentityEntry } from '../extensions/extension-identity.js';
+import {
+  identityDiffers,
+  errorExtensionIdentityEntry,
+  lockfileDiffers,
+  lockfileWords,
+} from '../extensions/extension-identity.js';
 // #729 PR-3 (L-2): this message is thrown, not printed, so its command takes the PLAIN context.
 import { PLAIN, RUN_PHASE_WORDS, type RenderCtx } from '../output/writer.js';
 
@@ -224,10 +229,17 @@ export async function resolveRunAttach(
       lastIdentity !== undefined &&
       identityDiffers(lastIdentity, freshIdentity)
     ) {
+      // #828 PR B: the lockfile clause, when the lockfiles differ (both recorded, by the comparison).
+      const lockfileClause =
+        lastIdentity.lockfile !== undefined &&
+        freshIdentity.lockfile !== undefined &&
+        lockfileDiffers(lastIdentity.lockfile, freshIdentity.lockfile)
+          ? `; recorded lockfile ${lockfileWords(lastIdentity.lockfile)}, current lockfile ${lockfileWords(freshIdentity.lockfile)}`
+          : '';
       console.error(
         `[realm] WARN: extension code identity differs from this run's last recorded identity — ` +
           `recorded tree_hash ${lastIdentity.tree.tree_hash || '(none)'} (captured ${lastIdentity.captured_at}), ` +
-          `current tree_hash ${freshIdentity.tree.tree_hash || '(none)'} (captured ${freshIdentity.captured_at}). ` +
+          `current tree_hash ${freshIdentity.tree.tree_hash || '(none)'} (captured ${freshIdentity.captured_at})${lockfileClause}. ` +
           `Advisory only — the run proceeds; the new identity is appended to the run's history at the next step.`,
       );
     }

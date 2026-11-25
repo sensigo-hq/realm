@@ -240,21 +240,25 @@ Extension Identity (1 entry):
      tree: 5 files, 637 bytes
            tree_hash a2b2f92cfc3d679cfeae27ac52d4343972aaaed81ab143d6dbff914c50d706f1
      signals: package_version 1.4.0
+     lockfile: package-lock.json (sha256 over these files: 829145c35459e9c807d45145dedb2fe0b40b1a4ea10e8c11da2bae9f94eba090)
      coverage (dir_tree_v1): covers files under /srv/shop/ext matching dir_tree_v1: include .js,.mjs,.cjs,.ts,.mts,.cts,.json; exclude dirs node_modules,.git; skip symlinks; sort by relpath; sha256(relpath\0filehash); caps 2000 files/50MB; imports outside these roots, node_modules, and runtime dynamic imports are NOT covered.
 ```
 
-| Part         | Holds                                                                                                                                                                     |
-| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `captured`   | When this process loaded the code, or last rebuilt its list of handlers because `realm.yaml` or a `dotenv` file named from its folder changed, and the ID of the process. |
-| `[override]` | Printed after the process ID if `--extensions-module` was used.                                                                                                           |
-| `module`     | For each file: the path as written, the path it resolved to, the format, and a SHA-256 hash of the file.                                                                  |
-| `tree`       | One hash over the code files in the folders that hold the named files, with the number of files and their size.                                                           |
-| `signals`    | The `version` in the project's `package.json`, and the commit that `.git/HEAD` points to. Recorded, and not compared.                                                     |
-| `coverage`   | Which files the tree hash covers.                                                                                                                                         |
+| Part         | Holds                                                                                                                                                                                                                                                                                            |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `captured`   | When this process loaded the code, or last rebuilt its list of handlers because `realm.yaml` or a `dotenv` file named from its folder changed, and the ID of the process.                                                                                                                        |
+| `[override]` | Printed after the process ID if `--extensions-module` was used.                                                                                                                                                                                                                                  |
+| `module`     | For each file: the path as written, the path it resolved to, the format, and a SHA-256 hash of the file.                                                                                                                                                                                         |
+| `tree`       | One hash over the code files in the folders that hold the named files, with the number of files and their size.                                                                                                                                                                                  |
+| `signals`    | The `version` in the project's `package.json`, and the commit that `.git/HEAD` points to. Recorded, and not compared.                                                                                                                                                                            |
+| `lockfile`   | The project's lockfile: the files' paths from the project's folder and a SHA-256 over their paths and hashes, or that none was found, or that it cannot be read (an unreadable lockfile is compared by its file names only). Compared like the code. A run made after version 0.50.0 records it. |
+| `coverage`   | Which files the tree hash covers.                                                                                                                                                                                                                                                                |
 
 The tree hash covers files ending in `.js`, `.mjs`, `.cjs`, `.ts`, `.mts`, `.cts` or `.json`, at any depth under the folder of each named file. It leaves out `node_modules`, `.git` and links. It stops at 2000 files or 50 MB. A file that the code imports from another folder is not covered.
 
-A process takes each file's hash at one of two moments: a module's own file just before that module first loads; any other file when a sweep of its folder first finds it, just before a module of that folder first loads. It keeps that hash, so a process that keeps running after a file changes records the file as it loaded it, with three exceptions:
+The lockfile is every one of `npm-shrinkwrap.json`, `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `bun.lock` and `bun.lockb` in the nearest folder that holds one, looking first in the project's folder and then in each folder above it, up to the repository's root (the first folder with a `.git` directory). Outside a repository it never looks in the user's home folder or above it, unless the project's folder is the home folder itself; then it looks there and no higher. When `npm-shrinkwrap.json` is present, `package-lock.json` beside it is left out, as npm itself ignores it. It records what the project declares, not what `node_modules` holds.
+
+A process takes each file's hash at one of two moments: a module's own file just before that module first loads; any other file when a sweep of its folder first finds it, just before a module of that folder first loads. It reads each lockfile once, just before it first loads the code of a project that uses it (for a project with no code of its own, when it first loads `realm.yaml`), and keeps it for every project that uses it, even when an import fails, so a package installed afterwards without a restart shows as a changed lockfile. It keeps each file's hash, so a process that keeps running after a file changes records the file as it loaded it, with three exceptions:
 
 - A file first loaded later, through a module that loads later, keeps its first hash.
 - A file that another module had already loaded records its edit when it is first named as a module itself.
@@ -266,7 +270,7 @@ For a project with a `realm.yaml`, the record also holds that file's path and ha
 
 ### When the code changes during a run
 
-Realm adds an entry when a step runs and the loaded code differs from the last entry. A run was paused at a gate, a code file was edited, and a new `realm agent --run-id` continued the run:
+Realm adds an entry when a step runs and the loaded code differs from the last entry. A changed lockfile counts as changed code. When an answer is given over MCP with its `claim_token`, Realm runs the steps after it in the same call only when the server's code, lockfile included, is the code the run last ran with. Otherwise the reply's `next_actions` holds `advance_run`, and the owed steps run with the code of whichever program advances the run. A run whose last entry was recorded by version 0.50.0 or earlier does not compare lockfiles until its code changes. A run was paused at a gate, a code file was edited, and a new `realm agent --run-id` continued the run:
 
 ```text
 [realm] WARN: extension code identity differs from this run's last recorded identity — recorded tree_hash a2b2f92c… (captured 2026-10-02T00:21:08.513Z), current tree_hash b71e8739… (captured 2026-10-02T00:21:25.606Z). Advisory only — the run proceeds; …
@@ -290,6 +294,7 @@ The run goes on. The warning does not stop it.
 Drift check (pure recompute of the last execution entry under its recorded rules):
   module /srv/shop/ext/a.mjs: same
   tree: same
+  lockfile: same
 ```
 
 A file that differs is shown with both hashes:
