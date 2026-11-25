@@ -4,10 +4,10 @@
 //   - the "no signing key" line is said once per (workflow, host, key state), and again after the
 //     pair's key was found and then lost; another pair's memory is untouched;
 //   - the `unexpected error` line is said once per (run, error class);
-//   - the overdue sweep asks again while a round ends a full 1,000, within the pass's budget, and
+//   - the overdue sweep asks again while a round expires a full 1,000, within the pass's budget, and
 //     names the first 10 of the whole pass, then one count line;
 // and the BUILT `realm run inspect` on a real SQLite home for a due row after a 503 and for a row
-// the sweep ended before any try.
+// the sweep expired before any try.
 //
 // No cell depends on the order of random ids: where rows tie, the lines are compared as sorted sets.
 // Each assertion carries (1) the break that turns it red and (2) what it prints when it fails.
@@ -240,7 +240,7 @@ const neverSent = (host: string) =>
   `warn callbacks: ${W} → ${host}: never sent: its time limit passed before a try could be made`;
 
 describe(
-  'callback C3d-B — the sweep asks again while a round ends a full 1,000',
+  'callback C3d-B — the sweep asks again while a round expires a full 1,000',
   { timeout: 120_000 },
   () => {
     /** A world with `n` rows of a mounted workflow with a key, 4 days after their runs ended. */
@@ -255,7 +255,7 @@ describe(
     const pendingCount = async (store: RunStore): Promise<number> =>
       store.callbacks!.countWaiting();
 
-    it('1,005 overdue rows: all ended by the sweep, 10 lines and ONE count line for the other 995; no line from the claim path and no try', async () => {
+    it('1,005 overdue rows: all expired by the sweep, 10 lines and ONE count line for the other 995; no line from the claim path and no try', async () => {
       const { w, r, lists } = await overdue(1005);
       const answer = await w.pass(lists)(live);
       // (1) red when the sweep asks once (5 rows reach the claim path and say `stopped at attempt 1`
@@ -277,7 +277,7 @@ describe(
       });
     });
 
-    it('a pass that is not live after the first round ends no more: 1,000 ended, the rest left, 10 lines and the count for the 990', async () => {
+    it('a pass that is not live after the first round asks no more: 1,000 expired, the rest left, 10 lines and the count for the 990', async () => {
       const { w, r, lists } = await overdue(1005);
       let asked = 0;
       const answer = await w.pass(lists)(() => (asked += 1) < 1);
@@ -304,11 +304,11 @@ describe(
       let rounds = 0;
       const callbacks = new Proxy(w.callbacks, {
         get(t, prop) {
-          if (prop === 'endOverdue') {
+          if (prop === 'expireOverdue') {
             return (limit: number) => {
               rounds += 1;
               return rounds === 1
-                ? t.endOverdue(limit)
+                ? t.expireOverdue(limit)
                 : Promise.reject(new Error('the disk is gone'));
             };
           }
@@ -343,12 +343,12 @@ describe(
       let rounds = 0;
       const callbacks = new Proxy(w.callbacks, {
         get(target, prop) {
-          if (prop === 'endOverdue') {
+          if (prop === 'expireOverdue') {
             return async (limit: number) => {
               rounds += 1;
-              const ended = await target.endOverdue(limit);
+              const expired = await target.expireOverdue(limit);
               t = 45_000;
-              return ended;
+              return expired;
             };
           }
           const v = Reflect.get(target, prop, target) as unknown;
@@ -382,7 +382,7 @@ describe(
   'callback C3d-B — the built `realm run inspect` on a real SQLite home',
   { timeout: 120_000 },
   () => {
-    it('a row due after a 503 says its attempt, its last answer and what it waits for; a row the sweep ended before any try says expired before its first try; the pages show the due line in that shape', async () => {
+    it('a row due after a 503 says its attempt, its last answer and what it waits for; a row the sweep expired before any try says expired before its first try; the pages show the due line in that shape', async () => {
       const clock = settableClock(C0);
       const h = await makeTempHome({
         clock,

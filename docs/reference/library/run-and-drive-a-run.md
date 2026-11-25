@@ -2874,7 +2874,7 @@ Names this job reaches whose entry is on another page.
 - [`CallbackClaimedItem`](implement-a-store.md#callbackclaimeditem): A claimed row: the item with the instants a sender judges its ends from.
 - [`CallbackClaimRequest`](implement-a-store.md#callbackclaimrequest): A claim of one row: the `next_attempt_at` the claimant read, and its own token (1–200 characters).
 - [`CallbackClaimResult`](implement-a-store.md#callbackclaimresult): What a claim answers: the claimed item and the claim's one reading, or why it did not apply.
-- [`CallbackEnded`](implement-a-store.md#callbackended): A row `endOverdue` ended, as it ended it: `attempts` is how many tries began (0: never sent).
+- [`CallbackExpiredItem`](implement-a-store.md#callbackexpireditem): A row `expireOverdue` expired, as it expired it: `attempts` is how many tries began (0: never sent).
 - [`CallbackFreezeResult`](implement-a-store.md#callbackfreezeresult): What freezing the body answers.
 - [`CallbackItem`](implement-a-store.md#callbackitem): A row ready to send, as `due` returns it: for the sender only, never rendered.
 - [`CallbackKeyDeleteResult`](implement-a-store.md#callbackkeydeleteresult): What `delete` answers: whether the pair had a current key, readable or not.

@@ -1,8 +1,8 @@
-// callback-store-c3d.test.ts — callback C3d-A (R1.3): the SQLite callback store's `endOverdue`, on a
-// real file, read back through a second connection. An ended row is stored as a `failed` mark
+// callback-store-c3d.test.ts — callback C3d-A (R1.3): the SQLite callback store's `expireOverdue`, on a
+// real file, read back through a second connection. An expired row is stored as a `failed` mark
 // stores it: `failed`, `expired`, `url` and `body` NULL, and every other column as it was, the claim
 // token included (the port's view hides it, so the contract cannot see it), a never-claimed row's
-// `finished_at` still NULL. And the store's write is what core's pure `endOverdueCallbacks` gives
+// `finished_at` still NULL. And the store's write is what core's pure `expireOverdueCallbacks` gives
 // on the same rows.
 //
 // Each assertion carries (1) the break that turns it red and (2) what it prints when it fails.
@@ -12,7 +12,7 @@ import { join } from 'node:path';
 import {
   abandonRun,
   CALLBACK_DELIVERY_WINDOW_SECONDS,
-  endOverdueCallbacks,
+  expireOverdueCallbacks,
   type CallbackRow,
   type Clock,
   type CreateRunOptions,
@@ -69,8 +69,8 @@ async function stored(home: string): Promise<{
   }
 }
 
-describe('callback C3d-A — the SQLite endOverdue', () => {
-  it('stores an ended row as a failed mark stores it, the token and every other column kept, as core’s pure function writes it', async () => {
+describe('callback C3d-A — the SQLite expireOverdue', () => {
+  it('stores an expired row as a failed mark stores it, the token and every other column kept, as core’s pure function writes it', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'realm-c3d-'));
     dirs.push(dir);
     const home = join(dir, '.realm');
@@ -90,8 +90,13 @@ describe('callback C3d-A — the SQLite endOverdue', () => {
     await callbacks.freezeBody(claimed, 'token-of-the-claim', '{"type":"run.finished"}');
     const before = await stored(home);
     now = T0 + CALLBACK_DELIVERY_WINDOW_SECONDS * 1000 + 120_000;
-    const pure = endOverdueCallbacks(before.rows, (id) => before.runs.get(id), new Date(now), 10);
-    const ended = await callbacks.endOverdue(10);
+    const pure = expireOverdueCallbacks(
+      before.rows,
+      (id) => before.runs.get(id),
+      new Date(now),
+      10,
+    );
+    const expired = await callbacks.expireOverdue(10);
     const after = await stored(home);
     // (1) red when the setup no longer makes a claimed row with a token and a body beside a
     //     never-claimed one; (2) prints the claim's answer and the rows before.
@@ -104,7 +109,7 @@ describe('callback C3d-A — the SQLite endOverdue', () => {
       token: [claimed, never].sort().map((id) => (id === claimed ? 'token-of-the-claim' : null)),
       body: [claimed, never].sort().map((id) => id === claimed),
     });
-    // (1) red when the end drops the token, sets a never-claimed row's finished_at, keeps the url
+    // (1) red when the expiry drops the token, sets a never-claimed row's finished_at, keeps the url
     //     or the body, or changes any other column; (2) prints every column of both rows.
     expect(after.raw).toEqual(
       before.raw.map((r) => ({
@@ -117,8 +122,8 @@ describe('callback C3d-A — the SQLite endOverdue', () => {
     );
     // (1) red when the store writes or returns otherwise than core's pure function on the same rows;
     //     (2) prints both.
-    expect({ ended, rows: after.rows }).toEqual({
-      ended: pure.ended,
+    expect({ expired, rows: after.rows }).toEqual({
+      expired: pure.expired,
       rows: pure.writes.sort((a, b) => (a.run_id < b.run_id ? -1 : 1)),
     });
   });
@@ -128,7 +133,7 @@ describe('callback C3d-A — the SQLite endOverdue', () => {
   // `next_attempt_at`, not by run_id; the statement's own tie-break then decides which row the limit
   // takes. No randomness: the twelve rows' `next_attempt_at` are set through a second connection in
   // reverse run_id order, so the scan meets them largest id first, whatever the ids are.
-  it('in an analysed file, rows tied on their anchor still end by run_id, at limit 1 and after', async () => {
+  it('in an analysed file, rows tied on their anchor still expire by run_id, at limit 1 and after', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'realm-c3d-'));
     dirs.push(dir);
     const home = join(dir, '.realm');
@@ -174,8 +179,8 @@ describe('callback C3d-A — the SQLite endOverdue', () => {
       dueIndex: plan.some((step) => step.includes('callbacks_due')),
     }).toEqual({ dueOrderIsReversed: true, dueIndex: true });
     now = T0 + 1000 + CALLBACK_DELIVERY_WINDOW_SECONDS * 1000;
-    const first = (await callbacks.endOverdue(1)).map((e) => e.run_id);
-    const rest = (await callbacks.endOverdue(1000)).map((e) => e.run_id);
+    const first = (await callbacks.expireOverdue(1)).map((e) => e.run_id);
+    const rest = (await callbacks.expireOverdue(1000)).map((e) => e.run_id);
     // (1) red when the statement's ORDER BY loses its run_id tie-break: the limit then takes the
     //     row with the largest id, which the scan meets first; (2) prints both lists against the
     //     run_id order.
