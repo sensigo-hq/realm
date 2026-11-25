@@ -1393,13 +1393,14 @@ describe('#845 1b-i check 1: the refusal (Q-C) — `not_found` with `cause` and 
     };
     // (1) red when the refusal is returned before every piece is tried (Q1), names one join only (Q2),
     //     falls through to the out-of-order placement (Q3), prefers a held-back candidate of greater
-    //     `last` to an accepted one (R1), lets the out-of-order placement take a held-back candidate
-    //     (R2), or skips the floor on a held-back completion (R3); (2) prints each record.
+    //     `last` to an accepted one (R1: refused, or found with the part moved past the blank line),
+    //     lets the out-of-order placement take a held-back candidate (R2), or skips the floor on a
+    //     held-back completion (R3); (2) prints each record.
     expect({
       Q1: read(q1, shallDoc('\n\n')),
       Q2: read(q2, two),
       Q3: read(q3, ooo),
-      R1: read(r1, d1).state,
+      R1: ((c) => ({ state: c.state, parts: c.parts.map((p) => p.start) }))(lq(r1, d1)),
       R2: read(`${F} … ${rest} … ${C}`, d2),
       R3: read(`${F} … not be liable`, shallDoc('\n\n', 'not be liable for repairs')),
     }).toEqual({
@@ -1416,7 +1417,8 @@ describe('#845 1b-i check 1: the refusal (Q-C) — `not_found` with `cause` and 
         join_at: [q3.indexOf('…') + 1],
         nearest: null,
       },
-      R1: 'stitched',
+      // the middle part at the accepted `Not be…`, not at the held-back `not be…` after the blank line
+      R1: { state: 'stitched', parts: [0, d1.indexOf('Not be'), d1.indexOf('the roof')] },
       R2: { state: 'not_found', cause: null, join_at: null, nearest: { start: 170, end: 264 } },
       R3: { state: 'not_found', cause: null, join_at: null, nearest: { start: 0, end: 38 } },
     });
@@ -1431,12 +1433,15 @@ describe('#845 1b-i check 2: the refusal re-places nothing', () => {
         vi.spyOn(String.prototype, m),
       );
       let state: string;
+      let n: number;
       try {
         state = locateQuote(quote, doc).state;
+        // Counted before the spies are restored: restoring one clears its record of calls.
+        n = spies.reduce((sum, spy) => sum + spy.mock.calls.length, 0);
       } finally {
         for (const spy of spies) spy.mockRestore();
       }
-      return { state, n: spies.reduce((n, spy) => n + spy.mock.calls.length, 0) };
+      return { state, n };
     };
     const rows = QC_ROWS.filter(([row]) => row <= 8).map(([row, quote, doc]) => {
       const at = doc.lastIndexOf('\n\n');
@@ -1447,16 +1452,19 @@ describe('#845 1b-i check 2: the refusal re-places nothing', () => {
         row,
         sameCanonical: canonicalForm(doc) === canonicalForm(legal),
         legal: control.state,
+        counted: refused.n > 0 && control.n > 0,
         within: refused.n <= control.n + 1 ? 'within' : `${refused.n} > ${control.n} + 1`,
       };
     });
     // (1) red when the refusal re-places the parts with the rule relaxed (about 2×), or falls through
-    //     to the out-of-order placement and the tiling (about 5×); (2) prints each row's counts.
+    //     to the out-of-order placement and the tiling (about 5×), or when the counter saw no search
+    //     (a counter that reads 0 makes every bound hold); (2) prints each row's counts.
     expect(rows).toEqual(
       QC_ROWS.filter(([row]) => row <= 8).map(([row]) => ({
         row,
         sameCanonical: true,
         legal: 'stitched',
+        counted: true,
         within: 'within',
       })),
     );
@@ -1781,7 +1789,7 @@ describe('#845 1b-i check 8: item 14 — a `.` ends a sentence only when the wor
 });
 
 describe('#845 1b-i check 9: walk M8 — a part found in two places that fit equally is placed where its sentence ends, if the rest still follows', () => {
-  it('items3 row 64 reads `stitched` uncut; probes M1 and R4 keep first-fit’s `stitched+cs[75]`; when the searches run out, first-fit stands', () => {
+  it('items3 row 64 reads `stitched` uncut; probes M1 and R4 keep first-fit’s `stitched+cs[75]`, and so does a second placement with as many cut-short ends or a part under the floor; when the searches run out, first-fit stands', () => {
     const read = (quote: string, doc: string) => {
       const c = lq(quote, doc);
       return `${c.state}${c.cut_short === true ? `+cs${JSON.stringify(c.cut_short_at)}` : ''}${c.cause === undefined ? '' : `+${c.cause}`}`;
@@ -1791,11 +1799,23 @@ describe('#845 1b-i check 9: walk M8 — a part found in two places that fit equ
     const m1 =
       'The Tenant shall pay the rent quarterly. The Landlord shall repair the roof and walls. The Tenant may assign the lease with consent. The Landlord shall repair the roof.';
     const r4 = `${m1} It is agreed that\n\nthe Tenant may assign the lease freely.`;
-    // The budget: the middle piece, cut short, 1,100 times over, and uncut only at the end.
+    // The second placement returns, uncut in the middle, but the last piece is then cut short where
+    // first-fit's was not: as many cut-short ends, so first-fit stands.
+    const asMany =
+      'The Tenant shall pay the rent quarterly. The Landlord shall repair the roof and walls. The Tenant may assign the lease. The Landlord shall repair the roof. It is agreed. The Tenant may assign the lease with consent.';
+    // The second placement returns uncut, but `Rent is due` (11 characters) then stands alone, under
+    // the floor of 20; first-fit joins it to the next piece, so first-fit stands.
+    const floorQuote =
+      'The Tenant shall pay the rent … The Landlord shall repair the roof. Rent is due. The Tenant may assign the lease';
+    const underFloor =
+      'The Tenant shall pay the rent quarterly. The Landlord shall repair the roof and walls. Rent is due. The Tenant may assign the lease. The Landlord shall repair the roof. It is agreed. Rent is due. It is agreed. The Tenant may assign the lease.';
+    // The budget: the first piece 200 times over, which both placements walk, then the middle piece
+    // cut short 400 times and uncut only at the end. The second placement alone fits in the budget;
+    // after the first, the searches run out before the uncut place.
     const P1 = 'The Tenant shall pay the rent quarterly';
     const P2 = 'The Landlord shall repair the roof.';
     const lead = `${P1} and the service charge. `;
-    const many = `${lead}${`${P2.slice(0, -1)}, and more. `.repeat(1_100)}${P2}`;
+    const many = `${lead.repeat(200)}${`${P2.slice(0, -1)}, and more. `.repeat(400)}${P2}`;
     const rows: Row[] = [
       [
         'items3 64: `a.m.` first, the uncut place last',
@@ -1812,14 +1832,25 @@ describe('#845 1b-i check 9: walk M8 — a part found in two places that fit equ
         'stitched+cs[75]',
       ],
       [
+        'the second placement with as many cut-short ends',
+        read(`${quote}.`, asMany),
+        'stitched+cs[75]',
+      ],
+      [
+        'the second placement with a part under the floor',
+        read(floorQuote, underFloor),
+        'stitched+cs[75]',
+      ],
+      [
         'the searches run out before the uncut place',
         read(`${P1} … ${P2}`, many),
-        `stitched+cs[${lead.length + P2.length - 1}]`,
+        `stitched+cs[${200 * lead.length + P2.length - 1}]`,
       ],
     ];
     // (1) red when the preference is removed (row 64), the second placement is adopted whenever it
-    //     returns (M1), takes a held-back candidate (R4), or runs past the budget (the last row);
-    //     (2) prints each differing row.
+    //     returns, or without fewer cut-short ends (as many), or with a part under the floor, takes a
+    //     held-back candidate (R4), or runs on a budget of its own (the last row); (2) prints each
+    //     differing row.
     expect(misses(rows)).toEqual([]);
   });
 });
