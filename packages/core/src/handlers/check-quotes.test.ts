@@ -778,3 +778,41 @@ describe('check_quotes — correction 1 (H6): the re-admission clause, by how th
     });
   });
 });
+
+describe('#845 1b-i check 3: the warning for a quote refused for joining text across a blank line', () => {
+  it('a refused value prints `(this quote joins text across a blank line; quote each part separately)`; an ordinary `not_found` prints its nearest match as before', async () => {
+    const F = 'The Landlord shall insure the Building';
+    const rest =
+      'not be responsible for repairs to the structure, roof, foundations or exterior of the Building';
+    const doc = `${F} for its full reinstatement cost. The Tenant shall\n\n${rest}.`;
+    const joined = `${F} … ${rest}`;
+    const missing = 'the Tenant shall pay a deposit of twenty-four thousand euro';
+    const { data, warn } = await run(
+      ctx(
+        [],
+        {},
+        {
+          doc: { text: doc },
+          extract: {
+            candidates: [
+              { field: 'joined', value: 'v', quote: joined },
+              { field: 'missing', value: 'v', quote: missing },
+            ],
+          },
+        },
+      ),
+    );
+    const causes = data.results.map(
+      (r) => (r.quote_check as unknown as { cause?: string }).cause ?? null,
+    );
+    // (1) red when the refused value's warning keeps the nearest-match parenthesis (the old warning),
+    //     or the ordinary value loses its own; (2) prints the warning and each record's cause.
+    expect({ warn, causes }).toEqual({
+      warn:
+        `Quote check: 2 of 2 values not found in 'doc.text': joined — "${joined.slice(0, 80)}…" ` +
+        `(this quote joins text across a blank line; quote each part separately); missing — ` +
+        `"${missing}" (nearest match at 72–88).`,
+      causes: ['blank_line_join', null],
+    });
+  });
+});

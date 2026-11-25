@@ -505,6 +505,8 @@ interface QuoteCheck {
     readonly nearest?: QuoteSpan;
     readonly cut_short?: true;
     readonly cut_short_at?: readonly number[];
+    readonly cause?: 'blank_line_join';
+    readonly join_at?: readonly number[];
 }
 ```
 
@@ -964,7 +966,8 @@ The ladder, first hit wins:
   skipped only between parts, never inside a piece (the owner's yes, 2026-10-18).
 - `stitched_out_of_order`: the same, with the parts in another order.
 - `not_found`: otherwise; `nearest` is the longest piece of the quote found in the source, when it
-  covers at least one whole word.
+  covers at least one whole word. A quote placed in order only by joining text across a blank line
+  inside a sentence carries `cause` and `join_at` instead (#845, Q-C).
 (`unquoted` is the handler's, for a candidate with no quote and no value; this never returns it.)
 
 A quote that ends a sentence where the source's sentence goes on is marked `cut_short` (L2). Every
