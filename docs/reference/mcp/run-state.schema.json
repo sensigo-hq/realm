@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Realm's get_run_state reply",
-  "description": "What Realm's get_run_state MCP tool replies, the run's state or a refusal: every list in it is open, every object accepts a key it does not know, and the cost view is described loosely until a later release.",
+  "description": "What Realm's get_run_state MCP tool replies, the run's state or a refusal: every list in it is open and every object accepts a key it does not know.",
   "anyOf": [
     {
       "type": "object",
@@ -194,11 +194,793 @@
                   },
                   "usage": {
                     "type": "array",
-                    "items": {}
+                    "items": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "request_index": {
+                              "type": "number"
+                            },
+                            "request_start": {
+                              "type": "string"
+                            },
+                            "provider": {
+                              "type": "string"
+                            },
+                            "request_id": {
+                              "type": "string"
+                            },
+                            "model": {
+                              "type": "string"
+                            },
+                            "endpoint": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "default",
+                                    "custom"
+                                  ]
+                                },
+                                {
+                                  "type": "string"
+                                }
+                              ]
+                            },
+                            "cache_requested": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "off",
+                                    "lifetime",
+                                    "provider_rules"
+                                  ]
+                                },
+                                {
+                                  "type": "string"
+                                }
+                              ]
+                            },
+                            "cache_read_input_tokens": {
+                              "type": "number"
+                            },
+                            "cache_creation_input_tokens": {
+                              "type": "number"
+                            },
+                            "cache_write_tokens": {
+                              "type": "number"
+                            },
+                            "cache_creation": {
+                              "type": "object",
+                              "properties": {
+                                "ephemeral_5m_input_tokens": {
+                                  "type": "number"
+                                },
+                                "ephemeral_1h_input_tokens": {
+                                  "type": "number"
+                                }
+                              },
+                              "additionalProperties": {}
+                            },
+                            "cache_lifetime_s": {
+                              "type": "number"
+                            },
+                            "cache_ttl_sent": {
+                              "type": "boolean"
+                            },
+                            "cache_auto": {
+                              "type": "object",
+                              "properties": {
+                                "basis": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "no_measurement",
+                                        "step_gaps",
+                                        "step_gaps_unreadable",
+                                        "tool_step"
+                                      ]
+                                    },
+                                    {
+                                      "type": "string"
+                                    }
+                                  ]
+                                },
+                                "gaps_s": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "number"
+                                  }
+                                },
+                                "prices": {
+                                  "type": "object",
+                                  "properties": {
+                                    "from": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "enum": [
+                                            "economics",
+                                            "none"
+                                          ]
+                                        },
+                                        {
+                                          "type": "string"
+                                        }
+                                      ]
+                                    },
+                                    "excluded": {
+                                      "type": "array",
+                                      "items": {
+                                        "anyOf": [
+                                          {
+                                            "type": "string",
+                                            "enum": [
+                                              "short",
+                                              "long"
+                                            ]
+                                          },
+                                          {
+                                            "type": "string"
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    "missing": {
+                                      "type": "array",
+                                      "items": {
+                                        "anyOf": [
+                                          {
+                                            "type": "string",
+                                            "enum": [
+                                              "cache_read",
+                                              "cache_write",
+                                              "cache_write_5m",
+                                              "cache_write_1h"
+                                            ]
+                                          },
+                                          {
+                                            "type": "string"
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    "cause": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "enum": [
+                                            "no_file",
+                                            "economics_unreachable",
+                                            "economics_unreadable",
+                                            "model_unknown",
+                                            "input_zero",
+                                            "rate_missing"
+                                          ]
+                                        },
+                                        {
+                                          "type": "string"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "from"
+                                  ],
+                                  "additionalProperties": {}
+                                }
+                              },
+                              "required": [
+                                "basis"
+                              ],
+                              "additionalProperties": {}
+                            },
+                            "prefix_chars": {
+                              "type": "number"
+                            },
+                            "prefix_parts": {
+                              "type": "object",
+                              "properties": {
+                                "tools": {
+                                  "type": "string"
+                                },
+                                "system": {
+                                  "type": "string"
+                                },
+                                "prompt": {
+                                  "type": "string"
+                                },
+                                "format": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "system"
+                              ],
+                              "additionalProperties": {}
+                            },
+                            "cache_marked": {
+                              "type": "array",
+                              "items": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "enum": [
+                                      "system",
+                                      "prompt",
+                                      "key",
+                                      "conversation"
+                                    ]
+                                  },
+                                  {
+                                    "type": "string"
+                                  }
+                                ]
+                              }
+                            },
+                            "request_strict_sent": {
+                              "type": "boolean"
+                            },
+                            "prompt_tokens": {
+                              "type": "number"
+                            },
+                            "uncached_input_tokens": {
+                              "type": "number"
+                            },
+                            "output_tokens": {
+                              "type": "number"
+                            },
+                            "cache_requested_source": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "stated",
+                                    "runner_default"
+                                  ]
+                                },
+                                {
+                                  "type": "string"
+                                }
+                              ]
+                            },
+                            "cache_requested_by": {
+                              "type": "string"
+                            },
+                            "cache_split_offered": {
+                              "type": "boolean"
+                            },
+                            "response_id": {
+                              "type": "string"
+                            },
+                            "cache_diagnostics": {
+                              "type": "object",
+                              "properties": {
+                                "asked": {
+                                  "type": "boolean"
+                                },
+                                "cause": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "const": "rejected"
+                                    },
+                                    {
+                                      "type": "string"
+                                    }
+                                  ]
+                                },
+                                "reference_id": {
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ]
+                                },
+                                "result": {
+                                  "anyOf": [
+                                    {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "enum": [
+                                            "no_divergence",
+                                            "pending",
+                                            "not_returned"
+                                          ]
+                                        },
+                                        {
+                                          "type": "string"
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "type": {
+                                          "anyOf": [
+                                            {
+                                              "type": "string",
+                                              "enum": [
+                                                "messages_changed",
+                                                "model_changed",
+                                                "system_changed",
+                                                "tools_changed",
+                                                "previous_message_not_found",
+                                                "unavailable",
+                                                "unknown"
+                                              ]
+                                            },
+                                            {
+                                              "type": "string"
+                                            }
+                                          ]
+                                        },
+                                        "cache_missed_input_tokens": {
+                                          "type": "number"
+                                        }
+                                      },
+                                      "required": [
+                                        "type"
+                                      ],
+                                      "additionalProperties": {}
+                                    }
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "asked"
+                              ],
+                              "additionalProperties": {}
+                            },
+                            "request_in_call": {
+                              "type": "number"
+                            },
+                            "prefix_sha256": {
+                              "type": "string"
+                            },
+                            "cache_controls_rejected": {
+                              "type": "object",
+                              "properties": {
+                                "status": {
+                                  "type": "number"
+                                },
+                                "dropped": {
+                                  "type": "array",
+                                  "items": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string",
+                                        "const": "cache_fields"
+                                      },
+                                      {
+                                        "type": "string"
+                                      }
+                                    ]
+                                  }
+                                },
+                                "proven": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "cache_fields",
+                                        "none"
+                                      ]
+                                    },
+                                    {
+                                      "type": "string"
+                                    }
+                                  ]
+                                },
+                                "fields": {
+                                  "type": "array",
+                                  "items": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "cache_control",
+                                          "prompt_cache_key"
+                                        ]
+                                      },
+                                      {
+                                        "type": "string"
+                                      }
+                                    ]
+                                  }
+                                }
+                              },
+                              "required": [
+                                "status",
+                                "dropped",
+                                "proven",
+                                "fields"
+                              ],
+                              "additionalProperties": {}
+                            },
+                            "cache_key_sent": {
+                              "type": "boolean"
+                            },
+                            "reference": {
+                              "type": "object",
+                              "properties": {
+                                "from": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "run",
+                                        "earlier_run"
+                                      ]
+                                    },
+                                    {
+                                      "type": "string"
+                                    }
+                                  ]
+                                },
+                                "request_start": {
+                                  "type": "string"
+                                },
+                                "provider": {
+                                  "type": "string"
+                                },
+                                "request_id": {
+                                  "type": "string"
+                                },
+                                "model": {
+                                  "type": "string"
+                                },
+                                "endpoint": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "default",
+                                        "custom"
+                                      ]
+                                    },
+                                    {
+                                      "type": "string"
+                                    }
+                                  ]
+                                },
+                                "cache_requested": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "off",
+                                        "lifetime",
+                                        "provider_rules"
+                                      ]
+                                    },
+                                    {
+                                      "type": "string"
+                                    }
+                                  ]
+                                },
+                                "cache_read_input_tokens": {
+                                  "type": "number"
+                                },
+                                "cache_creation_input_tokens": {
+                                  "type": "number"
+                                },
+                                "cache_write_tokens": {
+                                  "type": "number"
+                                },
+                                "cache_creation": {
+                                  "type": "object",
+                                  "properties": {
+                                    "ephemeral_5m_input_tokens": {
+                                      "type": "number"
+                                    },
+                                    "ephemeral_1h_input_tokens": {
+                                      "type": "number"
+                                    }
+                                  },
+                                  "additionalProperties": {}
+                                },
+                                "cache_lifetime_s": {
+                                  "type": "number"
+                                },
+                                "cache_ttl_sent": {
+                                  "type": "boolean"
+                                },
+                                "cache_auto": {
+                                  "type": "object",
+                                  "properties": {
+                                    "basis": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "enum": [
+                                            "no_measurement",
+                                            "step_gaps",
+                                            "step_gaps_unreadable",
+                                            "tool_step"
+                                          ]
+                                        },
+                                        {
+                                          "type": "string"
+                                        }
+                                      ]
+                                    },
+                                    "gaps_s": {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "number"
+                                      }
+                                    },
+                                    "prices": {
+                                      "type": "object",
+                                      "properties": {
+                                        "from": {
+                                          "anyOf": [
+                                            {
+                                              "type": "string",
+                                              "enum": [
+                                                "economics",
+                                                "none"
+                                              ]
+                                            },
+                                            {
+                                              "type": "string"
+                                            }
+                                          ]
+                                        },
+                                        "excluded": {
+                                          "type": "array",
+                                          "items": {
+                                            "anyOf": [
+                                              {
+                                                "type": "string",
+                                                "enum": [
+                                                  "short",
+                                                  "long"
+                                                ]
+                                              },
+                                              {
+                                                "type": "string"
+                                              }
+                                            ]
+                                          }
+                                        },
+                                        "missing": {
+                                          "type": "array",
+                                          "items": {
+                                            "anyOf": [
+                                              {
+                                                "type": "string",
+                                                "enum": [
+                                                  "cache_read",
+                                                  "cache_write",
+                                                  "cache_write_5m",
+                                                  "cache_write_1h"
+                                                ]
+                                              },
+                                              {
+                                                "type": "string"
+                                              }
+                                            ]
+                                          }
+                                        },
+                                        "cause": {
+                                          "anyOf": [
+                                            {
+                                              "type": "string",
+                                              "enum": [
+                                                "no_file",
+                                                "economics_unreachable",
+                                                "economics_unreadable",
+                                                "model_unknown",
+                                                "input_zero",
+                                                "rate_missing"
+                                              ]
+                                            },
+                                            {
+                                              "type": "string"
+                                            }
+                                          ]
+                                        }
+                                      },
+                                      "required": [
+                                        "from"
+                                      ],
+                                      "additionalProperties": {}
+                                    }
+                                  },
+                                  "required": [
+                                    "basis"
+                                  ],
+                                  "additionalProperties": {}
+                                },
+                                "prefix_chars": {
+                                  "type": "number"
+                                },
+                                "prefix_parts": {
+                                  "type": "object",
+                                  "properties": {
+                                    "tools": {
+                                      "type": "string"
+                                    },
+                                    "system": {
+                                      "type": "string"
+                                    },
+                                    "prompt": {
+                                      "type": "string"
+                                    },
+                                    "format": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "system"
+                                  ],
+                                  "additionalProperties": {}
+                                },
+                                "cache_marked": {
+                                  "type": "array",
+                                  "items": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "system",
+                                          "prompt",
+                                          "key",
+                                          "conversation"
+                                        ]
+                                      },
+                                      {
+                                        "type": "string"
+                                      }
+                                    ]
+                                  }
+                                },
+                                "request_strict_sent": {
+                                  "type": "boolean"
+                                },
+                                "agent_profile_changed": {
+                                  "type": "boolean"
+                                }
+                              },
+                              "required": [
+                                "from",
+                                "request_start"
+                              ],
+                              "additionalProperties": {}
+                            }
+                          },
+                          "required": [
+                            "request_index",
+                            "request_start"
+                          ],
+                          "additionalProperties": {}
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
                   },
                   "model_attempts": {
                     "type": "array",
-                    "items": {}
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "request": {
+                          "type": "number"
+                        },
+                        "kind": {
+                          "anyOf": [
+                            {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "transient",
+                                    "setup",
+                                    "permanent"
+                                  ]
+                                },
+                                {
+                                  "type": "string"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "error_class": {
+                          "anyOf": [
+                            {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "connection_timeout",
+                                    "connection_error",
+                                    "api_status",
+                                    "sdk_missing",
+                                    "validation_rejected",
+                                    "aborted_by_budget",
+                                    "startup_failure",
+                                    "other"
+                                  ]
+                                },
+                                {
+                                  "type": "string"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "status": {
+                          "type": [
+                            "number",
+                            "null"
+                          ]
+                        },
+                        "wait_ms": {
+                          "type": [
+                            "number",
+                            "null"
+                          ]
+                        },
+                        "retry_after_ms": {
+                          "type": [
+                            "number",
+                            "null"
+                          ]
+                        },
+                        "exhausted_by": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "attempts",
+                                "total_timeout"
+                              ]
+                            },
+                            {
+                              "type": "string"
+                            }
+                          ]
+                        },
+                        "then": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "gateway",
+                                "cache_probe",
+                                "strict_ladder"
+                              ]
+                            },
+                            {
+                              "type": "string"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "request",
+                        "kind",
+                        "error_class",
+                        "status",
+                        "wait_ms",
+                        "retry_after_ms"
+                      ],
+                      "additionalProperties": {}
+                    }
                   },
                   "usage_more": {
                     "type": "number"
@@ -1436,9 +2218,1281 @@
                     },
                     "cost": {
                       "type": "object",
-                      "propertyNames": {
-                        "type": "string"
+                      "properties": {
+                        "requests": {
+                          "anyOf": [
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "type": "string",
+                              "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                            }
+                          ]
+                        },
+                        "basis": {
+                          "type": "string"
+                        },
+                        "state": {
+                          "type": "string"
+                        },
+                        "prompt": {
+                          "type": "object",
+                          "properties": {
+                            "value": {
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "string",
+                                  "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                }
+                              ]
+                            },
+                            "reported": {
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "string",
+                                  "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                }
+                              ]
+                            },
+                            "of": {
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "string",
+                                  "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                }
+                              ]
+                            },
+                            "only_request_index": {
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "string",
+                                  "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                }
+                              ]
+                            }
+                          },
+                          "required": [
+                            "value",
+                            "reported",
+                            "of"
+                          ],
+                          "additionalProperties": {}
+                        },
+                        "uncached_input": {
+                          "type": "object",
+                          "properties": {
+                            "value": {
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "string",
+                                  "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                }
+                              ]
+                            },
+                            "reported": {
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "string",
+                                  "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                }
+                              ]
+                            },
+                            "of": {
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "string",
+                                  "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                }
+                              ]
+                            },
+                            "only_request_index": {
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "string",
+                                  "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                }
+                              ]
+                            }
+                          },
+                          "required": [
+                            "value",
+                            "reported",
+                            "of"
+                          ],
+                          "additionalProperties": {}
+                        },
+                        "cache_read": {
+                          "type": "object",
+                          "properties": {
+                            "value": {
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "string",
+                                  "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                }
+                              ]
+                            },
+                            "reported": {
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "string",
+                                  "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                }
+                              ]
+                            },
+                            "of": {
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "string",
+                                  "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                }
+                              ]
+                            },
+                            "only_request_index": {
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "string",
+                                  "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                }
+                              ]
+                            }
+                          },
+                          "required": [
+                            "value",
+                            "reported",
+                            "of"
+                          ],
+                          "additionalProperties": {}
+                        },
+                        "cache_write": {
+                          "type": "object",
+                          "properties": {
+                            "value": {
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "string",
+                                  "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                }
+                              ]
+                            },
+                            "reported": {
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "string",
+                                  "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                }
+                              ]
+                            },
+                            "of": {
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "string",
+                                  "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                }
+                              ]
+                            },
+                            "only_request_index": {
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "string",
+                                  "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                }
+                              ]
+                            }
+                          },
+                          "required": [
+                            "value",
+                            "reported",
+                            "of"
+                          ],
+                          "additionalProperties": {}
+                        },
+                        "output": {
+                          "type": "object",
+                          "properties": {
+                            "value": {
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "string",
+                                  "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                }
+                              ]
+                            },
+                            "reported": {
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "string",
+                                  "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                }
+                              ]
+                            },
+                            "of": {
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "string",
+                                  "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                }
+                              ]
+                            },
+                            "only_request_index": {
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "string",
+                                  "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                }
+                              ]
+                            }
+                          },
+                          "required": [
+                            "value",
+                            "reported",
+                            "of"
+                          ],
+                          "additionalProperties": {}
+                        },
+                        "models": {
+                          "type": "object",
+                          "properties": {
+                            "names": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "reported": {
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "string",
+                                  "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                }
+                              ]
+                            },
+                            "of": {
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "string",
+                                  "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                }
+                              ]
+                            },
+                            "absent_cause": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "predates_request_facts",
+                                    "none_readable"
+                                  ]
+                                },
+                                {
+                                  "type": "string"
+                                }
+                              ]
+                            }
+                          },
+                          "additionalProperties": {}
+                        },
+                        "cache_requested": {
+                          "type": "object",
+                          "properties": {
+                            "entries": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "value": {
+                                    "type": "string"
+                                  },
+                                  "lifetime_s": {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "string",
+                                        "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                      }
+                                    ]
+                                  },
+                                  "ttl_sent": {
+                                    "anyOf": [
+                                      {
+                                        "type": "boolean"
+                                      },
+                                      {
+                                        "type": "string",
+                                        "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                      }
+                                    ]
+                                  },
+                                  "source": {
+                                    "type": "string"
+                                  },
+                                  "by": {
+                                    "type": "string"
+                                  },
+                                  "auto": {
+                                    "type": "object",
+                                    "properties": {
+                                      "basis": {
+                                        "anyOf": [
+                                          {
+                                            "type": "string",
+                                            "enum": [
+                                              "no_measurement",
+                                              "step_gaps",
+                                              "step_gaps_unreadable",
+                                              "tool_step"
+                                            ]
+                                          },
+                                          {
+                                            "type": "string"
+                                          }
+                                        ]
+                                      },
+                                      "gaps_s": {
+                                        "type": "array",
+                                        "items": {
+                                          "anyOf": [
+                                            {
+                                              "type": "number"
+                                            },
+                                            {
+                                              "type": "string",
+                                              "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                            }
+                                          ]
+                                        }
+                                      },
+                                      "prices": {
+                                        "type": "object",
+                                        "properties": {
+                                          "from": {
+                                            "anyOf": [
+                                              {
+                                                "type": "string",
+                                                "enum": [
+                                                  "economics",
+                                                  "none"
+                                                ]
+                                              },
+                                              {
+                                                "type": "string"
+                                              }
+                                            ]
+                                          },
+                                          "excluded": {
+                                            "type": "array",
+                                            "items": {
+                                              "anyOf": [
+                                                {
+                                                  "type": "string",
+                                                  "enum": [
+                                                    "short",
+                                                    "long"
+                                                  ]
+                                                },
+                                                {
+                                                  "type": "string"
+                                                }
+                                              ]
+                                            }
+                                          },
+                                          "missing": {
+                                            "type": "array",
+                                            "items": {
+                                              "anyOf": [
+                                                {
+                                                  "type": "string",
+                                                  "enum": [
+                                                    "cache_read",
+                                                    "cache_write",
+                                                    "cache_write_5m",
+                                                    "cache_write_1h"
+                                                  ]
+                                                },
+                                                {
+                                                  "type": "string"
+                                                }
+                                              ]
+                                            }
+                                          },
+                                          "cause": {
+                                            "anyOf": [
+                                              {
+                                                "type": "string",
+                                                "enum": [
+                                                  "no_file",
+                                                  "economics_unreachable",
+                                                  "economics_unreadable",
+                                                  "model_unknown",
+                                                  "input_zero",
+                                                  "rate_missing"
+                                                ]
+                                              },
+                                              {
+                                                "type": "string"
+                                              }
+                                            ]
+                                          }
+                                        },
+                                        "required": [
+                                          "from"
+                                        ],
+                                        "additionalProperties": {}
+                                      }
+                                    },
+                                    "required": [
+                                      "basis"
+                                    ],
+                                    "additionalProperties": {}
+                                  },
+                                  "key_sent": {
+                                    "anyOf": [
+                                      {
+                                        "type": "boolean"
+                                      },
+                                      {
+                                        "type": "string",
+                                        "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                      }
+                                    ]
+                                  },
+                                  "provider": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "value"
+                                ],
+                                "additionalProperties": {}
+                              }
+                            },
+                            "reported": {
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "string",
+                                  "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                }
+                              ]
+                            },
+                            "of": {
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "string",
+                                  "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                }
+                              ]
+                            },
+                            "absent_cause": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "predates_request_facts",
+                                    "none_readable"
+                                  ]
+                                },
+                                {
+                                  "type": "string"
+                                }
+                              ]
+                            }
+                          },
+                          "additionalProperties": {}
+                        },
+                        "cache_write_5m": {
+                          "type": "object",
+                          "properties": {
+                            "value": {
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "string",
+                                  "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                }
+                              ]
+                            },
+                            "reported": {
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "string",
+                                  "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                }
+                              ]
+                            },
+                            "of": {
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "string",
+                                  "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                }
+                              ]
+                            },
+                            "only_request_index": {
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "string",
+                                  "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                }
+                              ]
+                            }
+                          },
+                          "required": [
+                            "value",
+                            "reported",
+                            "of"
+                          ],
+                          "additionalProperties": {}
+                        },
+                        "cache_write_1h": {
+                          "type": "object",
+                          "properties": {
+                            "value": {
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "string",
+                                  "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                }
+                              ]
+                            },
+                            "reported": {
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "string",
+                                  "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                }
+                              ]
+                            },
+                            "of": {
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "string",
+                                  "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                }
+                              ]
+                            },
+                            "only_request_index": {
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "string",
+                                  "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                }
+                              ]
+                            }
+                          },
+                          "required": [
+                            "value",
+                            "reported",
+                            "of"
+                          ],
+                          "additionalProperties": {}
+                        },
+                        "endpoints": {
+                          "type": "object",
+                          "properties": {
+                            "custom": {
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "string",
+                                  "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                }
+                              ]
+                            },
+                            "of": {
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "string",
+                                  "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                }
+                              ]
+                            },
+                            "absent_cause": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "predates_request_facts",
+                                    "none_readable"
+                                  ]
+                                },
+                                {
+                                  "type": "string"
+                                }
+                              ]
+                            }
+                          },
+                          "additionalProperties": {}
+                        },
+                        "cache_head": {
+                          "type": "object",
+                          "properties": {
+                            "entries": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "chars": {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "string",
+                                        "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                      }
+                                    ]
+                                  },
+                                  "marked": {
+                                    "type": "array",
+                                    "items": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "enum": [
+                                            "system",
+                                            "prompt",
+                                            "key",
+                                            "conversation"
+                                          ]
+                                        },
+                                        {
+                                          "type": "string"
+                                        }
+                                      ]
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "chars"
+                                ],
+                                "additionalProperties": {}
+                              }
+                            }
+                          },
+                          "required": [
+                            "entries"
+                          ],
+                          "additionalProperties": {}
+                        },
+                        "cache_fields_refused": {
+                          "type": "object",
+                          "properties": {
+                            "refused": {
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "string",
+                                  "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                }
+                              ]
+                            },
+                            "of": {
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "string",
+                                  "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                }
+                              ]
+                            }
+                          },
+                          "required": [
+                            "refused",
+                            "of"
+                          ],
+                          "additionalProperties": {}
+                        },
+                        "money": {
+                          "type": "object",
+                          "properties": {
+                            "total": {
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "string",
+                                  "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                }
+                              ]
+                            },
+                            "uncached_counterfactual": {
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "string",
+                                  "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                }
+                              ]
+                            },
+                            "net": {
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "string",
+                                  "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                }
+                              ]
+                            },
+                            "priced": {
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "string",
+                                  "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                }
+                              ]
+                            },
+                            "of": {
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "string",
+                                  "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                }
+                              ]
+                            },
+                            "dated": {
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "string",
+                                  "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                }
+                              ]
+                            },
+                            "sources": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "source_class": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "economics",
+                                          "price_list"
+                                        ]
+                                      },
+                                      {
+                                        "type": "string"
+                                      }
+                                    ]
+                                  },
+                                  "source_ref": {
+                                    "type": "string"
+                                  },
+                                  "version": {
+                                    "type": "string"
+                                  },
+                                  "matched_provider": {
+                                    "type": "string"
+                                  },
+                                  "matched_model": {
+                                    "type": "string"
+                                  },
+                                  "count": {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "string",
+                                        "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                      }
+                                    ]
+                                  },
+                                  "dated": {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "string",
+                                        "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                      }
+                                    ]
+                                  },
+                                  "endpoint_note": {
+                                    "type": "string"
+                                  },
+                                  "source_note": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "source_class",
+                                  "source_ref",
+                                  "matched_model",
+                                  "count",
+                                  "dated"
+                                ],
+                                "additionalProperties": {}
+                              }
+                            },
+                            "source_totals": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "source_class": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "economics",
+                                          "price_list"
+                                        ]
+                                      },
+                                      {
+                                        "type": "string"
+                                      }
+                                    ]
+                                  },
+                                  "source_ref": {
+                                    "type": "string"
+                                  },
+                                  "version": {
+                                    "type": "string"
+                                  },
+                                  "count": {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "string",
+                                        "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                      }
+                                    ]
+                                  },
+                                  "dated": {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "string",
+                                        "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                      }
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "source_class",
+                                  "source_ref",
+                                  "count",
+                                  "dated"
+                                ],
+                                "additionalProperties": {}
+                              }
+                            },
+                            "not_priced": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "cause": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "no_price_source",
+                                          "economics_unreadable",
+                                          "economics_unreachable",
+                                          "model_not_recorded",
+                                          "model_unknown",
+                                          "usage_incomplete",
+                                          "date_unreadable",
+                                          "price_list_error",
+                                          "rate_missing"
+                                        ]
+                                      },
+                                      {
+                                        "type": "string"
+                                      }
+                                    ]
+                                  },
+                                  "count": {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "string",
+                                        "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                      }
+                                    ]
+                                  },
+                                  "detail": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "cause",
+                                  "count"
+                                ],
+                                "additionalProperties": {}
+                              }
+                            }
+                          },
+                          "required": [
+                            "total",
+                            "uncached_counterfactual",
+                            "net",
+                            "priced",
+                            "of",
+                            "dated",
+                            "sources",
+                            "source_totals"
+                          ],
+                          "additionalProperties": {}
+                        },
+                        "misses": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "position": {
+                                "anyOf": [
+                                  {
+                                    "type": "number"
+                                  },
+                                  {
+                                    "type": "string",
+                                    "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                  }
+                                ]
+                              },
+                              "derived": {
+                                "type": "object",
+                                "properties": {
+                                  "cause": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "provider_changed",
+                                          "endpoint_changed",
+                                          "model_changed",
+                                          "parts_not_recorded",
+                                          "final_request",
+                                          "strict_ladder",
+                                          "strict_changed",
+                                          "tools",
+                                          "agent_profile",
+                                          "system",
+                                          "repair_feedback",
+                                          "prompt",
+                                          "format",
+                                          "cache_settings",
+                                          "possibly_expired",
+                                          "unexplained"
+                                        ]
+                                      },
+                                      {
+                                        "type": "string"
+                                      }
+                                    ]
+                                  },
+                                  "rule": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "exact",
+                                          "tolerance"
+                                        ]
+                                      },
+                                      {
+                                        "type": "string"
+                                      }
+                                    ]
+                                  },
+                                  "expected_tokens": {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "string",
+                                        "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                      }
+                                    ]
+                                  },
+                                  "shortfall_tokens": {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "string",
+                                        "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                      }
+                                    ]
+                                  },
+                                  "predecessor": {
+                                    "type": "object",
+                                    "properties": {
+                                      "from": {
+                                        "anyOf": [
+                                          {
+                                            "type": "string",
+                                            "enum": [
+                                              "list",
+                                              "reference",
+                                              "earlier_run"
+                                            ]
+                                          },
+                                          {
+                                            "type": "string"
+                                          }
+                                        ]
+                                      },
+                                      "at": {
+                                        "anyOf": [
+                                          {
+                                            "type": "number"
+                                          },
+                                          {
+                                            "type": "string",
+                                            "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "from"
+                                    ],
+                                    "additionalProperties": {}
+                                  },
+                                  "gap_s": {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "string",
+                                        "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                      }
+                                    ]
+                                  },
+                                  "lifetime_s": {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "string",
+                                        "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                      }
+                                    ]
+                                  },
+                                  "lifetime_from": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "written",
+                                          "asked"
+                                        ]
+                                      },
+                                      {
+                                        "type": "string"
+                                      }
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "cause",
+                                  "rule",
+                                  "expected_tokens",
+                                  "shortfall_tokens",
+                                  "predecessor"
+                                ],
+                                "additionalProperties": {}
+                              },
+                              "provider": {
+                                "type": "object",
+                                "properties": {
+                                  "reason": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string",
+                                        "enum": [
+                                          "messages_changed",
+                                          "model_changed",
+                                          "system_changed",
+                                          "tools_changed",
+                                          "previous_message_not_found",
+                                          "unavailable",
+                                          "unknown",
+                                          "no_divergence"
+                                        ]
+                                      },
+                                      {
+                                        "type": "string"
+                                      }
+                                    ]
+                                  },
+                                  "cache_missed_input_tokens": {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "string",
+                                        "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                      }
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "reason"
+                                ],
+                                "additionalProperties": {}
+                              },
+                              "extra_usd": {
+                                "anyOf": [
+                                  {
+                                    "type": "number"
+                                  },
+                                  {
+                                    "type": "string",
+                                    "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                  }
+                                ]
+                              }
+                            },
+                            "required": [
+                              "position",
+                              "derived"
+                            ],
+                            "additionalProperties": {}
+                          }
+                        }
                       },
+                      "required": [
+                        "requests"
+                      ],
                       "additionalProperties": {}
                     },
                     "cost_unrecorded": {
@@ -1715,9 +3769,259 @@
               },
               "total": {
                 "type": "object",
-                "propertyNames": {
-                  "type": "string"
+                "properties": {
+                  "total": {
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "string",
+                        "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                      }
+                    ]
+                  },
+                  "uncached_counterfactual": {
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "string",
+                        "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                      }
+                    ]
+                  },
+                  "net": {
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "string",
+                        "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                      }
+                    ]
+                  },
+                  "priced": {
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "string",
+                        "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                      }
+                    ]
+                  },
+                  "of": {
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "string",
+                        "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                      }
+                    ]
+                  },
+                  "dated": {
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "string",
+                        "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                      }
+                    ]
+                  },
+                  "sources": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "source_class": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "economics",
+                                "price_list"
+                              ]
+                            },
+                            {
+                              "type": "string"
+                            }
+                          ]
+                        },
+                        "source_ref": {
+                          "type": "string"
+                        },
+                        "version": {
+                          "type": "string"
+                        },
+                        "matched_provider": {
+                          "type": "string"
+                        },
+                        "matched_model": {
+                          "type": "string"
+                        },
+                        "count": {
+                          "anyOf": [
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "type": "string",
+                              "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                            }
+                          ]
+                        },
+                        "dated": {
+                          "anyOf": [
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "type": "string",
+                              "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                            }
+                          ]
+                        },
+                        "endpoint_note": {
+                          "type": "string"
+                        },
+                        "source_note": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "source_class",
+                        "source_ref",
+                        "matched_model",
+                        "count",
+                        "dated"
+                      ],
+                      "additionalProperties": {}
+                    }
+                  },
+                  "source_totals": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "source_class": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "economics",
+                                "price_list"
+                              ]
+                            },
+                            {
+                              "type": "string"
+                            }
+                          ]
+                        },
+                        "source_ref": {
+                          "type": "string"
+                        },
+                        "version": {
+                          "type": "string"
+                        },
+                        "count": {
+                          "anyOf": [
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "type": "string",
+                              "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                            }
+                          ]
+                        },
+                        "dated": {
+                          "anyOf": [
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "type": "string",
+                              "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "source_class",
+                        "source_ref",
+                        "count",
+                        "dated"
+                      ],
+                      "additionalProperties": {}
+                    }
+                  },
+                  "not_priced": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "cause": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "no_price_source",
+                                "economics_unreadable",
+                                "economics_unreachable",
+                                "model_not_recorded",
+                                "model_unknown",
+                                "usage_incomplete",
+                                "date_unreadable",
+                                "price_list_error",
+                                "rate_missing"
+                              ]
+                            },
+                            {
+                              "type": "string"
+                            }
+                          ]
+                        },
+                        "count": {
+                          "anyOf": [
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "type": "string",
+                              "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                            }
+                          ]
+                        },
+                        "detail": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "cause",
+                        "count"
+                      ],
+                      "additionalProperties": {}
+                    }
+                  }
                 },
+                "required": [
+                  "total",
+                  "uncached_counterfactual",
+                  "net",
+                  "priced",
+                  "of",
+                  "dated",
+                  "sources",
+                  "source_totals"
+                ],
                 "additionalProperties": {}
               }
             },
@@ -1851,9 +4155,1281 @@
               },
               "cost": {
                 "type": "object",
-                "propertyNames": {
-                  "type": "string"
+                "properties": {
+                  "requests": {
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "string",
+                        "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                      }
+                    ]
+                  },
+                  "basis": {
+                    "type": "string"
+                  },
+                  "state": {
+                    "type": "string"
+                  },
+                  "prompt": {
+                    "type": "object",
+                    "properties": {
+                      "value": {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string",
+                            "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                          }
+                        ]
+                      },
+                      "reported": {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string",
+                            "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                          }
+                        ]
+                      },
+                      "of": {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string",
+                            "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                          }
+                        ]
+                      },
+                      "only_request_index": {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string",
+                            "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "value",
+                      "reported",
+                      "of"
+                    ],
+                    "additionalProperties": {}
+                  },
+                  "uncached_input": {
+                    "type": "object",
+                    "properties": {
+                      "value": {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string",
+                            "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                          }
+                        ]
+                      },
+                      "reported": {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string",
+                            "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                          }
+                        ]
+                      },
+                      "of": {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string",
+                            "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                          }
+                        ]
+                      },
+                      "only_request_index": {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string",
+                            "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "value",
+                      "reported",
+                      "of"
+                    ],
+                    "additionalProperties": {}
+                  },
+                  "cache_read": {
+                    "type": "object",
+                    "properties": {
+                      "value": {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string",
+                            "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                          }
+                        ]
+                      },
+                      "reported": {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string",
+                            "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                          }
+                        ]
+                      },
+                      "of": {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string",
+                            "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                          }
+                        ]
+                      },
+                      "only_request_index": {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string",
+                            "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "value",
+                      "reported",
+                      "of"
+                    ],
+                    "additionalProperties": {}
+                  },
+                  "cache_write": {
+                    "type": "object",
+                    "properties": {
+                      "value": {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string",
+                            "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                          }
+                        ]
+                      },
+                      "reported": {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string",
+                            "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                          }
+                        ]
+                      },
+                      "of": {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string",
+                            "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                          }
+                        ]
+                      },
+                      "only_request_index": {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string",
+                            "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "value",
+                      "reported",
+                      "of"
+                    ],
+                    "additionalProperties": {}
+                  },
+                  "output": {
+                    "type": "object",
+                    "properties": {
+                      "value": {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string",
+                            "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                          }
+                        ]
+                      },
+                      "reported": {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string",
+                            "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                          }
+                        ]
+                      },
+                      "of": {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string",
+                            "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                          }
+                        ]
+                      },
+                      "only_request_index": {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string",
+                            "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "value",
+                      "reported",
+                      "of"
+                    ],
+                    "additionalProperties": {}
+                  },
+                  "models": {
+                    "type": "object",
+                    "properties": {
+                      "names": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "reported": {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string",
+                            "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                          }
+                        ]
+                      },
+                      "of": {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string",
+                            "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                          }
+                        ]
+                      },
+                      "absent_cause": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "predates_request_facts",
+                              "none_readable"
+                            ]
+                          },
+                          {
+                            "type": "string"
+                          }
+                        ]
+                      }
+                    },
+                    "additionalProperties": {}
+                  },
+                  "cache_requested": {
+                    "type": "object",
+                    "properties": {
+                      "entries": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "value": {
+                              "type": "string"
+                            },
+                            "lifetime_s": {
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "string",
+                                  "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                }
+                              ]
+                            },
+                            "ttl_sent": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "string",
+                                  "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                }
+                              ]
+                            },
+                            "source": {
+                              "type": "string"
+                            },
+                            "by": {
+                              "type": "string"
+                            },
+                            "auto": {
+                              "type": "object",
+                              "properties": {
+                                "basis": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "no_measurement",
+                                        "step_gaps",
+                                        "step_gaps_unreadable",
+                                        "tool_step"
+                                      ]
+                                    },
+                                    {
+                                      "type": "string"
+                                    }
+                                  ]
+                                },
+                                "gaps_s": {
+                                  "type": "array",
+                                  "items": {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "string",
+                                        "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                      }
+                                    ]
+                                  }
+                                },
+                                "prices": {
+                                  "type": "object",
+                                  "properties": {
+                                    "from": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "enum": [
+                                            "economics",
+                                            "none"
+                                          ]
+                                        },
+                                        {
+                                          "type": "string"
+                                        }
+                                      ]
+                                    },
+                                    "excluded": {
+                                      "type": "array",
+                                      "items": {
+                                        "anyOf": [
+                                          {
+                                            "type": "string",
+                                            "enum": [
+                                              "short",
+                                              "long"
+                                            ]
+                                          },
+                                          {
+                                            "type": "string"
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    "missing": {
+                                      "type": "array",
+                                      "items": {
+                                        "anyOf": [
+                                          {
+                                            "type": "string",
+                                            "enum": [
+                                              "cache_read",
+                                              "cache_write",
+                                              "cache_write_5m",
+                                              "cache_write_1h"
+                                            ]
+                                          },
+                                          {
+                                            "type": "string"
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    "cause": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "enum": [
+                                            "no_file",
+                                            "economics_unreachable",
+                                            "economics_unreadable",
+                                            "model_unknown",
+                                            "input_zero",
+                                            "rate_missing"
+                                          ]
+                                        },
+                                        {
+                                          "type": "string"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "from"
+                                  ],
+                                  "additionalProperties": {}
+                                }
+                              },
+                              "required": [
+                                "basis"
+                              ],
+                              "additionalProperties": {}
+                            },
+                            "key_sent": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "string",
+                                  "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                }
+                              ]
+                            },
+                            "provider": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "value"
+                          ],
+                          "additionalProperties": {}
+                        }
+                      },
+                      "reported": {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string",
+                            "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                          }
+                        ]
+                      },
+                      "of": {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string",
+                            "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                          }
+                        ]
+                      },
+                      "absent_cause": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "predates_request_facts",
+                              "none_readable"
+                            ]
+                          },
+                          {
+                            "type": "string"
+                          }
+                        ]
+                      }
+                    },
+                    "additionalProperties": {}
+                  },
+                  "cache_write_5m": {
+                    "type": "object",
+                    "properties": {
+                      "value": {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string",
+                            "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                          }
+                        ]
+                      },
+                      "reported": {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string",
+                            "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                          }
+                        ]
+                      },
+                      "of": {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string",
+                            "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                          }
+                        ]
+                      },
+                      "only_request_index": {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string",
+                            "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "value",
+                      "reported",
+                      "of"
+                    ],
+                    "additionalProperties": {}
+                  },
+                  "cache_write_1h": {
+                    "type": "object",
+                    "properties": {
+                      "value": {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string",
+                            "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                          }
+                        ]
+                      },
+                      "reported": {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string",
+                            "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                          }
+                        ]
+                      },
+                      "of": {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string",
+                            "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                          }
+                        ]
+                      },
+                      "only_request_index": {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string",
+                            "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "value",
+                      "reported",
+                      "of"
+                    ],
+                    "additionalProperties": {}
+                  },
+                  "endpoints": {
+                    "type": "object",
+                    "properties": {
+                      "custom": {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string",
+                            "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                          }
+                        ]
+                      },
+                      "of": {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string",
+                            "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                          }
+                        ]
+                      },
+                      "absent_cause": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "predates_request_facts",
+                              "none_readable"
+                            ]
+                          },
+                          {
+                            "type": "string"
+                          }
+                        ]
+                      }
+                    },
+                    "additionalProperties": {}
+                  },
+                  "cache_head": {
+                    "type": "object",
+                    "properties": {
+                      "entries": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "chars": {
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "string",
+                                  "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                }
+                              ]
+                            },
+                            "marked": {
+                              "type": "array",
+                              "items": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "enum": [
+                                      "system",
+                                      "prompt",
+                                      "key",
+                                      "conversation"
+                                    ]
+                                  },
+                                  {
+                                    "type": "string"
+                                  }
+                                ]
+                              }
+                            }
+                          },
+                          "required": [
+                            "chars"
+                          ],
+                          "additionalProperties": {}
+                        }
+                      }
+                    },
+                    "required": [
+                      "entries"
+                    ],
+                    "additionalProperties": {}
+                  },
+                  "cache_fields_refused": {
+                    "type": "object",
+                    "properties": {
+                      "refused": {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string",
+                            "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                          }
+                        ]
+                      },
+                      "of": {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string",
+                            "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "refused",
+                      "of"
+                    ],
+                    "additionalProperties": {}
+                  },
+                  "money": {
+                    "type": "object",
+                    "properties": {
+                      "total": {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string",
+                            "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                          }
+                        ]
+                      },
+                      "uncached_counterfactual": {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string",
+                            "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                          }
+                        ]
+                      },
+                      "net": {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string",
+                            "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                          }
+                        ]
+                      },
+                      "priced": {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string",
+                            "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                          }
+                        ]
+                      },
+                      "of": {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string",
+                            "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                          }
+                        ]
+                      },
+                      "dated": {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string",
+                            "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                          }
+                        ]
+                      },
+                      "sources": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "source_class": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "economics",
+                                    "price_list"
+                                  ]
+                                },
+                                {
+                                  "type": "string"
+                                }
+                              ]
+                            },
+                            "source_ref": {
+                              "type": "string"
+                            },
+                            "version": {
+                              "type": "string"
+                            },
+                            "matched_provider": {
+                              "type": "string"
+                            },
+                            "matched_model": {
+                              "type": "string"
+                            },
+                            "count": {
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "string",
+                                  "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                }
+                              ]
+                            },
+                            "dated": {
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "string",
+                                  "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                }
+                              ]
+                            },
+                            "endpoint_note": {
+                              "type": "string"
+                            },
+                            "source_note": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "source_class",
+                            "source_ref",
+                            "matched_model",
+                            "count",
+                            "dated"
+                          ],
+                          "additionalProperties": {}
+                        }
+                      },
+                      "source_totals": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "source_class": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "economics",
+                                    "price_list"
+                                  ]
+                                },
+                                {
+                                  "type": "string"
+                                }
+                              ]
+                            },
+                            "source_ref": {
+                              "type": "string"
+                            },
+                            "version": {
+                              "type": "string"
+                            },
+                            "count": {
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "string",
+                                  "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                }
+                              ]
+                            },
+                            "dated": {
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "string",
+                                  "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                }
+                              ]
+                            }
+                          },
+                          "required": [
+                            "source_class",
+                            "source_ref",
+                            "count",
+                            "dated"
+                          ],
+                          "additionalProperties": {}
+                        }
+                      },
+                      "not_priced": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "cause": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "no_price_source",
+                                    "economics_unreadable",
+                                    "economics_unreachable",
+                                    "model_not_recorded",
+                                    "model_unknown",
+                                    "usage_incomplete",
+                                    "date_unreadable",
+                                    "price_list_error",
+                                    "rate_missing"
+                                  ]
+                                },
+                                {
+                                  "type": "string"
+                                }
+                              ]
+                            },
+                            "count": {
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "string",
+                                  "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                }
+                              ]
+                            },
+                            "detail": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "cause",
+                            "count"
+                          ],
+                          "additionalProperties": {}
+                        }
+                      }
+                    },
+                    "required": [
+                      "total",
+                      "uncached_counterfactual",
+                      "net",
+                      "priced",
+                      "of",
+                      "dated",
+                      "sources",
+                      "source_totals"
+                    ],
+                    "additionalProperties": {}
+                  },
+                  "misses": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "position": {
+                          "anyOf": [
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "type": "string",
+                              "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                            }
+                          ]
+                        },
+                        "derived": {
+                          "type": "object",
+                          "properties": {
+                            "cause": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "provider_changed",
+                                    "endpoint_changed",
+                                    "model_changed",
+                                    "parts_not_recorded",
+                                    "final_request",
+                                    "strict_ladder",
+                                    "strict_changed",
+                                    "tools",
+                                    "agent_profile",
+                                    "system",
+                                    "repair_feedback",
+                                    "prompt",
+                                    "format",
+                                    "cache_settings",
+                                    "possibly_expired",
+                                    "unexplained"
+                                  ]
+                                },
+                                {
+                                  "type": "string"
+                                }
+                              ]
+                            },
+                            "rule": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "exact",
+                                    "tolerance"
+                                  ]
+                                },
+                                {
+                                  "type": "string"
+                                }
+                              ]
+                            },
+                            "expected_tokens": {
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "string",
+                                  "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                }
+                              ]
+                            },
+                            "shortfall_tokens": {
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "string",
+                                  "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                }
+                              ]
+                            },
+                            "predecessor": {
+                              "type": "object",
+                              "properties": {
+                                "from": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "list",
+                                        "reference",
+                                        "earlier_run"
+                                      ]
+                                    },
+                                    {
+                                      "type": "string"
+                                    }
+                                  ]
+                                },
+                                "at": {
+                                  "anyOf": [
+                                    {
+                                      "type": "number"
+                                    },
+                                    {
+                                      "type": "string",
+                                      "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                    }
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "from"
+                              ],
+                              "additionalProperties": {}
+                            },
+                            "gap_s": {
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "string",
+                                  "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                }
+                              ]
+                            },
+                            "lifetime_s": {
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "string",
+                                  "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                }
+                              ]
+                            },
+                            "lifetime_from": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "written",
+                                    "asked"
+                                  ]
+                                },
+                                {
+                                  "type": "string"
+                                }
+                              ]
+                            }
+                          },
+                          "required": [
+                            "cause",
+                            "rule",
+                            "expected_tokens",
+                            "shortfall_tokens",
+                            "predecessor"
+                          ],
+                          "additionalProperties": {}
+                        },
+                        "provider": {
+                          "type": "object",
+                          "properties": {
+                            "reason": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "messages_changed",
+                                    "model_changed",
+                                    "system_changed",
+                                    "tools_changed",
+                                    "previous_message_not_found",
+                                    "unavailable",
+                                    "unknown",
+                                    "no_divergence"
+                                  ]
+                                },
+                                {
+                                  "type": "string"
+                                }
+                              ]
+                            },
+                            "cache_missed_input_tokens": {
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "string",
+                                  "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                                }
+                              ]
+                            }
+                          },
+                          "required": [
+                            "reason"
+                          ],
+                          "additionalProperties": {}
+                        },
+                        "extra_usd": {
+                          "anyOf": [
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "type": "string",
+                              "description": "Its shape, such as ‹number› or ‹boolean›, when Realm withholds values."
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "position",
+                        "derived"
+                      ],
+                      "additionalProperties": {}
+                    }
+                  }
                 },
+                "required": [
+                  "requests"
+                ],
                 "additionalProperties": {}
               }
             },
@@ -1862,9 +5438,209 @@
         },
         "run_cost": {
           "type": "object",
-          "propertyNames": {
-            "type": "string"
+          "properties": {
+            "total": {
+              "type": "object",
+              "properties": {
+                "total": {
+                  "type": "number"
+                },
+                "uncached_counterfactual": {
+                  "type": "number"
+                },
+                "net": {
+                  "type": "number"
+                },
+                "priced": {
+                  "type": "number"
+                },
+                "of": {
+                  "type": "number"
+                },
+                "dated": {
+                  "type": "number"
+                },
+                "sources": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "source_class": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "economics",
+                              "price_list"
+                            ]
+                          },
+                          {
+                            "type": "string"
+                          }
+                        ]
+                      },
+                      "source_ref": {
+                        "type": "string"
+                      },
+                      "version": {
+                        "type": "string"
+                      },
+                      "matched_provider": {
+                        "type": "string"
+                      },
+                      "matched_model": {
+                        "type": "string"
+                      },
+                      "count": {
+                        "type": "number"
+                      },
+                      "dated": {
+                        "type": "number"
+                      },
+                      "endpoint_note": {
+                        "type": "string"
+                      },
+                      "source_note": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "source_class",
+                      "source_ref",
+                      "matched_model",
+                      "count",
+                      "dated"
+                    ],
+                    "additionalProperties": {}
+                  }
+                },
+                "source_totals": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "source_class": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "economics",
+                              "price_list"
+                            ]
+                          },
+                          {
+                            "type": "string"
+                          }
+                        ]
+                      },
+                      "source_ref": {
+                        "type": "string"
+                      },
+                      "version": {
+                        "type": "string"
+                      },
+                      "count": {
+                        "type": "number"
+                      },
+                      "dated": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "source_class",
+                      "source_ref",
+                      "count",
+                      "dated"
+                    ],
+                    "additionalProperties": {}
+                  }
+                },
+                "not_priced": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "cause": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "no_price_source",
+                              "economics_unreadable",
+                              "economics_unreachable",
+                              "model_not_recorded",
+                              "model_unknown",
+                              "usage_incomplete",
+                              "date_unreadable",
+                              "price_list_error",
+                              "rate_missing"
+                            ]
+                          },
+                          {
+                            "type": "string"
+                          }
+                        ]
+                      },
+                      "count": {
+                        "type": "number"
+                      },
+                      "detail": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "cause",
+                      "count"
+                    ],
+                    "additionalProperties": {}
+                  }
+                }
+              },
+              "required": [
+                "total",
+                "uncached_counterfactual",
+                "net",
+                "priced",
+                "of",
+                "dated",
+                "sources",
+                "source_totals"
+              ],
+              "additionalProperties": {}
+            },
+            "failed_drives_not_on_record": {
+              "type": "number"
+            },
+            "failed_drives_without_usage": {
+              "type": "number"
+            },
+            "unmeasured": {
+              "type": "object",
+              "properties": {
+                "tool_calling_step": {
+                  "type": "number"
+                },
+                "not_measured_by_realm": {
+                  "type": "number"
+                },
+                "cost_unreadable": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "tool_calling_step",
+                "not_measured_by_realm",
+                "cost_unreadable"
+              ],
+              "additionalProperties": {}
+            }
           },
+          "required": [
+            "total",
+            "failed_drives_not_on_record",
+            "failed_drives_without_usage",
+            "unmeasured"
+          ],
           "additionalProperties": {}
         },
         "pending_guards": {
