@@ -37,6 +37,8 @@ import {
   getWorkflowForRun,
   composeStepViews,
   composeFailures,
+  composeFailureOfEntry,
+  isModelFailureDefault,
   composeDriveFailureCosts,
   evidenceModelTextView,
   failureModelTextView,
@@ -249,17 +251,20 @@ function cliRespondWay(
  * out; a word outside its list prints as recorded, then ` (unknown word)`. The message goes through
  * the value channel, as `Cause:` does.
  */
-function formatFailureLine(view: FailureView): string {
+function formatFailureLine(view: FailureView, underAttempt = false): string {
   const ctx = writerCtx();
+  // Gap 2, unit (iii): under an attempt row, which names the step and the attempt already.
+  const head = underAttempt ? '' : `  ${view.step}: `;
+  const attemptOf = (n: number | undefined): string =>
+    n !== undefined && !underAttempt ? ` (attempt ${n})` : '';
   if ('absent' in view) {
-    if (view.absent === 'entry_not_found') return `  ${view.step}: no failed entry on the record`;
-    const attempt = view.attempt !== undefined ? ` (attempt ${view.attempt})` : '';
-    return `  ${view.step}: ${ctx.value(view.message)}${attempt} (words not recorded: written by Realm 0.50.0 or earlier)`;
+    if (view.absent === 'entry_not_found') return `${head}no failed entry on the record`;
+    return `${head}${ctx.value(view.message)}${attemptOf(view.attempt)} (words not recorded: written by Realm 0.50.0 or earlier)`;
   }
   const unknown: readonly string[] = view.unknown ?? [];
   const word = (key: string, value: string, list: readonly string[]): string =>
     `${ctx.word(value, list)}${unknown.includes(key) ? ' (unknown word)' : ''}`;
-  let line = `  ${view.step}: ${word('code', view.code, ERROR_CODES)}`;
+  let line = `${head}${word('code', view.code, ERROR_CODES)}`;
   if (view.category !== undefined) {
     line += ` (${word('category', view.category, ERROR_CATEGORIES)})`;
   }
@@ -274,7 +279,7 @@ function formatFailureLine(view: FailureView): string {
     clauses.push(`next: ${word('agent_action', view.agent_action, AGENT_ACTIONS)}`);
   }
   if (clauses.length > 0) line += ` — ${clauses.join('; ')}`;
-  if (view.attempt !== undefined) line += ` (attempt ${view.attempt})`;
+  line += attemptOf(view.attempt);
   return `${line} — ${ctx.value(view.message)}`;
 }
 
@@ -2154,6 +2159,12 @@ export async function inspectRun(
     if (isMultiAttempt) {
       // Show step name as header, then each attempt as a sub-item.
       const lastSnap = executionSnaps[executionSnaps.length - 1]!;
+      // Gap 2, unit (iii): a default answer after a failed model request — the error entry before it
+      // holds the failure (its line under its row) and the step's trace.
+      const failedBeforeDefault = isModelFailureDefault(lastSnap)
+        ? executionSnaps[executionSnaps.length - 2]
+        : undefined;
+      const traceSnap = failedBeforeDefault ?? lastSnap;
       const profileLabel =
         lastSnap.agent_profile !== undefined
           ? chalk.cyan(` [profile: ${lastSnap.agent_profile}]`)
@@ -2177,6 +2188,9 @@ export async function inspectRun(
         lines.push(
           `     (attempt ${ai + 1}/${totalAttempts})  ${statusColored}   ${snap.duration_ms}ms   ${hashShort}`,
         );
+        if (snap === failedBeforeDefault && typeof snap.error === 'string') {
+          lines.push(`       ${formatFailureLine(composeFailureOfEntry(stepId, snap), true)}`);
+        }
         // Only the last attempt opened the step's question; an earlier attempt that failed opened
         // nothing and reads "Taken by".
         const programLine = attemptProgramLine(
@@ -2205,10 +2219,10 @@ export async function inspectRun(
       if (lastSource !== undefined) lines.push(`     ${lastSource}`);
       // issue #760: a handler's warning, whole — a sentence the operator reads in full, never cut.
       if (lastSnap.warn !== undefined) lines.push(`     Warn: ${warnLine(lastSnap.warn)}`);
-      if (lastSnap.trace !== undefined) {
-        lines.push(`     Trace:  ${lastSnap.trace.length} entries (not hashed).`);
-        if (lastSnap.trace_summary?.truncated) {
-          const s = lastSnap.trace_summary;
+      if (traceSnap.trace !== undefined) {
+        lines.push(`     Trace:  ${traceSnap.trace.length} entries (not hashed).`);
+        if (traceSnap.trace_summary?.truncated) {
+          const s = traceSnap.trace_summary;
           lines.push(
             chalk.yellow(
               `     ⚠ Trace truncated (${s.truncation_reason ?? 'unknown'}): ${s.stored_entries} stored, ${s.discarded_entries} discarded.`,

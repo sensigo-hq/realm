@@ -22,14 +22,14 @@ export function absentWhy(
     case 'default_only':
       return (
         `'${capText(cause.field)}' is only in default_output, which the step records only when ` +
-        `its answers are refused too often`
+        `it takes its default answer`
       );
     case 'list_position':
       return `'${cause.position}' is a position in a list that may be shorter`;
     case 'model_failure_only':
       return (
         `'failure_kind' is set only when step '${capText(cause.step)}''s model request failed and ` +
-        `the step took its failure path`
+        `the step has on_model_failure`
       );
   }
 }

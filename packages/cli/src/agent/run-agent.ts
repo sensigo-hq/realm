@@ -61,6 +61,7 @@ import {
   releaseDriveClaim,
   type LeaseHold,
   closeModelAttempts,
+  isModelFailureDefault,
 } from '@sensigo/realm';
 import type {
   RunRecord,
@@ -628,6 +629,26 @@ function memberNotSettledLine(
   reply: { error_code?: string | undefined; errors: readonly string[] },
 ): string {
   return `• Step '${step}': the engine did not record its failure (${reply.error_code}: ${reply.errors.join(', ')}); this drive recorded it as a drive failure.`;
+}
+
+/**
+ * Gap 2, unit (iii), Words 1 and 2: the line for a step whose answer, just recorded by this drive's
+ * call, is its default, read from the step's newest entry that is not a gate's: after its model
+ * request failed (`on_model_failure: default`; the code is the error entry's, just before it), or
+ * after refused answers (#220's `mode: default`). `undefined` for any other answer, and when the
+ * reply loaded no run.
+ */
+function defaultAnswerLine(record: RunRecord | undefined, step: string): string | undefined {
+  const own = (record?.evidence ?? []).filter(
+    (e) => e.step_id === step && e.kind !== 'gate_response',
+  );
+  const last = own[own.length - 1];
+  if (last?.diagnostics?.settled_by_default !== true) return undefined;
+  if (isModelFailureDefault(last)) {
+    return `• Step '${step}' took its default answer (${own[own.length - 2]?.error_code}): its model request failed, and the step has on_model_failure: default.`;
+  }
+  const n = last.diagnostics.validation_rejections ?? 0;
+  return `• Step '${step}' took its default answer after ${n} refused ${n === 1 ? 'answer' : 'answers'} (validation_exhaustion.mode: default).`;
 }
 
 /**
@@ -1825,15 +1846,17 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
         const wholeCallRetry =
           stepRetry !== undefined && moduleRetries && !stepHasTools ? stepRetry : undefined;
         // Gap 2, unit (ii-b2): what this step's failed model request becomes, read by both provider
-        // catches. A step that declares `on_model_failure: fail` takes #1300's decision, and fails
-        // through `executeChain`'s `modelFailure` when it says `fail`; any other step, and any
+        // catches. A step that declares `on_model_failure` takes #1300's decision, and goes through
+        // `executeChain`'s `modelFailure` when it says `fail`: core fails the step (`fail`) or
+        // completes it with its default answer (`default`, unit (iii)); any other step, and any
         // `give_back`, is given back as before (`undefined`).
         const modelFailureOf = (
           err: unknown,
           entry: DriveFailureRecord,
           providerCalled: boolean,
         ): ModelFailureMember | undefined => {
-          if (stepDef.on_model_failure !== 'fail') return undefined;
+          if (stepDef.on_model_failure !== 'fail' && stepDef.on_model_failure !== 'default')
+            return undefined;
           const decision = decideModelFailure({
             err,
             entry,
@@ -3003,6 +3026,11 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
         // every reply branch below (the `✓` line, a question the answer opened, any other).
         if (engineReply === undefined && answerRecordedByCall(result, stepName)) {
           answeredHere.add(stepName);
+          // Gap 2, unit (iii): the step's answer is its default — which one, from the step's own
+          // newest entry in the record the reply was judged on (never the reply's flags, which are a
+          // chained step's after one ran).
+          const defaultLine = defaultAnswerLine(judgedOf(result)?.record, stepName);
+          if (defaultLine !== undefined) console.error(defaultLine);
         }
 
         // F7: an error reply read by core's classifier against the record the engine judged it on
@@ -3019,8 +3047,9 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
         // it records this step as failed, the failure has its one home there (the settle released
         // the claim): the bullet line in place of the give-back. Any other reply records no failure,
         // so the catch's drive-failure entry is written, its line says what happened instead, and
-        // the drive stops, as the catch would have.
-        if (member !== undefined) {
+        // the drive stops, as the catch would have. Unit (iii): a reply that recorded the step's
+        // answer (its default) is handled below as any recorded answer is.
+        if (member !== undefined && !answerRecordedByCall(result, stepName)) {
           if (
             result.status === 'error' &&
             resultStop?.kind === 'failed' &&
@@ -3441,10 +3470,12 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
       // decision C179: an answer this drive did not give is said to be another program's.
       const drivenBy = lastAgentEvidence.driven_by;
       const elsewhere = !answeredHere.has(lastAgentEvidence.step_id);
+      // Gap 2, unit (iii), Words 3: a default answer is never shown as the model's.
+      const byDefault = lastAgentEvidence.diagnostics?.settled_by_default === true;
       console.log(
-        `\nResult (${lastAgentEvidence.step_id})${
+        `\nResult (${lastAgentEvidence.step_id})${byDefault ? ' — its default answer' : ''}${
           elsewhere
-            ? ` — given by ${drivenBy !== undefined ? describeProgram(drivenBy, writerCtx()) : 'another process'}, not by this drive`
+            ? `${byDefault ? ',' : ' —'} given by ${drivenBy !== undefined ? describeProgram(drivenBy, writerCtx()) : 'another process'}, not by this drive`
             : ''
         }:`,
       );

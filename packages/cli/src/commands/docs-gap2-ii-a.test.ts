@@ -24,7 +24,8 @@ describe('gap 2, unit (ii-a) — check 10: the words', () => {
     // (a) red when the row is missing or worded otherwise; (b) prints the missing row.
     expect(
       missingFrom('docs/reference/workflow/conditions.md', [
-        '| `failure_kind` | transient, permanent, or absent | Why the step failed, when its model request failed and it took its failure path: transient (a later try might pass) or permanent (it will fail the same way). Absent on every other step: read it with `\\| default` in a template. |',
+        // Gap 2, unit (iii), Words 12: the row names the key, and the default after refused answers.
+        "| `failure_kind` | transient, permanent, or absent | Why the step's model request failed, when the step has `on_model_failure` and settled through it: transient (a later try might pass) or permanent (it will fail the same way). Absent on every other step, including one completed with its default answer after refused answers: read it with `\\| default` in a template. |",
       ]),
     ).toEqual([]);
   });
@@ -33,7 +34,8 @@ describe('gap 2, unit (ii-a) — check 10: the words', () => {
     // (a) red when the row is missing or worded otherwise; (b) prints the missing row.
     expect(
       missingFrom('docs/reference/run-record-and-export.md', [
-        '| `failure_kind` | text | No | On the entry of an agent step that failed because its model request failed and it took its failure path: transient (a later try might pass) or permanent (it will fail the same way). Absent on every other entry. Added after version 0.50.0. |',
+        // Gap 2, unit (iii), Words 15: the default entry carries it too.
+        '| `failure_kind` | text | No | On the entry of an agent step whose model request failed and that settled through `on_model_failure` (its error entry, and with `default` also the default entry after it): transient (a later try might pass) or permanent (it will fail the same way). Absent on every other entry. Added after version 0.50.0. |',
       ]),
     ).toEqual([]);
   });
@@ -44,7 +46,8 @@ describe('gap 2, unit (ii-a) — check 10: the words', () => {
     // (a) red when the row is missing, worded otherwise, or under another category; (b) prints it.
     expect(
       service.includes(
-        "| `MODEL_REQUEST_FAILED` | An agent step's model request failed and the step took its failure path: the request would fail the same way again, the step's `retry` does not try it again (for example a timeout with `on_timeout: false`), or the step has no `retry`. The step fails. `details.failure_kind` says whether a later try might pass. | `report_to_user` | No |",
+        // Gap 2, unit (iii), Words 15: with `default` the step completes.
+        "| `MODEL_REQUEST_FAILED` | An agent step's model request failed and the step took its failure path: the request would fail the same way again, the step's `retry` does not try it again (for example a timeout with `on_timeout: false`), or the step has no `retry`. The step fails; with `on_model_failure: default` it completes with its default answer, and the code is on the error entry before it. `details.failure_kind` says whether a later try might pass. | `report_to_user` | No |",
       ),
     ).toBe(true);
   });

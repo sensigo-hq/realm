@@ -705,12 +705,31 @@ function modelFailureDefects(parts: Record<string, unknown>): InvalidPart[] {
       // the step's `retry` does not contradict (judged only on a pair the check above admits).
       const name = capText(command);
       const declared = isPlainObject(step) ? step : {};
-      if (declared['on_model_failure'] !== 'fail') {
+      const onModelFailure = declared['on_model_failure'];
+      if (onModelFailure !== 'fail' && onModelFailure !== 'default') {
         invalid.push({
           option: 'options.modelFailure',
-          expected: 'given only for a step that declares on_model_failure: fail',
+          expected: 'given only for a step that declares on_model_failure: fail or default',
           given_type: givenTypeOf(failure),
           because: `'${name}' does not`,
+        });
+      }
+      // Gap 2, unit (iii): a `default` step completes with its default answer, which a library
+      // caller that skipped the loader may not have declared.
+      const exhaustion = declared['validation_exhaustion'];
+      if (
+        onModelFailure === 'default' &&
+        (!isPlainObject(exhaustion) ||
+          exhaustion['default_output'] === undefined ||
+          exhaustion['default_output'] === null)
+      ) {
+        invalid.push({
+          option: 'options.modelFailure',
+          expected:
+            'given for a step with on_model_failure: default only when it declares ' +
+            'validation_exhaustion.default_output',
+          given_type: givenTypeOf(failure),
+          because: `'${name}' declares none`,
         });
       }
       const pairAdmitted =
