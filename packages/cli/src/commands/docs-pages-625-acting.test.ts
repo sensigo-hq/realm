@@ -837,7 +837,7 @@ describe(
       claim(PAGE, "| `same as the run's last record` | The same files with the same hashes. |");
       claim(
         PAGE,
-        "| `differs from the run's last record` | Comparable, and different: a code file, an entry module, the `realm.yaml` or the `--extensions-module` override changed. |",
+        "| `differs from the run's last record` | Comparable, and different: a code file, an entry module, the `realm.yaml` or the `--extensions-module` override, or the project's lockfile changed. |",
       );
       claim(
         PAGE,
@@ -898,6 +898,20 @@ describe(
       expect(words(realm(['run', 'advance', await started(bare.def)]).out)).toBe(
         'neither side records project code.',
       );
+    });
+
+    it("#828 PR B, check 11: advance's project code words after a lockfile-only change: differs", async () => {
+      const words = (out: string[]) => out[1]?.replace(/^This program: .* · project code: /, '');
+      const coded = await project('acting-words-lock', A_THEN_QUESTION, true);
+      writeFileSync(join(coded.dir, 'package-lock.json'), '{"tag":"L1"}\n', 'utf8');
+      const id = await started(coded.def);
+      realm(['run', 'advance', id]);
+      await answer(id);
+      // Only the lockfile changes: no code file, no realm.yaml.
+      writeFileSync(join(coded.dir, 'package-lock.json'), '{"tag":"L2"}\n', 'utf8');
+      // (a) red when the lockfile is left out of the comparison (the same code reads "same"); (b)
+      //     prints the words.
+      expect(words(realm(['run', 'advance', id]).out)).toBe("differs from the run's last record.");
     });
 
     it('advance, L160 + L169 + L176 + blocks: when the engine can run nothing the last preview line says why and nothing runs; the way out after a refused step; a step another program holds', async () => {
