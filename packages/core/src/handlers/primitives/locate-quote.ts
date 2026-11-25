@@ -1440,7 +1440,9 @@ interface Placement {
  *  #845 (Q-C): with `heldBack`, a held-back occurrence is a candidate too, compared with the other
  *  held-back ones as above, but an accepted candidate always wins over it, and it never ends the
  *  search for its piece early; it is used only when its piece has no accepted candidate. The same
- *  searches find both kinds. `undefined` when a piece is found nowhere it may be. */
+ *  searches find both kinds. #845 (walk M8): with `uncut`, among accepted candidates that join as
+ *  many pieces, one that is not cut short wins, and only such a one ends the search early.
+ *  `undefined` when a piece is found nowhere it may be. */
 function placeParts(
   budget: Budget,
   source: Bare,
@@ -1448,6 +1450,7 @@ function placeParts(
   inOrder: boolean,
   startHolds: (at: number) => StartHold,
   heldBack: boolean,
+  uncut?: (part: Part) => boolean,
 ): Placement | undefined {
   const hay = source.text;
   const parts: Part[] = [];
@@ -1466,8 +1469,14 @@ function placeParts(
         const hold = k === 0 ? 'accepted' : startHolds(at);
         if (hold === 'accepted') {
           const part = extend(budget, source, segments, k, at);
-          if (best === undefined || part.last > best.last) best = part;
-          if (part.last === segments.length - 1) break;
+          if (
+            best === undefined ||
+            part.last > best.last ||
+            (uncut !== undefined && part.last === best.last && uncut(part) && !uncut(best))
+          ) {
+            best = part;
+          }
+          if (part.last === segments.length - 1 && (uncut === undefined || uncut(best))) break;
         } else if (hold === 'held' && heldBack) {
           const part = extend(budget, source, segments, k, at);
           if (held === undefined || part.last > held.last) held = part;
@@ -1790,8 +1799,46 @@ function ladder(
         ? inOrder.parts
         : placeParts(budget, canonical, segments, false, startHolds, false)?.parts;
     if (parts !== undefined && long(parts)) {
-      const ordered = parts.every((p, i) => i === 0 || p.at >= parts[i - 1]!.end);
-      const spans = parts.map((p) => {
+      /** L2: the source offsets where a part's sentence-ending pieces stop short. */
+      const cutOf = (p: Part): number[] => {
+        const at: number[] = [];
+        p.pieces.forEach((placed, n) => {
+          if (!segments[p.first + n]!.endsSentence) return;
+          const end = canonical.to[placed.at + placed.length - 1]!;
+          if (sentenceGoesOn(source, end)) at.push(end);
+        });
+        return at;
+      };
+      let chosen = parts;
+      let cut = parts.flatMap(cutOf);
+      // #845 (walk M8): a result cut short gets a second, in-order placement on the searches left,
+      // accepted candidates only, preferring among those that join as many pieces one that is not
+      // cut short; it replaces the first only when it places every part, each long enough, with
+      // fewer cut-short ends. It never sets `cause`; when the searches run out, the first stands.
+      if (cut.length > 0) {
+        try {
+          const second = placeParts(
+            budget,
+            canonical,
+            segments,
+            true,
+            startHolds,
+            false,
+            (p) => cutOf(p).length === 0,
+          );
+          if (second !== undefined && long(second.parts)) {
+            const secondCut = second.parts.flatMap(cutOf);
+            if (secondCut.length < cut.length) {
+              chosen = second.parts;
+              cut = secondCut;
+            }
+          }
+        } catch (err) {
+          if (err !== OUT_OF_BUDGET) throw err;
+        }
+      }
+      const ordered = chosen.every((p, i) => i === 0 || p.at >= chosen[i - 1]!.end);
+      const spans = chosen.map((p) => {
         const first = segments[p.first]!;
         const last = segments[p.last]!;
         return trimmed(
@@ -1802,14 +1849,6 @@ function ladder(
           source,
         );
       });
-      const cut: number[] = [];
-      for (const p of parts) {
-        p.pieces.forEach((placed, n) => {
-          if (!segments[p.first + n]!.endsSentence) return;
-          const at = canonical.to[placed.at + placed.length - 1]!;
-          if (sentenceGoesOn(source, at)) cut.push(at);
-        });
-      }
       return {
         state: ordered ? 'stitched' : 'stitched_out_of_order',
         parts: spans,

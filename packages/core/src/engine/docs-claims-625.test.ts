@@ -5042,3 +5042,73 @@ describe('#845 1b-i — the words of rule 6 (item 14, a `.` after a word with no
     });
   });
 });
+
+describe('#845 1b-i — the words of rule 7 (walk M8) and the CHANGELOG’s Changed line, each executed', () => {
+  const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..');
+  const HANDLERS = 'docs/reference/handlers.md';
+  const CL = 'CHANGELOG.md';
+  const raw = (p: string) => readFileSync(join(ROOT, p), 'utf8');
+  const flatten = (t: string) => t.replace(/\\\|/g, '|').replace(/\s+/g, ' ');
+  /** (a) red when the page no longer holds the sentence word for word; (b) prints it. */
+  const claimOn = (p: string, sentence: string): void => {
+    expect(flatten(raw(p)), `${p} no longer says: ${sentence}`).toContain(flatten(sentence));
+  };
+  const F = 'The Landlord shall insure the Building';
+  const read = (quote: string, source: string) => {
+    const c = locateQuote(quote, source);
+    return `${c.state}${c.cut_short === true ? '+cut_short' : ''}`;
+  };
+
+  it('the `cut_short` paragraph: a part that sits in two places that fit equally is placed where its sentence ends, if the rest of the quote still follows it in order', () => {
+    claimOn(
+      HANDLERS,
+      'When a part sits in two places that fit equally, the one where its sentence ends is chosen, if the rest of the quote still follows it in order.',
+    );
+    const quote =
+      'The Tenant shall pay the rent … The Landlord shall repair the roof. The Tenant may assign the lease';
+    const follows =
+      'The Tenant shall pay the rent quarterly. The Landlord shall repair the roof and walls. The Landlord shall repair the roof. The Tenant may assign the lease with consent.';
+    const doesNot =
+      'The Tenant shall pay the rent quarterly. The Landlord shall repair the roof and walls. The Tenant may assign the lease with consent. The Landlord shall repair the roof.';
+    // (a) red when the place where the sentence ends is not chosen though the rest follows it, or is
+    //     chosen though the rest does not; (b) prints the two states.
+    expect([read(quote, follows), read(quote, doesNot)]).toEqual([
+      'stitched',
+      'stitched+cut_short',
+    ]);
+  });
+
+  it('the CHANGELOG’s Changed line: each skip it names reads not_found, and a part found in two places is placed where its sentence ends', () => {
+    claimOn(
+      CL,
+      'check_quotes reads more skips as not_found, on purpose: one across a blank line under a line that does not end a sentence, a clause or a table row, onto anything but a new sentence; an item whose list mark has no blank after it (`-the`); a `|` that ends a prose line; a `:` between two digits across a line break; and a `.` after a word with no letter or digit (`§. Keep`). A stitched part found in two places is placed where its sentence ends when the rest of the quote still follows it, so fewer quotes are marked `cut_short` (#845).',
+    );
+    const item = 'the Tenant shall pay the insurance rent';
+    const Keep = 'Keep the Premises in good and substantial repair';
+    const skip = (between: string, second = item) =>
+      read(`${F} … ${second}`, `${F} for its full reinstatement cost${between}${second} at once.`);
+    // (a) red when one of these reads found (the line would then be false), or the stitched part is
+    //     still cut short; (b) prints the states.
+    expect({
+      blankLine: skip('\n\n'),
+      listMark: skip(':\n-'),
+      prosePipe: skip(' or |\n'),
+      colon: read(
+        `${F} … 30 minutes before the Tenant arrives at the Building`,
+        `${F} for its cost at 9:\n30 minutes before the Tenant arrives at the Building.`,
+      ),
+      noLetter: skip('.\n\u{a7}. ', Keep),
+      twoPlaces: read(
+        'The Tenant shall pay … Monday rent is waived.',
+        'The Tenant shall pay by 9 a.m. Monday rent is waived on holidays only. Monday rent is waived.',
+      ),
+    }).toEqual({
+      blankLine: 'not_found',
+      listMark: 'not_found',
+      prosePipe: 'not_found',
+      colon: 'not_found',
+      noLetter: 'not_found',
+      twoPlaces: 'stitched',
+    });
+  });
+});

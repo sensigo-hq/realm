@@ -1779,3 +1779,47 @@ describe('#845 1b-i check 8: item 14 — a `.` ends a sentence only when the wor
     expect(misses(rows)).toEqual([]);
   });
 });
+
+describe('#845 1b-i check 9: walk M8 — a part found in two places that fit equally is placed where its sentence ends, if the rest still follows', () => {
+  it('items3 row 64 reads `stitched` uncut; probes M1 and R4 keep first-fit’s `stitched+cs[75]`; when the searches run out, first-fit stands', () => {
+    const read = (quote: string, doc: string) => {
+      const c = lq(quote, doc);
+      return `${c.state}${c.cut_short === true ? `+cs${JSON.stringify(c.cut_short_at)}` : ''}${c.cause === undefined ? '' : `+${c.cause}`}`;
+    };
+    const quote =
+      'The Tenant shall pay the rent … The Landlord shall repair the roof. The Tenant may assign the lease';
+    const m1 =
+      'The Tenant shall pay the rent quarterly. The Landlord shall repair the roof and walls. The Tenant may assign the lease with consent. The Landlord shall repair the roof.';
+    const r4 = `${m1} It is agreed that\n\nthe Tenant may assign the lease freely.`;
+    // The budget: the middle piece, cut short, 1,100 times over, and uncut only at the end.
+    const P1 = 'The Tenant shall pay the rent quarterly';
+    const P2 = 'The Landlord shall repair the roof.';
+    const lead = `${P1} and the service charge. `;
+    const many = `${lead}${`${P2.slice(0, -1)}, and more. `.repeat(1_100)}${P2}`;
+    const rows: Row[] = [
+      [
+        'items3 64: `a.m.` first, the uncut place last',
+        read(
+          'The Tenant shall pay … Monday rent is waived.',
+          'The Tenant shall pay by 9 a.m. Monday rent is waived on holidays only. Monday rent is waived.',
+        ),
+        'stitched',
+      ],
+      ['M1: the uncut place sits after the next part', read(quote, m1), 'stitched+cs[75]'],
+      [
+        'R4: after the uncut place, the next part only at a blank-line join',
+        read(quote, r4),
+        'stitched+cs[75]',
+      ],
+      [
+        'the searches run out before the uncut place',
+        read(`${P1} … ${P2}`, many),
+        `stitched+cs[${lead.length + P2.length - 1}]`,
+      ],
+    ];
+    // (1) red when the preference is removed (row 64), the second placement is adopted whenever it
+    //     returns (M1), takes a held-back candidate (R4), or runs past the budget (the last row);
+    //     (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+});
