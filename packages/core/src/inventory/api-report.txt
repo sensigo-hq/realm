@@ -4714,6 +4714,7 @@ clockErrorSink · value · public
   function clockErrorSink(): ((err: unknown) => void) | undefined;
 
 closeModelAttempts · value · internal
+codeTextOf · value · internal
 collectManifestSecretRefs · value · internal
 compareCanonical · value · internal
 compareStrings · value · public
