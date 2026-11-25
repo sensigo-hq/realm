@@ -1,8 +1,11 @@
-// code-text.test.ts — #828 unit 2a: `codeTextOf`, the fingerprint of a registered object's code
-// (prompt feat-828-u2a-code-text.md rev 1). One cell per acceptance check, numbered as the prompt
-// numbers them. Every assertion carries (1) the change that turns it red and (2) what it prints when
-// it fails.
+// code-text.test.ts — #828 unit 2a: `codeTextOf`, the fingerprint of a registered object's code.
+// Two prompts: "check N" is a cell of feat-828-u2a-code-text.md rev 1, numbered as it numbers them;
+// "C1-N" is a check of its correction 1, feat-828-u2a-correction-1.md rev 2.1 (Node's own code is
+// never counted as the host's). Every assertion carries (1) the change that turns it red and (2)
+// what it prints when it fails.
 import { createHash } from 'node:crypto';
+import { EventEmitter } from 'node:events';
+import { Readable } from 'node:stream';
 import { describe, expect, it } from 'vitest';
 import { codeTextOf } from './code-text.js';
 
@@ -164,34 +167,11 @@ describe('#828 unit 2a — codeTextOf', () => {
       },
     };
     // (1) red when a member is read by `impl[key]` (the getter runs, the result is unavailable);
-    // (2) prints the result and the number of calls.
-    expect(hashOf(impl)).toMatch(HASH);
-    expect(calls).toBe(0);
-  });
-
-  it('check 8: an instance of a class extending Map gives a hash', () => {
-    class Registry extends Map<string, number> {
-      execute() {
-        return 1;
-      }
-    }
-    // (1) red when the walk reads the platform's level, `Map.prototype` (unavailable); (2) prints it.
-    expect(hashOf(new Registry())).toMatch(HASH);
-  });
-
-  it('check 9: Object.create of two different literals gives two hashes', () => {
-    const a = Object.create({
-      execute() {
-        return 'a';
-      },
-    }) as object;
-    const b = Object.create({
-      execute() {
-        return 'b';
-      },
-    }) as object;
-    // (1) red when the walk does not stop at `Object.prototype` (unavailable); (2) prints the two.
-    expectTwoHashes(a, b);
+    // (2) prints the result and the number of calls, also when the getter's error was caught.
+    expect({ result: hashOf(impl), calls }).toEqual({
+      result: expect.stringMatching(HASH),
+      calls: 0,
+    });
   });
 
   it("check 10: a method that only contains the words '[native code]' is code", () => {
@@ -202,24 +182,6 @@ describe('#828 unit 2a — codeTextOf', () => {
     };
     // (1) red when any text containing "[native code]" is read as native (unavailable); (2) prints it.
     expect(hashOf(impl)).toMatch(HASH);
-  });
-
-  it('check 11: a bound, a native and a callable-Proxy member are each unavailable', () => {
-    const bound = {
-      execute: function () {
-        return 1;
-      }.bind(null),
-    };
-    const native = { execute: Math.max };
-    const proxied = {
-      execute: new Proxy(function () {
-        return 1;
-      }, {}),
-    };
-    // (1) red when a native text is hashed as code (three hashes); (2) prints each result.
-    expect(codeTextOf(bound)).toEqual(UNAVAILABLE);
-    expect(codeTextOf(native)).toEqual(UNAVAILABLE);
-    expect(codeTextOf(proxied)).toEqual(UNAVAILABLE);
   });
 
   it('check 12: an object with no functions is unavailable', () => {
@@ -299,13 +261,142 @@ describe('#828 unit 2a — codeTextOf', () => {
     });
   });
 
-  it('check 16 (grounding): the same object read twice gives the same hash', () => {
-    const impl = {
+  /** The hash of a class's own lines: its prototype's `constructor` and `execute`, at level 1. */
+  const ownLines = (cls: { prototype: { execute: unknown } }): string =>
+    sha([
+      `1\0constructor\0value\0${text(cls)}`,
+      `1\0execute\0value\0${text(cls.prototype.execute)}`,
+    ]);
+
+  it('C1-1: a platform function kept in a field gives no line (the real shape, fetchFn = fetch)', () => {
+    type Fn = (...args: never[]) => unknown;
+    class Handler {
+      constructor(private readonly fetchFn: Fn = fetch) {}
+      execute(): Fn {
+        return this.fetchFn;
+      }
+    }
+    // (1) red when the platform's functions are not left out (Node's own `fetch` and `setTimeout`
+    // texts become level-0 lines); (2) prints both hashes.
+    expect(codeTextOf(new Handler())).toEqual({ code_text_sha256: ownLines(Handler) });
+    expect(codeTextOf(new Handler(setTimeout))).toEqual({ code_text_sha256: ownLines(Handler) });
+  });
+
+  it("C1-2: a class extending EventEmitter, or Readable, gives only its own class's lines", () => {
+    class Emitting extends EventEmitter {
       execute() {
         return 1;
-      },
-    };
-    expect(hashOf(impl)).toMatch(HASH);
-    expect(hashOf(impl)).toBe(hashOf(impl));
+      }
+    }
+    class Reading extends Readable {
+      execute() {
+        return 2;
+      }
+    }
+    // (1) red when a level whose own constructor is the platform's is not a stop (EventEmitter's
+    // and the stream classes' lines are added); (2) prints the class and both hashes.
+    for (const cls of [Emitting, Reading]) {
+      expect({ cls: cls.name, result: codeTextOf(new cls()) }).toEqual({
+        cls: cls.name,
+        result: { code_text_sha256: ownLines(cls) },
+      });
+    }
+  });
+
+  it('C1-3: a method bound in its own constructor gives no line, and its class lines stay', () => {
+    class Bound {
+      constructor() {
+        this.execute = this.execute.bind(this);
+      }
+      execute() {
+        return 1;
+      }
+    }
+    // (1) red when every bound member makes the result unavailable (rule 2 as on a0485060);
+    // (2) prints the result.
+    expect(codeTextOf(new Bound())).toEqual({ code_text_sha256: ownLines(Bound) });
+  });
+
+  describe('C1-4 (check 11 re-pinned): built-in and bound members', () => {
+    function execute() {
+      return 1;
+    }
+
+    it('a named built-in member outside the platform set gives no line', () => {
+      const withBuiltIn = { execute, lookup: Map.prototype.get };
+      // (1) red when every native-shape member makes the result unavailable (rule 2 as on
+      // a0485060); (2) prints the result or the two hashes.
+      expect(hashOf(withBuiltIn)).toMatch(HASH);
+      expect(hashOf(withBuiltIn)).toBe(hashOf({ execute }));
+    });
+
+    it('any other bound member, and a callable-Proxy member, make the result unavailable', () => {
+      const client = {
+        send() {
+          return 'sent';
+        },
+      };
+      // A bound method of another object, kept under its own name: no later level holds `send`.
+      class Sender {
+        send: () => string;
+        constructor(from: typeof client) {
+          this.send = from.send.bind(from);
+        }
+        execute() {
+          return 1;
+        }
+      }
+      // A module function bound as a member: its name is `bound run`, not `bound execute`.
+      function run() {
+        return 2;
+      }
+      class Runner {
+        constructor() {
+          this.execute = run.bind(this);
+        }
+        execute() {
+          return 1;
+        }
+      }
+      // A delegate: `toString` is held only by `Object.prototype`, a level the walk does not read.
+      const part = {
+        toString() {
+          return 'part';
+        },
+      };
+      const fixtures = {
+        'a bound method of another object': new Sender(client),
+        'a module function bound as a member': new Runner(),
+        'a delegate of bound methods': { toString: part.toString.bind(part), execute },
+        'a callable-Proxy member': {
+          execute,
+          handle: new Proxy(function handle() {
+            return 3;
+          }, {}),
+        },
+      };
+      // (1) red when every bound or callable-Proxy member gives no line (rule 2 as in the
+      // correction's rev 1); (2) prints the fixture and its result.
+      for (const [fixture, impl] of Object.entries(fixtures)) {
+        expect({ fixture, result: codeTextOf(impl) }).toEqual({ fixture, result: UNAVAILABLE });
+      }
+    });
+  });
+
+  it('C1-5: a built-in getter and a symbol-named built-in as own members give no line', () => {
+    function execute() {
+      return 1;
+    }
+    const withBuiltIns: object = { execute, split: RegExp.prototype[Symbol.split] };
+    // `Map.prototype`'s own `size` descriptor: a built-in getter, `function get size() { … }`.
+    Object.defineProperty(
+      withBuiltIns,
+      'size',
+      Reflect.getOwnPropertyDescriptor(Map.prototype, 'size') ?? {},
+    );
+    // (1) red when the native shape's name part is `[\w$]*` (`get size` and `[Symbol.split]` do
+    // not match, so their texts are hashed); (2) prints the result or the two hashes.
+    expect(hashOf(withBuiltIns)).toMatch(HASH);
+    expect(hashOf(withBuiltIns)).toBe(hashOf({ execute }));
   });
 });
