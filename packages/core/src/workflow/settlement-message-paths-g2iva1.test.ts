@@ -6,6 +6,7 @@
 // Every assertion carries (a) the break that turns it red and (b) what it prints.
 import { describe, expect, it } from 'vitest';
 import { loadWorkflowFromStringWithDiagnostics } from './yaml-loader.js';
+import { PathIndex } from './path-resolver.js';
 
 /**
  * The load's warnings as `code: message` and its notes, and its refusal: a throw, or the findings
@@ -253,5 +254,38 @@ describe('gap 2 (iv-a1), check 8 at the loader — the notes', () => {
       refused: true,
       notes: [],
     });
+  });
+});
+
+describe('gap 2 (iv-a1), check 7 — the found-after-failure rule, one cell per condition', () => {
+  // On a load, the trigger-rule reach check runs first and already judges the all_done reader and
+  // the reader of a step outside its depends_on may be absent; these cells read the rule itself.
+  const step = (deps: string[] = [], rule?: string) => ({
+    description: 'S.',
+    execution: 'auto',
+    handler: 'h',
+    depends_on: deps,
+    ...(rule !== undefined ? { trigger_rule: rule } : {}),
+  });
+  it.each([
+    ['all_failed, classify in its depends_on', ['classify'], 'all_failed', true],
+    ['one_failed, classify its only dependency', ['classify'], 'one_failed', true],
+    ['one_failed over two dependencies', ['classify', 'other'], 'one_failed', false],
+    ['all_done over classify alone', ['classify'], 'all_done', false],
+    ['all_success over classify alone', ['classify'], undefined, false],
+    ['all_failed over middle, reading classify upstream of it', ['middle'], 'all_failed', false],
+  ])('%s', (_n, deps, rule, expected) => {
+    const index = new PathIndex({
+      steps: {
+        classify: step(),
+        other: step(),
+        middle: step(['classify']),
+        reader: step(deps, rule),
+      },
+    });
+    // (a) red when the rule ignores the trigger rule (all_done or all_success counts), counts no
+    //     dependencies (one_failed over two counts), or drops the depends_on condition (the
+    //     upstream read counts); (b) prints the verdict.
+    expect(index.runsOnlyAfterFailureOf('reader', 'classify')).toBe(expected);
   });
 });

@@ -250,7 +250,9 @@ describe('gap 2 (iv-a1), check 1 — an agent step fails under on_model_failure:
 describe('gap 2 (iv-a1), check 2 — a handler’s text with fake secrets: hidden in the question and the Slack post, unmasked for the next step', () => {
   const RAW = `token=${PAT_VALUE} and ${ENV_VALUE} again`;
   const MESSAGE = `Handler 'boom' threw: ${RAW}`;
-  const N = MESSAGE.indexOf(ENV_VALUE) + 6;
+  // `truncate: N` keeps N characters with its ellipsis: N lands 9 characters into the environment
+  // value, so a cut made after the hiding would show its first six.
+  const N = MESSAGE.indexOf(ENV_VALUE) + 10;
   const GATE_MESSAGE = [
     'plain: {{ context.resources.$settlement.boom.message }}',
     `cut: {{ context.resources.$settlement.boom.message | truncate: ${N} }}`,
