@@ -31,7 +31,7 @@ describe('C3d-B — the guide and the reading page', () => {
     );
   });
   it('the guide: the gloss of the Callback: lines gains the attempt, the answer, and the two never-tried forms', () => {
-    // Pinned by: inspect-line-c3b1 'C3d-B — what a due callback waits for' (every form); delivery-pass-c3db 'the built `realm run inspect`' (a due row after a 503, a row the sweep ended before a try).
+    // Pinned by: inspect-line-c3b1 'C3d-B — what a due callback waits for' (every form); delivery-pass-c3db 'the built `realm run inspect`' (a due row after a 503, a row the sweep expired before a try).
     claim(GUIDE, `an entry for the receiver. ${GLOSS}`);
   });
   it('the reading page: the same gloss sentence after the Callback: lines', () => {

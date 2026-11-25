@@ -277,7 +277,7 @@ describe(
       });
     });
 
-    it('a pass that is not live after the first round expires no more: 1,000 expired, the rest left, 10 lines and the count for the 990', async () => {
+    it('a pass that is not live after the first round asks no more: 1,000 expired, the rest left, 10 lines and the count for the 990', async () => {
       const { w, r, lists } = await overdue(1005);
       let asked = 0;
       const answer = await w.pass(lists)(() => (asked += 1) < 1);

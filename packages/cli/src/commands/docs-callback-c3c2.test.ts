@@ -502,7 +502,7 @@ describe('C3c-2 — cell 2: the log rows are real', { timeout: 60_000 }, () => {
       await w.pass(port, { lists: privateList('http://127.0.0.1:1') })(live);
       said['notAllowed'] = w.rows();
     }
-    // C3d-A: never sent: 3 days after the run finished, no try made (the sweep ends it).
+    // C3d-A: never sent: 3 days after the run finished, no try made (the sweep expires it).
     {
       const w = await world();
       const port = await receiver(200);
@@ -512,7 +512,7 @@ describe('C3c-2 — cell 2: the log rows are real', { timeout: 60_000 }, () => {
       await w.pass(port)(live);
       said['neverSent'] = w.rows();
     }
-    // stopped: one try made (503), then 3 days after the run finished (the sweep ends it).
+    // stopped: one try made (503), then 3 days after the run finished (the sweep expires it).
     {
       const w = await world();
       const port = await receiver(503);

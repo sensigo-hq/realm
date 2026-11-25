@@ -1,5 +1,5 @@
 // delivery-pass-c3d.test.ts — callback C3d-A (R1.3): the sweep at the start of each delivery pass. A
-// callback that is due 3 days or more after its run ended is expired `failed` with `expired` before any
+// callback that is due 3 days or more after its run ended is expired, `failed` with `expired`, before any
 // try, whoever could have sent it: a workflow this `realm listen` does not mount, a key it cannot
 // read, or one it could send. One line per expired row (`never sent` for a row never tried, `stopped
 // at attempt <n>` for one tried), at most 10, then one count line. The in-memory store on a settable
@@ -351,7 +351,7 @@ describe(
 );
 
 describe('callback C3d-A — on a real SQLite home', { timeout: 120_000 }, () => {
-  it('a finished run whose key was deleted, 4 days on: the pass expires it; inspect prints "Callback: expired", the read address says failed and expired, countWaiting no longer counts it; a row whose finished_at is 4 days back ends too; a run made 4 days ago that ended 2 days ago, and one still running, are left', async () => {
+  it('a finished run whose key was deleted, 4 days on: the pass expires it; inspect prints "Callback: expired", the read address says failed and expired, countWaiting no longer counts it; a row whose finished_at is 4 days back expires too; a run made 4 days ago that ended 2 days ago, and one still running, are left', async () => {
     const clock = settableClock(C0);
     const h = await makeTempHome({
       clock,

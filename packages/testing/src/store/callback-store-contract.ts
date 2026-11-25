@@ -1455,7 +1455,7 @@ function family(adapter: CallbackStoreContractAdapter) {
             return b.callbacks.expireOverdue(1000);
           };
           // a: claimed at 0, so its `finished_at` is its run's `updated_at`; the run is then stamped
-          // again at 2,000 ms, so an anchor read from the run ends it 2 s late.
+          // again at 2,000 ms, so an anchor read from the run expires it 2 s late.
           const a = await finishedRun(b, 1);
           const aRun = await b.record(a);
           same(law, 'the setup claim of a', (await claimNow(b, a, 'X')).applied, true);
@@ -1470,7 +1470,7 @@ function family(adapter: CallbackStoreContractAdapter) {
           await claimNow(b, failed, 'X');
           await b.callbacks.mark(failed, 'X', { kind: 'failed', lastStatus: 500 });
           // n: never claimed, created at 500 ms and finished at 1,000 ms: its anchor is the run's
-          // `updated_at`, so an anchor read from `created_at` ends it 0.5 s early.
+          // `updated_at`, so an anchor read from `created_at` expires it 0.5 s early.
           await b.at(500);
           const n = await b.create(reg(2));
           await b.at(1000);
