@@ -305,7 +305,7 @@ describe('gap 2 (ii-b2), check 2 — with the key, a request that failed for goo
     },
   ];
   it.each(ROWS)(
-    '$name: $code, no drive failure, one ✗ line then the bullet; a later drive runs the route only when transient',
+    '$name: $code, no drive failure, one ✗ line then the bullet; the same drive runs the route only when transient',
     async (row) => {
       script = [...row.wire];
       const def = workflow(
@@ -328,7 +328,9 @@ describe('gap 2 (ii-b2), check 2 — with the key, a request that failed for goo
         driveFailures: first.run.drive_failures?.entries.length ?? 0,
         code: entry?.error_code,
         kind: entry?.diagnostics?.failure_kind,
-        crosses: errLines.filter((l) => l.includes('✗')).length,
+        crosses: errLines.filter((l) => l.includes('✗') && !l.includes('The run completed, but'))
+          .length,
+        closing: errLines.filter((l) => l.includes('The run completed, but')).length,
         bullet: errLines.filter((l) => l.startsWith('• Step ')),
         giveBack: out.filter((l) => l.includes('let its claim go')),
       }).toEqual({
@@ -338,17 +340,18 @@ describe('gap 2 (ii-b2), check 2 — with the key, a request that failed for goo
         code: row.code,
         kind: row.kind,
         crosses: 1,
+        // Gap 2 (ii-b3): a transient failure's route runs in this drive, the run completes, and its
+        // last line says a step failed during the drive.
+        closing: row.kind === 'transient' ? 1 : 0,
         bullet: [bullet(row.code)],
         giveBack: [],
       });
-      // A later drive of the same run: the route runs only on a transient failure.
-      out = [];
-      err = [];
-      const second = await drive(def, anthropic(), { store: first.store, runId: first.run.id });
+      // Gap 2 (ii-b3): the same drive runs the route, only on a transient failure (before, a later
+      // drive of the run did).
       // (a) red when failure_kind is not what the route reads; (b) prints where `after` went.
       expect({
-        completed: second.run.completed_steps.includes('after'),
-        skipped: second.run.skipped_steps.includes('after'),
+        completed: first.run.completed_steps.includes('after'),
+        skipped: first.run.skipped_steps.includes('after'),
       }).toEqual({ completed: row.kind === 'transient', skipped: row.kind === 'permanent' });
     },
     15_000,
