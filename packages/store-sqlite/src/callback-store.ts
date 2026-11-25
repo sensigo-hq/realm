@@ -24,14 +24,14 @@ import {
   callbackViewOf,
   checkCallbackRequest,
   claimCallback,
-  endOverdueCallbacks,
+  expireOverdueCallbacks,
   freezeCallbackBody,
   markCallback,
   WorkflowError,
   type ArtifactDeletionReport,
   type CallbackClaimRequest,
   type CallbackClaimResult,
-  type CallbackEnded,
+  type CallbackExpiredItem,
   type CallbackFreezeResult,
   type CallbackItem,
   type CallbackKeyStore,
@@ -126,7 +126,7 @@ const WAITING = `SELECT count(*) AS n FROM callbacks c JOIN runs r ON r.id = c.r
   WHERE c.status = 'pending' AND r.terminal_state IS 1`;
 
 /**
- * Callback C3d: the rows `endOverdue` may end (core's `endOverdueCallbacks` decides): pending, due at
+ * Callback C3d: the rows `expireOverdue` may expire (core's `expireOverdueCallbacks` decides): pending, due at
  * the reading, the run there and finished, and the anchor (`finished_at`, else the run's
  * `updated_at`) at or before the cutoff, 3 days before the reading; oldest anchor first, then
  * `run_id`. Every stamp is `toISOString()` text, so text order is time order.
@@ -251,10 +251,10 @@ export class SqliteCallbackStore implements CallbackStore {
   }
 
   /**
-   * Ends the overdue rows: core's `endOverdueCallbacks` over the candidates, in one write
+   * Expires the overdue rows: core's `expireOverdueCallbacks` over the candidates, in one write
    * transaction with its one reading; landed when every written row reads back as written.
    */
-  async endOverdue(limit: number): Promise<CallbackEnded[]> {
+  async expireOverdue(limit: number): Promise<CallbackExpiredItem[]> {
     checkCallbackRequest({ kind: 'due', limit });
     const decided = await this.#db.immediate(
       (db, reading) => {
@@ -266,13 +266,13 @@ export class SqliteCallbackStore implements CallbackStore {
             { finished: row['run_terminal'] === 1, updatedAt: String(row['run_updated_at']) },
           ]),
         );
-        const out = endOverdueCallbacks(found.map(rowOf), (id) => facts.get(id), reading, limit);
+        const out = expireOverdueCallbacks(found.map(rowOf), (id) => facts.get(id), reading, limit);
         for (const row of out.writes) storeCallbackRow(db, row);
         return out;
       },
       (db, out) => out.writes.every((row) => callbackRowLanded(db, row)),
     );
-    return decided.ended;
+    return decided.expired;
   }
 
   /** At most `limit` rows to send now, one per host per round, at the read's one reading. */

@@ -1,7 +1,7 @@
 // Tests for inspectRun business logic.
 import { declared } from '../test-support/declared.js';
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -707,6 +707,88 @@ describe('inspectRun — extension identity (drift evidence)', () => {
     const run = makeRun([]);
     const result = await inspectRun('run_test1', makeRunStore(run), makeWorkflowStore(basicDef));
     expect(result).not.toContain('Extension Identity');
+  });
+
+  it('#828 PR B, check 11: the lockfile line in each form; "not recorded" for an older entry; none for an entry with error', async () => {
+    const base = (lockfile?: ExtensionIdentityEntry['lockfile']): ExtensionIdentityEntry => ({
+      captured_at: '2026-07-05T10:00:00.000Z',
+      modules: [],
+      tree: {
+        roots: [],
+        rules: 'dir_tree_v1: test-rules',
+        file_count: 0,
+        total_bytes: 0,
+        tree_hash: 'cc33dd44',
+        truncated: false,
+      },
+      coverage: 'dir_tree_v1',
+      ...(lockfile !== undefined ? { lockfile } : {}),
+    });
+    const run = makeRun([], {
+      extension_identity: [
+        base({ files: ['../package-lock.json', '../yarn.lock'], sha256: 'ab'.repeat(32) }),
+        base({ absent: 'none_found' }),
+        base({ files: ['package-lock.json'], absent: 'unreadable' }),
+        base(),
+        { ...base(), error: 'extension load failed: boom' },
+      ],
+    });
+    const result = await inspectRun('run_test1', makeRunStore(run), makeWorkflowStore(basicDef));
+    const lockLines = result.split('\n').filter((l) => l.includes('lockfile:'));
+    // (1) red when a form is not printed, printed otherwise, or a line is printed for the entry with
+    //     an error; (2) prints the lines.
+    expect(lockLines).toEqual([
+      `     lockfile: ../package-lock.json, ../yarn.lock (sha256 over these files: ${'ab'.repeat(32)})`,
+      '     lockfile: none found',
+      '     lockfile: package-lock.json cannot be read',
+      '     lockfile: not recorded (added after version 0.50.0)',
+    ]);
+  });
+
+  it('#828 PR B, check 11: --check-drift says the lockfile is the same, DIFFERS after a change, and not checked when the project folder is not known', async () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), 'realm-inspect-lock-')));
+    try {
+      mkdirSync(join(dir, '.git'));
+      writeFileSync(join(dir, 'realm.yaml'), 'version: 1\n', 'utf8');
+      writeFileSync(join(dir, 'package-lock.json'), '{"tag":"L1"}\n', 'utf8');
+      const identity = computeExtensionIdentity([], {
+        projectFolder: dir,
+        manifest: { path: join(dir, 'realm.yaml'), content_hash: 'x' },
+      });
+      const drift = async (entry: ExtensionIdentityEntry) =>
+        (
+          await inspectRun(
+            'run_test1',
+            makeRunStore(makeRun([], { extension_identity: [entry] })),
+            makeWorkflowStore(basicDef),
+            { checkDrift: true },
+          )
+        )
+          .split('\n')
+          .filter((l) => l.includes('lockfile:') && !l.startsWith('     '));
+      const same = await drift(identity);
+      writeFileSync(join(dir, 'package-lock.json'), '{"tag":"L2"}\n', 'utf8');
+      const differs = await drift(identity);
+      const recorded = identity.lockfile as { sha256: string };
+      const current = computeExtensionIdentity([], { projectFolder: dir }).lockfile as {
+        sha256: string;
+      };
+      // An entry with a lockfile and no manifest, under a definition with no trust_root.
+      const { manifest: _gone, ...noManifest } = identity;
+      void _gone;
+      const unknown = await drift(noManifest as ExtensionIdentityEntry);
+      // (1) red when --check-drift does not recompute the lockfile, prints a line for a member it
+      //     cannot check otherwise, or words it otherwise; (2) prints the lines.
+      expect({ same, differs, unknown }).toEqual({
+        same: ['  lockfile: same'],
+        differs: [
+          `  lockfile: DIFFERS (recorded sha256 ${recorded.sha256}, current sha256 ${current.sha256})`,
+        ],
+        unknown: ["  lockfile: not checked (the project's folder is not known)"],
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('--check-drift recomputes the LAST entry against current disk: same, then DIFFERS after edit', async () => {

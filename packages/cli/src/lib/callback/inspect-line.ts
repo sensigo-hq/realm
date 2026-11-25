@@ -3,11 +3,14 @@
 // the run's own phase, at the inspect's reading:
 //   pending, the run not finished      `Callback: waiting for the run to finish`
 //   pending, finished, not yet due     `Callback: pending, attempt <n>[, last answer <s>], next try <W>`
-//   pending, finished, due             `Callback: due since <W>; sent only while realm listen with a
-//                                       matching allow-list runs`
+//   pending, finished, due, no try     `Callback: due since <W>; it waits for the next pass of a
+//                                       realm listen that can send it` (C3d-B)
+//   pending, finished, due, after tries `Callback: due since <W>, attempt <n>[, last answer <s>]; it
+//                                       waits for the next pass of a realm listen that can send it`
 //   delivered                          `Callback: delivered to <host> <W>, attempt <n>`
 //   failed, its window ended (C3b1)    `Callback: expired at attempt <n>, not delivered within its
-//                                       time limit`
+//                                       time limit`; with no try made (C3d-B): `Callback: expired
+//                                       before its first try, not delivered within its time limit`
 //   failed otherwise                   `Callback: failed after <n> attempt(s), last answer <s>`
 // `<W>` is the one instant formatter's (`in 5m (…)`, `5m ago (…)`); a part whose field is absent, or
 // whose instant does not parse, is left out.
@@ -43,7 +46,9 @@ export function callbackLine(view: CallbackView, runFinished: boolean, at: Date)
   }
   if (view.status === 'failed') {
     if (view.last_status === 'expired') {
-      return `Callback: expired at attempt ${view.attempts}, not delivered within its time limit`;
+      return view.attempts >= 1
+        ? `Callback: expired at attempt ${view.attempts}, not delivered within its time limit`
+        : 'Callback: expired before its first try, not delivered within its time limit';
     }
     const attempts = view.attempts === 1 ? 'attempt' : 'attempts';
     return `Callback: failed after ${view.attempts} ${attempts}${answer}`;
@@ -51,7 +56,8 @@ export function callbackLine(view: CallbackView, runFinished: boolean, at: Date)
   if (!runFinished) return 'Callback: waiting for the run to finish';
   if (isPastDeadline(view.next_attempt_at, at)) {
     const since = words(view.next_attempt_at, 'past_event');
-    return `Callback: due${since === '' ? '' : ` since ${since}`}; sent only while realm listen with a matching allow-list runs`;
+    const tried = view.attempts >= 1 ? `, attempt ${view.attempts}${answer}` : '';
+    return `Callback: due${since === '' ? '' : ` since ${since}`}${tried}; it waits for the next pass of a realm listen that can send it`;
   }
   const attempt = view.attempts >= 1 ? `, attempt ${view.attempts}` : '';
   const next = words(view.next_attempt_at, 'deadline');

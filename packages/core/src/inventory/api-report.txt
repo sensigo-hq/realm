@@ -293,6 +293,12 @@ CACHE_AUTO_PRICE_CAUSES · value · public
       "rate_missing"
   ];
 
+CACHE_AUTO_PRICE_EXCLUSIONS · value · public
+  const CACHE_AUTO_PRICE_EXCLUSIONS: readonly [
+      "short",
+      "long"
+  ];
+
 CACHE_AUTO_RATES · value · public
   const CACHE_AUTO_RATES: readonly [
       "cache_read",
@@ -586,8 +592,8 @@ CallbackClaimedItem · type · beta
       readonly first_attempt_at: string;
   };
 
-CallbackEnded · type · beta
-  interface CallbackEnded {
+CallbackExpiredItem · type · beta
+  interface CallbackExpiredItem {
       readonly run_id: string;
       readonly workflow_id: string;
       readonly host: string;
@@ -773,7 +779,7 @@ CallbackStore · type · beta
       countPending(): Promise<number>;
       countWaiting(): Promise<number>;
       due(limit: number): Promise<CallbackItem[]>;
-      endOverdue(limit: number): Promise<CallbackEnded[]>;
+      expireOverdue(limit: number): Promise<CallbackExpiredItem[]>;
       claim(runId: string, request: CallbackClaimRequest): Promise<CallbackClaimResult>;
       freezeBody(runId: string, token: string, body: string): Promise<CallbackFreezeResult>;
       mark(runId: string, token: string, result: CallbackMarkRequest): Promise<CallbackMarkResult>;
@@ -1484,8 +1490,20 @@ ExtensionIdentityEntry · type · public
       secret_names?: string[];
       override_active?: true;
       error?: string;
+      lockfile?: ExtensionIdentityLockfile;
       origin?: 'start';
   }
+
+ExtensionIdentityLockfile · type · public
+  type ExtensionIdentityLockfile = {
+      files: string[];
+      sha256: string;
+  } | {
+      absent: 'none_found';
+  } | {
+      files: string[];
+      absent: 'unreadable';
+  };
 
 ExtensionIdentityModule · type · public
   interface ExtensionIdentityModule {
@@ -4832,7 +4850,6 @@ dueExpiryWords · value · internal
 dueReminderWork · value · internal
 durationWords · value · internal
 emptyDisclosureSet · value · internal
-endOverdueCallbacks · value · internal
 endedByLine · value · internal
 endedRunWayOutOf · value · internal
 endedRunWaysSentence · value · internal
@@ -4856,10 +4873,12 @@ executeEngineStep · value · public
 executeStep · value · public
   function executeStep(store: RunStore, definition: WorkflowDefinition, options: ExecuteStepOptions): Promise<EngineReply>;
 
+expireOverdueCallbacks · value · internal
 expiryCarriedOutLine · value · internal
 expiryReceiptLine · value · internal
 expiryReceiptOf · value · internal
 extensionIdentityDiffers · value · internal
+extensionLockfileDiffers · value · internal
 failedRequestSends · value · internal
 failureModelTextView · value · internal
 failureTextMarkOf · value · internal

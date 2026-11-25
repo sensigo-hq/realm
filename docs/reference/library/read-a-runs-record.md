@@ -79,6 +79,7 @@ Where the docs teach it: [Run record and export bundle format](../run-record-and
 | [`BY_SOURCE_CLASSES`](#by_source_classes) | const | How a program's name is known. |
 | [`CACHE_AUTO_BASES`](#cache_auto_bases) | const | On what `--prompt-cache auto` chose a request's cache lifetime (`UsageRecord.cache_auto.basis`). |
 | [`CACHE_AUTO_PRICE_CAUSES`](#cache_auto_price_causes) | const | Why `--prompt-cache auto` chose without prices (`CacheAuto.prices.cause`, with `from: 'none'`). |
+| [`CACHE_AUTO_PRICE_EXCLUSIONS`](#cache_auto_price_exclusions) | const | Every lifetime the `auto` choice can exclude from the price file (`CacheAutoPrices.excluded`), in the type's order. |
 | [`CACHE_AUTO_PRICES_FROM_WORDS`](#cache_auto_prices_from_words) | const | Every place the `auto` cache choice can take its prices from (`CacheAutoPrices.from`), in the type's order. |
 | [`CACHE_AUTO_RATES`](#cache_auto_rates) | const | The price-file rates the `auto` choice reads, in the order a `missing` list names them (the price file's own order). |
 | [`CACHE_BASES`](#cache_bases) | const | How a cache number is known: reported by the provider, or not observable (`StepCacheDetail.basis`). |
@@ -1473,6 +1474,22 @@ const CACHE_AUTO_PRICE_CAUSES: readonly [
 ];
 ```
 
+### CACHE_AUTO_PRICE_EXCLUSIONS
+
+const · public
+
+Every lifetime the `auto` choice can exclude from the price file (`CacheAutoPrices.excluded`), in
+the type's order.
+Compile-checked both ways: a word added to the type and not to the list fails the build,
+and so does a word in the list the type does not have (Q1, #592, unit d2b).
+
+```ts
+const CACHE_AUTO_PRICE_EXCLUSIONS: readonly [
+    "short",
+    "long"
+];
+```
+
 ### CACHE_AUTO_PRICES_FROM_WORDS
 
 const · public
@@ -1924,6 +1941,7 @@ Names this job reaches whose entry is on another page.
 - [`ErrorCode`](define-and-load-a-workflow.md#errorcode): Every code a `WorkflowError` can carry, grouped by its category; a reply's error and the error catalogue name it (`WorkflowError.code`).
 - [`ExecutionMode`](define-and-load-a-workflow.md#executionmode): The kinds of step a workflow declares in `execution`: `auto`, `agent`, `guard` and `finalizer` (`StepDefinition.execution`).
 - [`ExtensionIdentityEntry`](write-a-handler.md#extensionidentityentry): One point-in-time identity of the extension code executing a run.
+- [`ExtensionIdentityLockfile`](write-a-handler.md#extensionidentitylockfile): The project's lockfile, as an identity entry records it: its files and a sha256 over them, none found, or unreadable.
 - [`ExtensionIdentityModule`](write-a-handler.md#extensionidentitymodule): One loaded extension module's identity.
 - [`ExtensionIdentitySignals`](write-a-handler.md#extensionidentitysignals): Labeled advisory signals — each independently fail-soft; never part of the comparison.
 - [`ExtensionIdentityTree`](write-a-handler.md#extensionidentitytree): Versioned deterministic directory-tree fingerprint over the module roots.

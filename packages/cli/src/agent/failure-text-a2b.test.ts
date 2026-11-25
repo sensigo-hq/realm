@@ -488,6 +488,7 @@ describe('gap 1, unit A2b — the writers that carry the step’s answered calls
         },
         // An independent agent step still to run, so the run stays open when `read` fails and
         // the wedge's entry is written (a drive-failure entry is never written on an ended run).
+        // Gap 2 (ii-b3): the drive then goes on and runs it.
         later: { description: 'Later', execution: 'agent' },
       },
     } as unknown as WorkflowDefinition;
@@ -519,7 +520,7 @@ describe('gap 1, unit A2b — the writers that carry the step’s answered calls
         usage: draft?.diagnostics?.cache?.requests?.length,
       },
     }).toEqual({
-      completed: ['draft'],
+      completed: ['draft', 'later'],
       failure: {
         step: 'read',
         class: 'validation_rejected',

@@ -52,6 +52,7 @@ Where the docs teach it: [Handlers](../handlers.md), [Project extensions](../pro
 | [`CondTag`](#condtag) | type | Who discharges a condition outside Realm; `client` is the MCP client's own approval prompt (`Cond`'s `client_prompt` member). |
 | [`ErrorCategory`](#errorcategory) | type | The broad kind of failure a `WorkflowError` reports: network, an outside service, the run's state, invalid input, the engine itself, or a resource (`WorkflowError.category`). |
 | [`ErrorFacts`](#errorfacts) | type | Any typed error facts. |
+| [`ExtensionIdentityLockfile`](#extensionidentitylockfile) | type | The project's lockfile, as an identity entry records it: its files and a sha256 over them, none found, or unreadable. |
 | [`QuoteState`](#quotestate) | type | How a quote was found in its source: whole, reformatted, stitched from parts in order or out of order, or not found; `unquoted` is for a value given with no quote. |
 | [`SideFileKind`](#sidefilekind) | type | One of `SIDE_FILE_KINDS`. |
 | [`Slot`](#slot) | type | A value the caller picks from a closed set, printed by each door's own rule (`RespondWay.choice`). |
@@ -337,6 +338,7 @@ interface ExtensionIdentityEntry {
     secret_names?: string[];
     override_active?: true;
     error?: string;
+    lockfile?: ExtensionIdentityLockfile;
     origin?: 'start';
 }
 ```
@@ -814,6 +816,29 @@ Any typed error facts.
 
 ```ts
 type ErrorFacts = ErrorFactsByCode[keyof ErrorFactsByCode];
+```
+
+### ExtensionIdentityLockfile
+
+type · public
+
+The project's lockfile, as an identity entry records it: its files and a sha256 over them, none
+found, or unreadable.
+
+`@remarks` `files` are the lockfiles' paths from the project's folder, with `/` separators, sorted. `sha256` is the sha256 of the lines `<path>\0<the file's sha256>` joined with `\n`. `none_found`:
+no folder up to the repository's root holds one. `unreadable`: any of `files` cannot be read; it is
+compared by its file names only. Added after version 0.50.0 (#828).
+
+```ts
+type ExtensionIdentityLockfile = {
+    files: string[];
+    sha256: string;
+} | {
+    absent: 'none_found';
+} | {
+    files: string[];
+    absent: 'unreadable';
+};
 ```
 
 ### QuoteState

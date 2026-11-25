@@ -772,7 +772,7 @@ describe('#625 PR-2a, C174 lane C — realm-agent.md, from the drive', { timeout
   it('the `✗ Step …`, `✗ The drive stops: …`, `⚠ Step … is blocked …` row, and "the line that starts with ✗ (⚠ for a missing handler or adapter) gives the reason"', async () => {
     claim(
       AGENT_PAGE,
-      "| `✗ Step '<step>' …`, `✗ The drive stops: …` or `✗ The drive stops — …`, `⚠ Step '<step>' is blocked …` | The run cannot go on | The reason: a step that failed, a step refused before its claim with nothing else to run, or a handler or adapter this program has not registered. See [When it stops](#when-it-stops). |",
+      "| `✗ Step '<step>' …`, `✗ The drive stops: …` or `✗ The drive stops — …`, `⚠ Step '<step>' is blocked …` | The run cannot go on | The reason: a step that failed and ended the run, a step left open, a step refused before its claim with nothing else to run, or a handler or adapter this program has not registered. See [When it stops](#when-it-stops). |",
     );
     claim(
       AGENT_PAGE,
@@ -824,11 +824,11 @@ describe('#625 PR-2a, C174 lane C — realm-agent.md, from the drive', { timeout
         "✗ Step 'file' (run by the engine after 'classify' finished) failed: Handler 'file_ticket' threw: the filing system is down";
       claim(
         AGENT_PAGE,
-        `| An \`auto\` step the engine ran after it failed | \`${LINE}\` | Ended, in \`failed\`. |`,
+        `| An \`auto\` step the engine ran after it failed | \`${LINE}\` | The drive goes on. Ended, in \`failed\`, when no other step finishes after it; otherwise as the last step to finish leaves it (\`completed\`, with the failed step listed). |`,
       );
       claim(
         AGENT_PAGE,
-        "When the step that stopped is one the engine ran after the step the drive called, the line names it and adds `(run by the engine after '<step>' finished)`, as in the row for an `auto` step the engine ran after it.",
+        "When the step that failed or stopped is one the engine ran after the step the drive called, the line names it and adds `(run by the engine after '<step>' finished)`, as in the row for an `auto` step the engine ran after it.",
       );
       const registry = createDefaultRegistry();
       registry.register('handler', 'file_ticket', {
@@ -847,7 +847,7 @@ describe('#625 PR-2a, C174 lane C — realm-agent.md, from the drive', { timeout
       );
       claim(
         AGENT_PAGE,
-        "The lines that say why the drive stopped (`✗ Step …`, `⚠ Step … is blocked`, and the `• Step '<step>' failed (<CODE>): …` and `• Step '<step>': the engine did not record its failure …` lines) go to stderr, and so do the `Resume:` line after them",
+        "The lines that say why the drive stopped or that a step failed (`✗ Step …`, `⚠ Step … is blocked`, and the `• Step '<step>' failed (<CODE>): …` and `• Step '<step>': the engine did not record its failure …` lines) go to stderr, and so do the `Resume:` line after them",
       );
       const { record: run } = await d.store.get(d.runId);
       // (a) red when the line names the step the drive called, drops the suffix, or the run does

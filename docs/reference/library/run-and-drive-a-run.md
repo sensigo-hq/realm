@@ -2874,7 +2874,7 @@ Names this job reaches whose entry is on another page.
 - [`CallbackClaimedItem`](implement-a-store.md#callbackclaimeditem): A claimed row: the item with the instants a sender judges its ends from.
 - [`CallbackClaimRequest`](implement-a-store.md#callbackclaimrequest): A claim of one row: the `next_attempt_at` the claimant read, and its own token (1–200 characters).
 - [`CallbackClaimResult`](implement-a-store.md#callbackclaimresult): What a claim answers: the claimed item and the claim's one reading, or why it did not apply.
-- [`CallbackEnded`](implement-a-store.md#callbackended): A row `endOverdue` ended, as it ended it: `attempts` is how many tries began (0: never sent).
+- [`CallbackExpiredItem`](implement-a-store.md#callbackexpireditem): A row `expireOverdue` expired, as it expired it: `attempts` is how many tries began (0: never sent).
 - [`CallbackFreezeResult`](implement-a-store.md#callbackfreezeresult): What freezing the body answers.
 - [`CallbackItem`](implement-a-store.md#callbackitem): A row ready to send, as `due` returns it: for the sender only, never rendered.
 - [`CallbackKeyDeleteResult`](implement-a-store.md#callbackkeydeleteresult): What `delete` answers: whether the pair had a current key, readable or not.
@@ -2932,6 +2932,7 @@ Names this job reaches whose entry is on another page.
 - [`ExecutionMode`](define-and-load-a-workflow.md#executionmode): The kinds of step a workflow declares in `execution`: `auto`, `agent`, `guard` and `finalizer` (`StepDefinition.execution`).
 - [`ExpireGateDelta`](implement-a-store.md#expiregatedelta): Carries out a gate's frozen timeout disposition once the gate has expired unanswered.
 - [`ExtensionIdentityEntry`](write-a-handler.md#extensionidentityentry): One point-in-time identity of the extension code executing a run.
+- [`ExtensionIdentityLockfile`](write-a-handler.md#extensionidentitylockfile): The project's lockfile, as an identity entry records it: its files and a sha256 over them, none found, or unreadable.
 - [`ExtensionIdentityModule`](write-a-handler.md#extensionidentitymodule): One loaded extension module's identity.
 - [`ExtensionIdentitySignals`](write-a-handler.md#extensionidentitysignals): Labeled advisory signals — each independently fail-soft; never part of the comparison.
 - [`ExtensionIdentityTree`](write-a-handler.md#extensionidentitytree): Versioned deterministic directory-tree fingerprint over the module roots.
