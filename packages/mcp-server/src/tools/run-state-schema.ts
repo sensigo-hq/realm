@@ -6,11 +6,37 @@
 //
 // Every list is open (`openWord`: its words, or any other string); every object is a `looseObject`
 // (a key it does not know is accepted); a union of object variants is ONE object, its keys merged; a
-// one-word field is that word or any other string. The cost view is a loose placeholder until d2b.
+// one-word field is that word or any other string. A number or true/false the door shows as its shape
+// when it withholds values (`withholdable`) also admits a string.
 import { z } from 'zod';
 import {
   ACCOUNT_ABSENT_CAUSES,
   ACTOR_ABSENT_CAUSES,
+  CACHE_AUTO_BASES,
+  CACHE_AUTO_PRICE_CAUSES,
+  CACHE_AUTO_PRICE_EXCLUSIONS,
+  CACHE_AUTO_PRICES_FROM_WORDS,
+  CACHE_AUTO_RATES,
+  CACHE_CONTROL_FIELDS,
+  CACHE_CONTROLS_PROVEN_WORDS,
+  CACHE_DIAGNOSTICS_WORDS,
+  CACHE_LIFETIME_SOURCES,
+  CACHE_MARKED_PARTS,
+  CACHE_MISS_CAUSES,
+  CACHE_MISS_RULES,
+  CACHE_MISS_TYPES,
+  CACHE_REFERENCE_SOURCES,
+  CACHE_REQUEST_SOURCES,
+  CACHE_REQUESTS,
+  EXHAUSTED_BY,
+  MODEL_ATTEMPT_THEN_WORDS,
+  MODEL_FAILURE_KINDS,
+  NOT_PRICED_CAUSES,
+  PREDECESSOR_FROM_WORDS,
+  PRICE_SOURCE_CLASSES,
+  PROVIDER_MISS_REASONS,
+  REQUEST_ENDPOINTS,
+  REQUEST_FACT_ABSENT_CAUSES,
   ADMITTED_BY_ABSENT_CAUSES,
   ADMITTED_BY_WORDS,
   AGENT_ACTIONS,
@@ -54,7 +80,8 @@ function openWord<const T extends readonly [string, ...string[]]>(words: T) {
 }
 
 /**
- * A number or true/false under a field the reply's disclosure table marks `bounded` (`steps`): when
+ * A number or true/false under a field the reply's disclosure table marks `bounded` (`steps`,
+ * `drive_failure_costs[].cost`): when
  * the door withholds values (the receipt's `values` is `withheld`) it arrives as its shape, a string
  * such as `‹number›` or `‹boolean›`, so the schema admits a string beside it. The string carries a
  * description so zod renders `anyOf` (a bare `.or(z.string())` folds into `type: [number, string]`,
@@ -66,19 +93,8 @@ function withholdable<T extends z.ZodNumber | z.ZodBoolean>(leaf: T) {
   );
 }
 
-/** The cost view's placeholders (d2b describes them): an object, and a list. */
-const looseMap = z.record(z.string(), z.unknown());
-const looseList = z.array(z.unknown());
-
-/** The placeholder paths, as the sidecar's `described_loosely` names them. */
-export const RUN_STATE_DESCRIBED_LOOSELY = [
-  'drive_failures.entries[].usage',
-  'drive_failures.entries[].model_attempts',
-  'steps.*.attempts[].cost',
-  'steps.*.total',
-  'drive_failure_costs[].cost',
-  'run_cost',
-] as const;
+/** The paths the file describes loosely, as the sidecar's `described_loosely` names them: none. */
+export const RUN_STATE_DESCRIBED_LOOSELY = [] as const;
 
 /** The release the first publication stamps on every field and word ("added after 0.50.0"). */
 export const RUN_STATE_FIRST_PUBLISHED = '0.50.0';
@@ -155,12 +171,273 @@ const engineRunnable = z.looseObject({
   precondition: z.looseObject({ expression: z.string(), value: z.string() }).optional(),
 });
 
+// ─── The cost view (d2b) ────────────────────────────────────────────────────────────────────────
+// Under `steps` and `drive_failure_costs[].cost` the door shows a withheld value as its shape, so
+// those shapes are built with `shaped` true; `run_cost` and a drive failure's `usage` and
+// `model_attempts` are facts.
+
+/** A number or a true/false of the cost view, as it arrives under a shaped or a plain root. */
+const num = (shaped: boolean) => (shaped ? withholdable(z.number()) : z.number());
+const bool = (shaped: boolean) => (shaped ? withholdable(z.boolean()) : z.boolean());
+
+/** `CostFigure`: a token count, how many requests reported it, of how many. */
+const costFigure = z.looseObject({
+  value: num(true),
+  reported: num(true),
+  of: num(true),
+  only_request_index: num(true).optional(),
+});
+
+/** `CacheAuto`: the basis of the `auto` cache choice, the gaps it read, where its prices came from. */
+const cacheAutoOf = (shaped: boolean) =>
+  z.looseObject({
+    basis: openWord(CACHE_AUTO_BASES),
+    gaps_s: z.array(num(shaped)).optional(),
+    prices: z
+      .looseObject({
+        from: openWord(CACHE_AUTO_PRICES_FROM_WORDS),
+        excluded: z.array(openWord(CACHE_AUTO_PRICE_EXCLUSIONS)).optional(),
+        missing: z.array(openWord(CACHE_AUTO_RATES)).optional(),
+        cause: openWord(CACHE_AUTO_PRICE_CAUSES).optional(),
+      })
+      .optional(),
+  });
+
+/** `Money`: what the requests cost, priced at read, with the sources that priced them. */
+const moneyOf = (shaped: boolean) => {
+  const source = {
+    source_class: openWord(PRICE_SOURCE_CLASSES),
+    source_ref: z.string(),
+    version: z.string().optional(),
+  };
+  return z.looseObject({
+    total: num(shaped),
+    uncached_counterfactual: num(shaped),
+    net: num(shaped),
+    priced: num(shaped),
+    of: num(shaped),
+    dated: num(shaped),
+    sources: z.array(
+      z.looseObject({
+        ...source,
+        matched_provider: z.string().optional(),
+        matched_model: z.string(),
+        count: num(shaped),
+        dated: num(shaped),
+        endpoint_note: z.string().optional(),
+        source_note: z.string().optional(),
+      }),
+    ),
+    source_totals: z.array(z.looseObject({ ...source, count: num(shaped), dated: num(shaped) })),
+    not_priced: z
+      .array(
+        z.looseObject({
+          cause: openWord(NOT_PRICED_CAUSES),
+          count: num(shaped),
+          detail: z.string().optional(),
+        }),
+      )
+      .optional(),
+  });
+};
+const moneyShaped = moneyOf(true);
+
+/** A count with how many requests reported it, or why none did (`models`, `cache_requested`, …). */
+const reportedOf = {
+  reported: num(true).optional(),
+  of: num(true).optional(),
+  absent_cause: openWord(REQUEST_FACT_ABSENT_CAUSES).optional(),
+};
+
+/** `CostView`: one attempt's (or one failed drive's) model-call cost. */
+const costView = z.looseObject({
+  requests: num(true),
+  basis: z.string().optional(),
+  state: z.string().optional(),
+  prompt: costFigure.optional(),
+  uncached_input: costFigure.optional(),
+  cache_read: costFigure.optional(),
+  cache_write: costFigure.optional(),
+  output: costFigure.optional(),
+  models: z.looseObject({ names: z.array(z.string()).optional(), ...reportedOf }).optional(),
+  cache_requested: z
+    .looseObject({
+      entries: z
+        .array(
+          z.looseObject({
+            value: z.string(),
+            lifetime_s: num(true).optional(),
+            ttl_sent: bool(true).optional(),
+            source: z.string().optional(),
+            by: z.string().optional(),
+            auto: cacheAutoOf(true).optional(),
+            key_sent: bool(true).optional(),
+            provider: z.string().optional(),
+          }),
+        )
+        .optional(),
+      ...reportedOf,
+    })
+    .optional(),
+  cache_write_5m: costFigure.optional(),
+  cache_write_1h: costFigure.optional(),
+  endpoints: z
+    .looseObject({
+      custom: num(true).optional(),
+      of: num(true).optional(),
+      absent_cause: openWord(REQUEST_FACT_ABSENT_CAUSES).optional(),
+    })
+    .optional(),
+  cache_head: z
+    .looseObject({
+      entries: z.array(
+        z.looseObject({
+          chars: num(true),
+          marked: z.array(openWord(CACHE_MARKED_PARTS)).optional(),
+        }),
+      ),
+    })
+    .optional(),
+  cache_fields_refused: z.looseObject({ refused: num(true), of: num(true) }).optional(),
+  money: moneyShaped.optional(),
+  misses: z
+    .array(
+      z.looseObject({
+        position: num(true),
+        derived: z.looseObject({
+          cause: openWord(CACHE_MISS_CAUSES),
+          rule: openWord(CACHE_MISS_RULES),
+          expected_tokens: num(true),
+          shortfall_tokens: num(true),
+          predecessor: z.looseObject({
+            from: openWord(PREDECESSOR_FROM_WORDS),
+            at: num(true).optional(),
+          }),
+          gap_s: num(true).optional(),
+          lifetime_s: num(true).optional(),
+          lifetime_from: openWord(CACHE_LIFETIME_SOURCES).optional(),
+        }),
+        provider: z
+          .looseObject({
+            reason: openWord(PROVIDER_MISS_REASONS),
+            cache_missed_input_tokens: num(true).optional(),
+          })
+          .optional(),
+        extra_usd: num(true).optional(),
+      }),
+    )
+    .optional(),
+});
+
+/** `RunCost`: what the run cost, priced at read. */
+const runCost = z.looseObject({
+  total: moneyOf(false),
+  failed_drives_not_on_record: z.number(),
+  failed_drives_without_usage: z.number(),
+  unmeasured: z.looseObject({
+    tool_calling_step: z.number(),
+    not_measured_by_realm: z.number(),
+    cost_unreadable: z.number(),
+  }),
+});
+
+const cacheAuto = cacheAutoOf(false);
+const cacheCreation = z.looseObject({
+  ephemeral_5m_input_tokens: z.number().optional(),
+  ephemeral_1h_input_tokens: z.number().optional(),
+});
+const prefixParts = z.looseObject({
+  tools: z.string().optional(),
+  system: z.string(),
+  prompt: z.string().optional(),
+  format: z.string().optional(),
+});
+
+/** The request facts a drive failure's usage entry and its cache reference share. */
+const requestFacts = {
+  request_start: z.string(),
+  provider: z.string().optional(),
+  request_id: z.string().optional(),
+  model: z.string().optional(),
+  endpoint: openWord(REQUEST_ENDPOINTS).optional(),
+  cache_requested: openWord(CACHE_REQUESTS).optional(),
+  cache_read_input_tokens: z.number().optional(),
+  cache_creation_input_tokens: z.number().optional(),
+  cache_write_tokens: z.number().optional(),
+  cache_creation: cacheCreation.optional(),
+  cache_lifetime_s: z.number().optional(),
+  cache_ttl_sent: z.boolean().optional(),
+  cache_auto: cacheAuto.optional(),
+  prefix_chars: z.number().optional(),
+  prefix_parts: prefixParts.optional(),
+  cache_marked: z.array(openWord(CACHE_MARKED_PARTS)).optional(),
+  request_strict_sent: z.boolean().optional(),
+};
+
+/** `UsageRecord`: one model request of a failed drive, as the drive recorded it. */
+const usageRecord = z.looseObject({
+  request_index: z.number(),
+  ...requestFacts,
+  prompt_tokens: z.number().optional(),
+  uncached_input_tokens: z.number().optional(),
+  output_tokens: z.number().optional(),
+  cache_requested_source: openWord(CACHE_REQUEST_SOURCES).optional(),
+  cache_requested_by: z.string().optional(),
+  cache_split_offered: z.boolean().optional(),
+  response_id: z.string().optional(),
+  cache_diagnostics: z
+    .looseObject({
+      asked: z.boolean(),
+      cause: z.literal('rejected').or(z.string()).optional(),
+      reference_id: z.string().nullable().optional(),
+      result: openWord(CACHE_DIAGNOSTICS_WORDS)
+        .or(
+          z.looseObject({
+            type: openWord(CACHE_MISS_TYPES),
+            cache_missed_input_tokens: z.number().optional(),
+          }),
+        )
+        .optional(),
+    })
+    .optional(),
+  request_in_call: z.number().optional(),
+  prefix_sha256: z.string().optional(),
+  cache_controls_rejected: z
+    .looseObject({
+      status: z.number(),
+      dropped: z.array(z.literal('cache_fields').or(z.string())),
+      proven: openWord(CACHE_CONTROLS_PROVEN_WORDS),
+      fields: z.array(openWord(CACHE_CONTROL_FIELDS)),
+    })
+    .optional(),
+  cache_key_sent: z.boolean().optional(),
+  reference: z
+    .looseObject({
+      from: openWord(CACHE_REFERENCE_SOURCES),
+      ...requestFacts,
+      agent_profile_changed: z.boolean().optional(),
+    })
+    .optional(),
+});
+
+/** `ModelAttempt`: one failed model request of a drive, and what followed it. */
+const modelAttempt = z.looseObject({
+  request: z.number(),
+  kind: openWord(MODEL_FAILURE_KINDS).nullable(),
+  error_class: openWord(ERROR_CLASSES).nullable(),
+  status: z.number().nullable(),
+  wait_ms: z.number().nullable(),
+  retry_after_ms: z.number().nullable(),
+  exhausted_by: openWord(EXHAUSTED_BY).optional(),
+  then: openWord(MODEL_ATTEMPT_THEN_WORDS).optional(),
+});
+
 const stepView = z.looseObject({
   attempts: z.array(
     z.looseObject({
       attempt: withholdable(z.number()),
       status: z.string(),
-      cost: looseMap.optional(),
+      cost: costView.optional(),
       cost_unrecorded: openWord(COST_UNRECORDED_CAUSES).optional(),
       cost_unreadable: withholdable(z.boolean()).optional(),
       driven_by: actor,
@@ -190,7 +467,7 @@ const stepView = z.looseObject({
       }),
     )
     .optional(),
-  total: looseMap.optional(),
+  total: moneyShaped.optional(),
 });
 
 /** The twin: the ok reply as the wire carries it (every object reply leaves with the receipt). */
@@ -243,8 +520,9 @@ const OK_SHAPE = {
           derived_ceiling_ms: z.number().optional(),
           last_observed_status: z.number().optional(),
           retry_after_observed_ms: z.number().optional(),
-          usage: looseList.optional(),
-          model_attempts: looseList.optional(),
+          // A provider module's usage entry that is not an object is kept as recorded (`null` arrives).
+          usage: z.array(usageRecord.nullable()).optional(),
+          model_attempts: z.array(modelAttempt).optional(),
           usage_more: z.number().optional(),
           attempt: z.number().optional(),
         }),
@@ -418,11 +696,11 @@ const OK_SHAPE = {
         at: z.string().optional(),
         step: z.string().optional(),
         error_class: z.string().optional(),
-        cost: looseMap.optional(),
+        cost: costView.optional(),
       }),
     )
     .optional(),
-  run_cost: looseMap.optional(),
+  run_cost: runCost.optional(),
   pending_guards: z.array(z.string()).optional(),
   engine_runnable: z.array(engineRunnable).optional(),
   agent_refused: z.array(engineRunnable).optional(),
@@ -488,7 +766,7 @@ export function runStateSchemaFile(): Record<string, unknown> {
     $schema,
     title: "Realm's get_run_state reply",
     description:
-      "What Realm's get_run_state MCP tool replies, the run's state or a refusal: every list in it is open, every object accepts a key it does not know, and the cost view is described loosely until a later release.",
+      "What Realm's get_run_state MCP tool replies, the run's state or a refusal: every list in it is open and every object accepts a key it does not know.",
     ...body,
   };
 }

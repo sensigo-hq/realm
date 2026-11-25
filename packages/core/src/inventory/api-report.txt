@@ -293,6 +293,12 @@ CACHE_AUTO_PRICE_CAUSES · value · public
       "rate_missing"
   ];
 
+CACHE_AUTO_PRICE_EXCLUSIONS · value · public
+  const CACHE_AUTO_PRICE_EXCLUSIONS: readonly [
+      "short",
+      "long"
+  ];
+
 CACHE_AUTO_RATES · value · public
   const CACHE_AUTO_RATES: readonly [
       "cache_read",
