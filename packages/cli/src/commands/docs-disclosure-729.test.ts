@@ -368,7 +368,7 @@ describe(`${RECORD_PAGE} — the export file and the guard's conditions`, () => 
     );
     claim(
       RECORD_PAGE,
-      "`unmaskable` counts the declared secrets too short to hide (under 4 characters), `too_deep` counts the values written as their type and size because they lie more than 64 levels deep, `question: declared_only` is there when the file holds a gate's question (it hides only the declared secrets), `unchecked` is always `0` in this version, and `shaped`, when the file shows a value as its type and size, lists where each one is.",
+      "`unmaskable` counts the declared secrets too short to hide (under 4 characters), `too_deep` counts the values written as their type and size because they lie more than 64 levels deep, `question: declared_only` is there when the file holds a gate's question (it hides only the declared secrets, except a failure's message the question reads through `$settlement.<step>.message`, in which every secret Realm knows of was hidden when the question opened, under `realm agent` and `realm listen` your home folder and user name aside; added after version 0.50.0), `unchecked` is always `0` in this version, and `shaped`, when the file shows a value as its type and size, lists where each one is.",
     );
     claim(
       RECORD_PAGE,
@@ -575,7 +575,7 @@ describe(`${READING_PAGE} — export`, () => {
     );
     claim(
       READING_PAGE,
-      "When the file holds a gate's question, the third line says `question: declared tier only`: a question hides only the declared secrets.",
+      "When the file holds a gate's question, the third line says `question: declared tier only`: a question hides only the declared secrets, except a failure's message the question reads through `$settlement.<step>.message`, in which every secret Realm knows of was hidden when the question opened, under `realm agent` and `realm listen` your home folder and user name aside (added after version 0.50.0).",
     );
     claim(
       READING_PAGE,
@@ -981,7 +981,11 @@ describe(`${OPERATE_PAGE} — what the output hides`, () => {
       OPERATE_PAGE,
       "| `realm listen`'s log, `realm agent --log-mode` and Slack | The same as a log. A run's values also print as their type and size, such as `‹string, 42 characters›`. |",
     );
-    claim(OPERATE_PAGE, "A gate's question hides only the declared secrets, wherever it is shown.");
+    // Gap 2, unit (iv-a1), Words 10: the clause for a failure's message.
+    claim(
+      OPERATE_PAGE,
+      "A gate's question hides only the declared secrets, wherever it is shown, except a failure's message the question reads through `$settlement.<step>.message`, in which every secret Realm knows of was hidden when the question opened, under `realm agent` and `realm listen` your home folder and user name aside (added after version 0.50.0).",
+    );
     const run = {
       id: 'r',
       params: { note: 'x'.repeat(42) },
@@ -1356,7 +1360,7 @@ describe(`${READING_PAGE} — inspect's new lines (correction 1)`, () => {
     );
     claim(
       READING_PAGE,
-      "`declared values` reads `resolved`, `resolved (no manifest)`, `partial (manifest changed)`, `unknown (load failed)` or `unknown (no manifest)`, as for [`export`](#export). When the record shows a gate's question, the line ends `; question: declared tier only`: a question hides only the declared secrets.",
+      "`declared values` reads `resolved`, `resolved (no manifest)`, `partial (manifest changed)`, `unknown (load failed)` or `unknown (no manifest)`, as for [`export`](#export). When the record shows a gate's question, the line ends `; question: declared tier only`: a question hides only the declared secrets, except a failure's message the question reads through `$settlement.<step>.message`, in which every secret Realm knows of was hidden when the question opened, under `realm agent` and `realm listen` your home folder and user name aside (added after version 0.50.0).",
     );
     const base = {
       declared: 'resolved' as const,
@@ -1766,7 +1770,7 @@ describe('#729 PR-3 correction 2 — the pages this correction changes', () => {
   it("realm-run-reading.md: inspect's line ends with the question clause when it shows a question (C2)", async () => {
     claim(
       READING_PAGE,
-      "When the record shows a gate's question, the line ends `; question: declared tier only`: a question hides only the declared secrets.",
+      "When the record shows a gate's question, the line ends `; question: declared tier only`: a question hides only the declared secrets, except a failure's message the question reads through `$settlement.<step>.message`, in which every secret Realm knows of was hidden when the question opened, under `realm agent` and `realm listen` your home folder and user name aside (added after version 0.50.0).",
     );
     const h = await makeTempHome();
     const home = h.root;

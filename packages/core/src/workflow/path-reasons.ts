@@ -8,7 +8,13 @@ export function absentWhy(
   cause: Extract<
     AbsentCause,
     {
-      rule: 'trigger_rule' | 'optional' | 'default_only' | 'list_position' | 'model_failure_only';
+      rule:
+        | 'trigger_rule'
+        | 'optional'
+        | 'default_only'
+        | 'list_position'
+        | 'model_failure_only'
+        | 'failure_only';
     }
   >,
 ): string {
@@ -30,6 +36,12 @@ export function absentWhy(
       return (
         `'failure_kind' is set only when step '${capText(cause.step)}''s model request failed and ` +
         `the step has on_model_failure`
+      );
+    case 'failure_only':
+      // Gap 2, unit (iv-a1), Words 4.
+      return (
+        `'message' is set only when step '${capText(cause.step)}' failed, or took its default ` +
+        `answer after its model request failed`
       );
   }
 }

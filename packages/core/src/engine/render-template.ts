@@ -503,6 +503,53 @@ export const TEMPLATE_PLACEHOLDER = /\{\{([^{}]+)\}\}/g;
 export interface RenderDisclosure {
   readonly set: DisclosureSet;
   readonly tier: DisclosureTier;
+  /**
+   * Gap 2, unit (iv-a1): a stronger tier for a step's failure message (`$settlement.<step>.message`).
+   * A value at a path that holds such messages ({@link holdsFailureMessages}) has each of them hidden
+   * at this tier first, on a copy, before the `tier` pass and before any filter (a question's: `all`).
+   */
+  readonly failureMessagesAt?: DisclosureTier;
+}
+
+/** Where a failure message sits in a render's context: `context.resources.$settlement.<step>.message`. */
+const FAILURE_MESSAGE_LEAF: readonly string[] = [
+  'context',
+  'resources',
+  '$settlement',
+  '*',
+  'message',
+];
+
+/**
+ * Gap 2, unit (iv-a1): whether the value at `path` holds a step's failure message — the field's own
+ * path, or a shorter one that holds it (`context.resources.$settlement.<step>`,
+ * `context.resources.$settlement`, `context.resources`, `context`).
+ */
+export function holdsFailureMessages(path: string): boolean {
+  const segments = path.trim().split('.');
+  if (segments.length > FAILURE_MESSAGE_LEAF.length) return false;
+  return segments.every((s, i) => FAILURE_MESSAGE_LEAF[i] === '*' || FAILURE_MESSAGE_LEAF[i] === s);
+}
+
+/** `value`, read at `path`, with each failure message it holds hidden at `tier`: a copy, never a write. */
+function failureMessagesHidden(
+  value: unknown,
+  path: string,
+  set: DisclosureSet,
+  tier: DisclosureTier,
+): unknown {
+  if (!holdsFailureMessages(path)) return value;
+  const hide = (node: unknown, depth: number): unknown => {
+    if (depth === FAILURE_MESSAGE_LEAF.length) return discloseValueAt(node, set, tier);
+    if (typeof node !== 'object' || node === null || Array.isArray(node)) return node;
+    const obj = node as Record<string, unknown>;
+    const key = FAILURE_MESSAGE_LEAF[depth]!;
+    if (key === '*') {
+      return Object.fromEntries(Object.entries(obj).map(([k, v]) => [k, hide(v, depth + 1)]));
+    }
+    return Object.hasOwn(obj, key) ? { ...obj, [key]: hide(obj[key], depth + 1) } : node;
+  };
+  return hide(value, path.trim().split('.').length);
 }
 
 /** #729 PR-4: renderTemplate's options. */
@@ -591,9 +638,16 @@ export function renderTemplate(
   };
   // The filter-mask fix (B1): a resolved value as the render site masks it, before any filter.
   const disclosure = options?.disclosure;
-  const masked = (value: unknown): unknown =>
+  // Gap 2, unit (iv-a1): a failure message first at its own tier, then every value at the site's.
+  const masked = (value: unknown, path: string): unknown =>
     disclosure !== undefined && value !== undefined
-      ? discloseValueAt(value, disclosure.set, disclosure.tier)
+      ? discloseValueAt(
+          disclosure.failureMessagesAt !== undefined
+            ? failureMessagesHidden(value, path, disclosure.set, disclosure.failureMessagesAt)
+            : value,
+          disclosure.set,
+          disclosure.tier,
+        )
       : value;
   const replacementOf = (expr: string): string => {
     const pipeIdx = expr.indexOf('|');
@@ -607,7 +661,9 @@ export function renderTemplate(
     if (rawPath.startsWith('workflow.context.') && context.workflowContext) {
       if (!hasFilters) {
         const value = resolveWorkflowContextRef(rawPath, context.workflowContext);
-        return value === undefined ? `{{ ${fullExpr} }}` : resolved(String(masked(value)), rawPath);
+        return value === undefined
+          ? `{{ ${fullExpr} }}`
+          : resolved(String(masked(value, rawPath)), rawPath);
       }
     }
 
@@ -624,7 +680,7 @@ export function renderTemplate(
     if (!hasFilters) {
       // Original coercion behaviour.
       if (rawValue === undefined) return `{{ ${fullExpr} }}`;
-      const value = masked(rawValue);
+      const value = masked(rawValue, rawPath);
       if (typeof value === 'string') return resolved(value, rawPath);
       return resolved(JSON.stringify(value, null, 2), rawPath);
     }
@@ -639,7 +695,7 @@ export function renderTemplate(
         return `{{ ${fullExpr} }}`;
       }
     }
-    let current: unknown = masked(rawValue);
+    let current: unknown = masked(rawValue, rawPath);
 
     for (const { name, args, quoted } of filters) {
       // B1: a value that is wholly a marker (a member masked whole, or a shape) is shown as it is —

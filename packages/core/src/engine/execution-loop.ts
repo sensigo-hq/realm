@@ -1496,8 +1496,15 @@ export function pendingGateQuestion(
     },
     {
       time: { at: snapshot.at },
+      // Gap 2, unit (iv-a1): a failure message the fallback reads at `all`, as the question's.
       ...(options.disclosure !== undefined
-        ? { disclosure: { set: options.disclosure, tier: 'declared' as const } }
+        ? {
+            disclosure: {
+              set: options.disclosure,
+              tier: 'declared' as const,
+              failureMessagesAt: 'all' as const,
+            },
+          }
         : {}),
     },
   );
@@ -4804,10 +4811,17 @@ async function executeStepBody(
         : {};
     let resolvedGateMessage: string | undefined;
     // The filter-mask fix (B2): a question masks each value before its filters, at the declared tier
-    // whatever door opened the gate — one question text per gate (the sink passes stay).
+    // whatever door opened the gate — one question text per gate (the sink passes stay). Gap 2, unit
+    // (iv-a1): a step's failure message in it at `all`, with the set the host passed, before filters.
     const questionDisclosure =
       options.disclosure !== undefined
-        ? { disclosure: { set: options.disclosure, tier: 'declared' as const } }
+        ? {
+            disclosure: {
+              set: options.disclosure,
+              tier: 'declared' as const,
+              failureMessagesAt: 'all' as const,
+            },
+          }
         : {};
     // #729 PR-4 (01 (b)): the message's first render strips and masks each resolved value with the
     // host's set and records its length (never cuts); an unresolved placeholder never passes the hook.

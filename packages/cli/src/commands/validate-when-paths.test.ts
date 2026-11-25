@@ -357,7 +357,7 @@ describe('fix 1, piece 2a — the words the docs and the changelog carry (check 
   it('conditions.md: the new rule and the changed sentence', () => {
     claim(
       'docs/reference/workflow/conditions.md',
-      "A `when` path is also checked against what the workflow declares: a field a closed schema does not have, a `$settlement` field other than its four, or a parameter a closed `params_schema` does not have is refused, and so is a comparison of a gate's `choice` with a choice the gate does not offer (for a gate that offers `refund` and `deny`, `approve.choice == 'refnd'` gets \"Did you mean 'refund'?\"). A path that may be absent gets a warning, unless the condition tests it with `== null` or `!= null`, or reads `$settlement`. Running a workflow does not refuse these. This was added after version 0.49.0.",
+      "A `when` path is also checked against what the workflow declares: a field a closed schema does not have, a `$settlement` field other than its five, or a parameter a closed `params_schema` does not have is refused, and so is a comparison of a gate's `choice` with a choice the gate does not offer (for a gate that offers `refund` and `deny`, `approve.choice == 'refnd'` gets \"Did you mean 'refund'?\"). A path that may be absent gets a warning, unless the condition tests it with `== null` or `!= null`, or reads `$settlement`. Running a workflow does not refuse these. This was added after version 0.49.0.",
     );
     claim(
       'docs/reference/workflow/conditions.md',

@@ -61,10 +61,31 @@ export interface NotCheckedPath {
   why: NotCheckedWhy | 'check_failed';
 }
 
-/** The input_map leaves' findings: warnings for the loader's channel, and the paths not checked. */
+/**
+ * Gap 2, unit (iv-a1): a placeholder that puts a step's failure message (`$settlement.<step>.message`,
+ * or a path that holds it) into a `prompt` or a gated step's `instructions`. Information for the
+ * author, never a warning: it moves no exit code and never counts toward `--strict`
+ * (`validate --json`'s `notes`).
+ * @public
+ */
+export interface LoaderNote {
+  /** The step whose `prompt` or `instructions` holds the placeholder. */
+  step: string;
+  placement: 'prompt' | 'instructions';
+  /** The path as written, trimmed: the field, or a shorter path that holds it. */
+  reads: string;
+  /** The note's sentence; `realm workflow validate` prints it after `ℹ `. */
+  message: string;
+}
+
+/**
+ * The input_map leaves' findings: warnings for the loader's channel, the paths not checked, and
+ * (gap 2, unit (iv-a1)) the notes.
+ */
 export interface InputMapPathFindings {
   warnings: LoaderWarning[];
   notChecked: NotCheckedPath[];
+  notes: LoaderNote[];
 }
 
 /** Maximum nesting depth the loader admits (deeper maps are refused there, and not walked here). */
@@ -89,7 +110,7 @@ export function checkInputMapPaths(
   /** Piece 3a-ii-a: the `gate.message` and `display` placeholders to judge (`templateLeaves`). */
   templates: readonly TemplateLeaf[] = [],
 ): InputMapPathFindings {
-  const findings: InputMapPathFindings = { warnings: [], notChecked: [] };
+  const findings: InputMapPathFindings = { warnings: [], notChecked: [], notes: [] };
   const leaves: Leaf[] = [];
   const steps = typeof workflow.steps === 'object' && workflow.steps !== null ? workflow.steps : {};
   for (const [stepName, raw] of Object.entries(steps)) {
@@ -183,6 +204,7 @@ export function checkInputMapPaths(
     }
     if (judged.notChecked !== undefined) findings.notChecked.push(judged.notChecked);
     if (judged.warning !== undefined) findings.warnings.push(judged.warning);
+    if (judged.note !== undefined) findings.notes.push(judged.note);
   }
   return findings;
 }
@@ -198,6 +220,8 @@ interface Leaf {
 export interface LeafFindings {
   warning?: LoaderWarning;
   notChecked?: NotCheckedPath;
+  /** Gap 2, unit (iv-a1): a template placeholder's note. */
+  note?: LoaderNote;
 }
 
 /** Walks a map as `resolveInputMap` does: string leaves are paths, `$literal` nodes are not. */
@@ -326,7 +350,7 @@ function neverWords(
     case 'no_settlement_field':
       return withDidYouMean(
         `${opening} reads '${p}', but '$settlement.${cause.step}' holds only 'failed', ` +
-          `'settled_by_default', 'validation_rejections' and 'failure_kind'.`,
+          `'settled_by_default', 'validation_rejections', 'failure_kind' and 'message'.`,
         cause.didYouMean,
       );
     case 'no_param':
@@ -383,6 +407,7 @@ function absentWords(stepName: string, key: string, path: string, cause: AbsentC
     case 'default_only':
     case 'list_position':
     case 'model_failure_only':
+    case 'failure_only':
       return (
         `${opening} reads '${p}', which may be absent when this step runs (${absentWhy(cause)}); the ` +
         `step then receives no value for '${k}'.`

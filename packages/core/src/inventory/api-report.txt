@@ -2269,6 +2269,14 @@ LoadBearingRunRecordField · type · public
 LoadErrorCode · type · public
   type LoadErrorCode = ErrorCode | 'uncoded';
 
+LoaderNote · type · public
+  interface LoaderNote {
+      step: string;
+      placement: 'prompt' | 'instructions';
+      reads: string;
+      message: string;
+  }
+
 LoaderWarning · type · public
   interface LoaderWarning {
       code: WarningCode;
@@ -5000,6 +5008,7 @@ loadWorkflowFromFileWithDiagnostics · value · public
       definition: WorkflowDefinition;
       warnings: LoaderWarning[];
       notChecked: NotCheckedPath[];
+      notes: LoaderNote[];
   };
 
 loadWorkflowFromString · value · public
@@ -5010,6 +5019,7 @@ loadWorkflowFromStringWithDiagnostics · value · public
       definition: WorkflowDefinition;
       warnings: LoaderWarning[];
       notChecked: NotCheckedPath[];
+      notes: LoaderNote[];
   };
 
 locateQuote · value · public
