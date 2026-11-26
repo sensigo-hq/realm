@@ -214,6 +214,20 @@ const HELD = record('cp2-held', FLOW.id, {
   in_progress_steps: ['a'],
   claims: { a: { token: 'other-a', deadline: T1, since: T0 } },
 });
+/** Waiting at a gate that says what each answer means: withheld, the door shows its per-choice
+ *  messages as one sentence (the schema admits it since Q1 d2c). */
+const GATE_MESSAGES = record('cp2-waiting-messages', WAIT.id, {
+  run_phase: 'gate_waiting',
+  evidence: [exec('ask', 'success')],
+  pending_gate: {
+    gate_id: 'gate-m',
+    step_name: 'ask',
+    preview: { draft: 'Dear customer, …' },
+    choices: ['send', 'reject'],
+    opened_at: T1,
+    resolution_messages: { send: 'The reply is on its way.', reject: 'The draft was rejected.' },
+  },
+});
 /** A route that renders a person's ways as commands, as `realm mcp` injects one. */
 const ROUTE = {
   render: (way: { verb: string; step?: string; run_id?: string }) =>
@@ -255,7 +269,8 @@ beforeAll(async () => {
   home = await makeTempHome({ home: root });
   for (const d of [FLOW, WAIT, MANY]) await home.stores.workflowStore.register(d);
   for (const [, run] of PHASES) await seedRun(home.stores.runStore, run);
-  for (const run of [BIG_PARAMS, BIG_REASON, PAGED, HELD]) await seedRun(home.stores.runStore, run);
+  for (const run of [BIG_PARAMS, BIG_REASON, PAGED, HELD, GATE_MESSAGES])
+    await seedRun(home.stores.runStore, run);
   client = await connect(createRealmMcpServer({ ...home.stores }));
   const tools = (await client.listTools()).tools;
   listed = tools.find((t) => t.name === 'get_run_state')!.outputSchema as Json;
@@ -399,15 +414,17 @@ describe('CP-2 — get_run_state on the MCP wire', () => {
     }
   });
 
-  it('5. values withheld: the twin carries the shapes the text shows, never a number it withholds', async () => {
-    // (a) red when the twin is taken before the door's walk; (b) prints the shaped leaves.
+  it("5. values withheld: the twin carries the shapes the text shows, never a number it withholds, and a gate's messages as the door's sentence", async () => {
+    // (a) red when the twin is taken before the door's walk, or when the schema refuses a gate's
+    //     withheld messages (the floor then fires); (b) prints the shaped leaves.
     const failing = createRealmMcpServer({
       ...home.stores,
       disclosureProvider: async () => {
         throw new Error('fixture: the declared values do not load');
       },
     });
-    const r = await call({ run_id: 'cp2-running', include_steps: true }, await connect(failing));
+    const on = await connect(failing);
+    const r = await call({ run_id: 'cp2-running', include_steps: true }, on);
     const twin = r.structuredContent!;
     const shapes = (v: unknown, at: string, out: string[]): string[] => {
       if (typeof v === 'string' && v.startsWith('‹')) out.push(`${at}=${v}`);
@@ -431,6 +448,22 @@ describe('CP-2 — get_run_state on the MCP wire', () => {
       strict: true,
     });
     expect(shapes(twin, '', [])).toStrictEqual(shapes(JSON.parse(r.content[0]!.text), '', []));
+    // A run waiting at a gate with per-choice messages: the door shows them as one sentence, the
+    // twin carries that sentence, and the reply fits, so the floor does not fire.
+    const gate = await call({ run_id: 'cp2-waiting-messages' }, on);
+    const gateTwin = gate.structuredContent;
+    expect({
+      messages: (gateTwin?.['pending_gate'] as Json | undefined)?.['resolution_messages'],
+      ...carriers(gate),
+      ...verdicts(gateTwin),
+    }).toStrictEqual({
+      messages: 'withheld (declared values could not be read)',
+      isError: undefined,
+      texts: 1,
+      twinIsText: true,
+      sdk: true,
+      strict: true,
+    });
   });
 
   it('6. a reply over the ceiling: the twin is the cut object the text sends, never the uncut one', async () => {
