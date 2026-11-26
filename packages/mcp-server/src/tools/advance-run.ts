@@ -22,7 +22,6 @@ import {
   mcpReplyOf,
   withHintTail,
   renderReply,
-  safeTool,
   toolContentOf,
   MCP_ENVELOPE_TABLE,
   type McpEnvelope,
@@ -31,6 +30,7 @@ import {
   replySubject,
   setForSubject,
 } from '../render-reply.js';
+import { limitedTool } from './caller-limits.js';
 import { assertToolStores, markServedByTool, registryRole } from './assert-tool-stores.js';
 import {
   assertRegistryLine,
@@ -173,7 +173,9 @@ export function registerAdvanceRun(
         "Run what a run owes the engine — an expired question's declared on_expiry, then its guards and automatic steps — in this server's environment. Call it when next_actions names it.",
       inputSchema: boundedRefusal(advanceRunArgsSchema),
     },
-    safeTool(
+    limitedTool(
+      'advance_run',
+      opts,
       async (rawArgs, extra) => {
         const args = rawArgs as z.infer<typeof advanceRunArgsSchema>;
         let disclosure: DisclosureSet | undefined;

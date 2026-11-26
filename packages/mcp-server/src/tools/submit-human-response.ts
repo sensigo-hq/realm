@@ -26,7 +26,6 @@ import {
   disclosureOfTool,
   mcpReplyOf,
   renderReply,
-  safeTool,
   toolContentOf,
   withHintTail,
   MCP_ENVELOPE_TABLE,
@@ -37,6 +36,7 @@ import {
   setForSubject,
   statesNoName,
 } from '../render-reply.js';
+import { limitedTool } from './caller-limits.js';
 import { assertToolStores, markServedByTool, registryRole } from './assert-tool-stores.js';
 import {
   assertRegistryLine,
@@ -339,7 +339,9 @@ export function registerSubmitHumanResponse(
       description: SUBMIT_HUMAN_RESPONSE_DESCRIPTION,
       inputSchema: boundedRefusal(submitHumanResponseArgsSchema),
     },
-    safeTool(
+    limitedTool(
+      'submit_human_response',
+      opts,
       async (rawArgs, extra) => {
         const args = rawArgs as z.infer<typeof submitHumanResponseArgsSchema>;
         // #625 PR-2b A2a: the call's start, taken first — the carry-on's 240 seconds run from it.

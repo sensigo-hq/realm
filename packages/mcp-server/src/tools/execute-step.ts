@@ -44,6 +44,7 @@ import {
   replySubject,
   setForSubject,
 } from '../render-reply.js';
+import { withinLimits } from './caller-limits.js';
 import { assertToolStores, markServedByTool, registryRole } from './assert-tool-stores.js';
 import {
   assertRegistryLine,
@@ -520,8 +521,8 @@ export function registerExecuteStep(
         }),
       ),
     },
-    async (args, extra) => {
+    withinLimits('execute_step', opts, async (args, extra) => {
       return handleExecuteStepTool(args, opts, formCallOf(opts, extra));
-    },
+    }),
   );
 }

@@ -206,6 +206,10 @@ export type ErrorCode =
   // #872 (b1): `get_run_state`'s `cursor` refused — given without the steps it pages, or naming no
   // step the run has attempted. The agent fixes its own call (`provide_input`); the same call fails again.
   | 'VALIDATION_CURSOR'
+  // #625 named keys unit 2: a tool call outside the caller's limits — a tool, a workflow or a run
+  // that its key (or an embedding program's `limits`) does not allow. Refused before the tool does
+  // anything; the caller needs a key that allows the call.
+  | 'CALL_OUTSIDE_LIMITS'
   | 'STEP_HANDLER_ERROR'
   // ENGINE
   | 'ENGINE_INTERNAL'
@@ -385,6 +389,7 @@ export const ERROR_CODES = [
   'VALIDATION_CALLER_INVALID',
   'VALIDATION_OPTION_INVALID',
   'VALIDATION_CURSOR',
+  'CALL_OUTSIDE_LIMITS',
   'STEP_HANDLER_ERROR',
   'ENGINE_INTERNAL',
   'ENGINE_STORE_FAILED',

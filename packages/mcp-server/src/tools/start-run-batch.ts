@@ -25,7 +25,6 @@ import {
   mcpReplyOf,
   renderReply,
   renderWaysOf,
-  safeTool,
   toolContentOf,
   disclosureOfTool,
   MCP_ENVELOPE_TABLE,
@@ -38,6 +37,7 @@ import {
   FAILURE_TEXT_SHAPED,
   holdsShapedValue,
 } from '../render-reply.js';
+import { limitedTool } from './caller-limits.js';
 import { toolMeta } from '../tool-annotations.js';
 import { ArgsNumbersRefusal, argsNumbersEnvelope, checkArgsNumbers } from './args-numbers.js';
 import { assertToolStores, markServedByTool, registryRole } from './assert-tool-stores.js';
@@ -396,7 +396,9 @@ export function registerStartRunBatch(
         }),
       ),
     },
-    safeTool(
+    limitedTool(
+      'start_run_batch',
+      opts,
       async (args) => {
         const result = await handleStartRunBatch(args, opts);
         return toolContentOf(

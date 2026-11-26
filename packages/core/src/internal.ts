@@ -818,6 +818,8 @@ export type {
 export type { GateDueState } from './engine/gate-timing.js';
 export {
   requirementForStep,
+  // #828 unit 2c: what a step that runs code runs, the one predicate the step's record reads.
+  codeRequirementForStep,
   unmetCapabilities,
   findCapabilityBlockedSteps,
   capabilityWarning,
@@ -903,8 +905,8 @@ export {
   // #828 unit 2b: whether an entry replaces a built-in, the one rule (the CLI loader reads it in unit 4).
   replacesBuiltIn,
 } from './extensions/built-in-requirements.js';
-// #828 unit 2b: where a registry entry's code came from.
-export type { CodeSource, ProjectSource } from './types/code-source.js';
+// #828 unit 2b: where a registry entry's code came from; unit 2c: which code a step's attempt chose.
+export type { CodeSource, ProjectSource, StepCodeSource } from './types/code-source.js';
 export type { ExtensionManifest, ExtensionModuleRef } from './extensions/manifest.js';
 export {
   validateDeploymentManifest,

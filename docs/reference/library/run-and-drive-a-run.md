@@ -3117,6 +3117,7 @@ Names this job reaches whose entry is on another page.
 - [`StampSealResult`](implement-a-store.md#stampsealresult): The outcome of a `RunStore.stampSeal` attempt.
 - [`StepBrief`](write-a-handler.md#stepbrief): What a `run_step` way says about its step: its kind, its description, the prompt the agent reads, the input schema an agent's answer must fit, and its handler.
 - [`StepCacheDetail`](read-a-runs-record.md#stepcachedetail): A step's cache facts: its state, how they are known, and each request's detail (`EvidenceSnapshot.cache`).
+- [`StepCodeSource`](read-a-runs-record.md#stepcodesource): Which code Realm chose for one attempt of a step that runs a handler or an adapter, as its evidence entry records it (`EvidenceSnapshot.code_source`).
 - [`StepContext`](write-a-handler.md#stepcontext): What a handler is told about the run: its id and params, the step's `config`, and earlier steps' outputs in `resources`, keyed by step id (`StepHandler.execute`'s second argument).
 - [`StepDefinition`](define-and-load-a-workflow.md#stepdefinition): One step of a workflow, as the loaders return it under `WorkflowDefinition.steps`: what it does, how it runs, the steps it waits for, and its input and settings.
 - [`StepDiagnostics`](read-a-runs-record.md#stepdiagnostics): Diagnostic metadata captured during step execution.
