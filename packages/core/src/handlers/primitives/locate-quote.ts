@@ -844,7 +844,66 @@ function wordEdgesHold(hay: string, at: number, needle: string): boolean {
   ) {
     return false;
   }
-  return true;
+  return contractionEdgesHold(hay, at, needle);
+}
+
+/** #845 (R-F): the marks a contraction ending in `'t` or `'nt` is written with — `'` `’` `‘` `` ` ``
+ *  `′` `＇`, and the spacing accents R-D3 reads as apostrophes (`isSpacingAccent`), `´` U+00B4 among
+ *  them. The canonical form drops every one of them but the prime `′` (U+2032). */
+const CONTRACTION_MARKS: ReadonlySet<string> = new Set(["'", '’', '‘', '`', '′', '＇']);
+const isContractionMark = (c: string | undefined): boolean =>
+  c !== undefined && (CONTRACTION_MARKS.has(c) || isSpacingAccent(c));
+const isTee = (c: string | undefined): boolean => c === 't' || c === 'T';
+
+/** #845 (R-F): whether `s` has a contraction's ending at `at` — `t`/`T`, or `n`/`N` then `t`/`T`
+ *  (in any case) — with no letter or digit after it. */
+function contractionEndingAt(s: string, at: number): boolean {
+  const c = cpAt(s, at);
+  if (isTee(c)) return !isAlnum(cpAt(s, at + 1));
+  return (c === 'n' || c === 'N') && isTee(cpAt(s, at + 1)) && !isAlnum(cpAt(s, at + 2));
+}
+
+/** #845 (R-F): a match at `at` cuts no contraction ending in `'t` or `'nt`. Its end is no edge when
+ *  its last character is a letter and `hay` goes on with one contraction mark and that ending
+ *  (`CAN` in `CAN'T`, `did` in `did'nt`); its start is none when it opens with that ending and
+ *  `hay` has one mark right before it and a letter before that (`t make` in `won't make`). A match
+ *  that carries the mark is refused too: one that ends with a mark right after a letter, where
+ *  `hay` goes on with a letter (`THE TENANT'` in `THE TENANT'S`, `CAN´` in `CAN´T`), and one that
+ *  opens with a mark and the ending right after a letter (`´T REFUSE` in `CAN´T REFUSE`).
+ *  Possessives (`'S`), other contractions (`you'll`), names (`O'Toole`) and a mark then a letter
+ *  (`‘The…`) keep their edge, and so does a space beside the mark (`can' t`). */
+function contractionEdgesHold(hay: string, at: number, needle: string): boolean {
+  const end = at + needle.length;
+  const last = cpBefore(needle, needle.length);
+  const after = cpAt(hay, end);
+  if (
+    isLetter(cpBefore(needle, pastMarks(needle, needle.length))) &&
+    isContractionMark(after) &&
+    contractionEndingAt(hay, end + after!.length)
+  ) {
+    return false;
+  }
+  if (
+    isContractionMark(last) &&
+    isLetter(cpBefore(needle, pastMarks(needle, needle.length - last!.length))) &&
+    isLetter(after)
+  ) {
+    return false;
+  }
+  const before = cpBefore(hay, at);
+  if (
+    contractionEndingAt(needle, 0) &&
+    isContractionMark(before) &&
+    isLetter(cpBefore(hay, pastMarks(hay, at - before!.length)))
+  ) {
+    return false;
+  }
+  const open = cpAt(needle, 0);
+  return !(
+    isContractionMark(open) &&
+    contractionEndingAt(needle, open!.length) &&
+    isLetter(cpBefore(hay, pastMarks(hay, at)))
+  );
 }
 
 /** The first occurrence at or after `fromIndex` whose number edges hold — read from `edgeHay` and
@@ -877,24 +936,17 @@ function findWithEdges(
 }
 
 /** The literal layer's edges (N1–N6, and 02 B): the number and word edges of the match at `at`,
- *  read in the literal view, so past every `\p{Cf}` character; and a word the source goes on with
- *  as a contraction is the same word — a quote ending with a letter before `'t` or `’t` and then no
- *  letter or digit (`The Tenant can` in `can't`), or ending with a letter and `'` or `’` before a
- *  letter (`The Tenant can'` in `can't`), ends inside it. */
-function literalEdgesHold(view: LiteralView, at: number, end: number): boolean {
+ *  read in the literal view, so past every `\p{Cf}` character (a contraction is one word there too,
+ *  #845 R-F: `contractionEdgesHold`); and, read in the source text itself, no edge inside a word a
+ *  hyphen breaks across a line (#845 S1/F1: `lineBreakHyphenEdgesHold`). */
+function literalEdgesHold(view: LiteralView, source: string, at: number, end: number): boolean {
   const from = view.at[at]!;
   const to = view.at[end]!;
   const needle = view.raw.slice(from, to);
   if (needle === '') return false;
   if (!numberEdgesHold(view.mapped, from, view.mapped.slice(from, to))) return false;
   if (!wordEdgesHold(view.raw, from, needle)) return false;
-  const last = needle[needle.length - 1];
-  const [a1, a2, a3] = [view.raw[to], view.raw[to + 1], view.raw[to + 2]];
-  if (isLetter(last) && (a1 === "'" || a1 === '’') && a2 === 't' && !isAlnum(a3)) return false;
-  if ((last === "'" || last === '’') && isLetter(needle[needle.length - 2]) && isLetter(a1)) {
-    return false;
-  }
-  return true;
+  return lineBreakHyphenEdgesHold(source, at, end);
 }
 
 /** The first literal occurrence of `quote` whose edges hold (`literalEdgesHold`), or -1. 02 C: the
@@ -906,16 +958,75 @@ function findLiteral(budget: Budget, source: string, quote: string, view: Litera
   const trail = quote.length - quote.trimEnd().length;
   if (lead + trail >= quote.length) return -1;
   let at = budget.indexOf(source, quote, 0);
-  while (at >= 0 && !literalEdgesHold(view, at + lead, at + quote.length - trail)) {
+  while (at >= 0 && !literalEdgesHold(view, source, at + lead, at + quote.length - trail)) {
     at = budget.indexOf(source, quote, at + 1);
   }
   return at;
 }
 
-/** Non-overlapping occurrences whose number and word edges hold (N6), and whose optional marks hold
- *  (§4: the quote's own). */
-function countWithEdges(budget: Budget, source: Bare, needle: string, marks: Marks): number {
-  const accept = (at: number): boolean => marksHold(source, at, marks);
+/** #845 (S1/F1): where the letter after a word's line-end hyphen at `h` starts, or -1 — a letter
+ *  (past its marks), then directly a word hyphen (`isWordHyphen`) or U+00AD at `h`, then, past
+ *  blanks and invisible characters, one line break (CR LF as one), then, past blanks and invisible
+ *  characters, a letter. Read in the source text itself, where U+00AD is the hyphen. A hyphen after
+ *  anything but a letter (`payable -`), or before a blank line, breaks no word. */
+function lineBreakHyphenAt(source: string, h: number): number {
+  const c = cpAt(source, h);
+  if (!(isWordHyphen(c) || c === '­')) return -1;
+  if (!isLetter(cpBefore(source, pastMarks(source, h)))) return -1;
+  let k = h + c!.length;
+  for (let d = cpAt(source, k); isBlank(d) || isInvisible(d); d = cpAt(source, k)) k += d!.length;
+  const lineBreak = cpAt(source, k);
+  if (!isLineBreak(lineBreak)) return -1;
+  k += lineBreak === '\r' && source[k + 1] === '\n' ? 2 : 1;
+  for (let d = cpAt(source, k); isBlank(d) || isInvisible(d); d = cpAt(source, k)) k += d!.length;
+  return isLetter(cpAt(source, k)) ? k : -1;
+}
+
+/** #845 (S1/F1): whether `p` of the source falls inside a word a hyphen breaks across a line, so it
+ *  is no word edge: right before the hyphen, right after it, or at the letter after the line break
+ *  (`paid` after `un-` ending a line). */
+function insideLineBreakHyphen(source: string, p: number): boolean {
+  if (lineBreakHyphenAt(source, p) >= 0) return true;
+  const before = cpBefore(source, p);
+  if (before !== undefined && lineBreakHyphenAt(source, p - before.length) >= 0) return true;
+  // back to the hyphen: past blanks and invisible characters (never U+00AD, the hyphen itself), one
+  // line break, and blanks and invisible characters again
+  let k = p;
+  const back = (): void => {
+    let d = cpBefore(source, k);
+    while (d !== '­' && (isBlank(d) || isInvisible(d))) {
+      k -= d!.length;
+      d = cpBefore(source, k);
+    }
+  };
+  back();
+  const lineBreak = cpBefore(source, k);
+  if (!isLineBreak(lineBreak)) return false;
+  k -= lineBreak === '\n' && source[k - 2] === '\r' ? 2 : 1;
+  back();
+  const hyphen = cpBefore(source, k);
+  return hyphen !== undefined && lineBreakHyphenAt(source, k - hyphen.length) >= 0;
+}
+
+/** #845 (S1/F1): a match from `start` to `end` of the source (raw offsets) starts and ends at a
+ *  word edge as far as a line-end hyphen goes: neither end falls inside a word it breaks. */
+function lineBreakHyphenEdgesHold(source: string, start: number, end: number): boolean {
+  return !insideLineBreakHyphen(source, start) && !insideLineBreakHyphen(source, end);
+}
+
+/** Non-overlapping occurrences whose number and word edges hold (N6), whose optional marks hold
+ *  (§4: the quote's own), and (#845 S1/F1) neither of whose ends falls inside a word a hyphen breaks
+ *  across a line of `raw`, the source text. */
+function countWithEdges(
+  budget: Budget,
+  source: Bare,
+  raw: string,
+  needle: string,
+  marks: Marks,
+): number {
+  const accept = (at: number): boolean =>
+    marksHold(source, at, marks) &&
+    lineBreakHyphenEdgesHold(raw, source.from[at]!, source.to[at + needle.length - 1]!);
   const hay = source.text;
   let count = 0;
   for (let at = findWithEdges(budget, hay, needle, 0, hay, needle, true, accept); at >= 0;) {
@@ -1571,10 +1682,14 @@ interface Placement {
  *  search for its piece early; it is used only when its piece has no accepted candidate. The same
  *  searches find both kinds. #845 (walk M8): with `uncut`, among accepted candidates that join as
  *  many pieces, one that is not cut short wins, and only such a one ends the search early.
- *  `undefined` when a piece is found nowhere it may be. */
+ *  #845 (S1/F1): a candidate whose part, as `extend` joins it, starts or ends inside a word a hyphen
+ *  breaks across a line of `raw` (the source text) is no candidate of either kind; the join between
+ *  two pieces of one part is never read for it (a quote that keeps the document's `un-`⏎`paid`
+ *  joins it). `undefined` when a piece is found nowhere it may be. */
 function placeParts(
   budget: Budget,
   source: Bare,
+  raw: string,
   segments: readonly Segment[],
   inOrder: boolean,
   startHolds: (at: number) => StartHold,
@@ -1584,6 +1699,8 @@ function placeParts(
   const hay = source.text;
   const parts: Part[] = [];
   const joins: number[] = [];
+  const edgesHold = (part: Part): boolean =>
+    lineBreakHyphenEdgesHold(raw, source.from[part.at]!, source.to[part.end - 1]!);
   let after = 0;
   for (let k = 0; k < segments.length;) {
     const piece = segments[k]!.canonical.text;
@@ -1598,17 +1715,19 @@ function placeParts(
         const hold = k === 0 ? 'accepted' : startHolds(at);
         if (hold === 'accepted') {
           const part = extend(budget, source, segments, k, at);
-          if (
-            best === undefined ||
-            part.last > best.last ||
-            (uncut !== undefined && part.last === best.last && uncut(part) && !uncut(best))
-          ) {
-            best = part;
+          if (edgesHold(part)) {
+            if (
+              best === undefined ||
+              part.last > best.last ||
+              (uncut !== undefined && part.last === best.last && uncut(part) && !uncut(best))
+            ) {
+              best = part;
+            }
+            if (part.last === segments.length - 1 && (uncut === undefined || uncut(best))) break;
           }
-          if (part.last === segments.length - 1 && (uncut === undefined || uncut(best))) break;
         } else if (hold === 'held' && heldBack) {
           const part = extend(budget, source, segments, k, at);
-          if (held === undefined || part.last > held.last) held = part;
+          if (edgesHold(part) && (held === undefined || part.last > held.last)) held = part;
         }
       }
       at = budget.indexOf(hay, piece, at + 1);
@@ -1861,7 +1980,7 @@ function ladder(
     // The whole quote occurs at least once (the literal match), whatever the canonical count says.
     const occurrences = Math.max(
       1,
-      countWithEdges(budget, canonical, canonicalQuote, quoteCanonical.marks),
+      countWithEdges(budget, canonical, source, canonicalQuote, quoteCanonical.marks),
     );
     const end = literal + quote.length;
     // N7: the source has the quote's own closing `.` `!` `?`, so L2's test reads the character after.
@@ -1884,7 +2003,14 @@ function ladder(
     canonical.text,
     canonicalQuote,
     true,
-    (at) => marksHold(canonical, at, quoteCanonical.marks),
+    // #845 (S1/F1): neither end inside a word a hyphen breaks across a line
+    (at) =>
+      marksHold(canonical, at, quoteCanonical.marks) &&
+      lineBreakHyphenEdgesHold(
+        source,
+        canonical.from[at]!,
+        canonical.to[at + canonicalQuote.length - 1]!,
+      ),
   );
   if (whole >= 0) {
     const span = trimmed(
@@ -1905,7 +2031,7 @@ function ladder(
     return {
       state: 'reformatted',
       parts: [span],
-      occurrences: countWithEdges(budget, canonical, canonicalQuote, quoteCanonical.marks),
+      occurrences: countWithEdges(budget, canonical, source, canonicalQuote, quoteCanonical.marks),
       ...cutShort(cut),
     };
   }
@@ -1919,14 +2045,14 @@ function ladder(
     const long = (ps: readonly Part[]): boolean => ps.every((p) => p.end - p.at >= minPartChars);
     // #845 (Q-C): only the in-order placement takes held-back candidates. When it completes by one,
     // every part long enough, rule 1 alone refused the quote: say why and where, and stop there.
-    const inOrder = placeParts(budget, canonical, segments, true, startHolds, true);
+    const inOrder = placeParts(budget, canonical, source, segments, true, startHolds, true);
     if (inOrder !== undefined && inOrder.joins.length > 0 && long(inOrder.parts)) {
       return { ...notFound, cause: 'blank_line_join', join_at: inOrder.joins };
     }
     const parts =
       inOrder !== undefined && inOrder.joins.length === 0 && long(inOrder.parts)
         ? inOrder.parts
-        : placeParts(budget, canonical, segments, false, startHolds, false)?.parts;
+        : placeParts(budget, canonical, source, segments, false, startHolds, false)?.parts;
     if (parts !== undefined && long(parts)) {
       /** L2: the source offsets where a part's sentence-ending pieces stop short. */
       const cutOf = (p: Part): number[] => {
@@ -1949,6 +2075,7 @@ function ladder(
           const second = placeParts(
             budget,
             canonical,
+            source,
             segments,
             true,
             startHolds,

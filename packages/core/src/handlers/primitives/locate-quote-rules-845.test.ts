@@ -2277,3 +2277,388 @@ describe('#845 1b-i-n correction 1: a kept-sign list mark after a blank line ins
     expect(misses(rows)).toEqual([]);
   });
 });
+
+// ---------------------------------------------------------------------------------------------------
+// #845 1b-ii-a (`prompts/fix-845-1b-ii-a-word-edges.md`): a contraction ending in `'t` or `'nt` (R-F)
+// and a word hyphenated across a line (S1/F1) are no word edges. Every input is written as code points.
+
+/** A quote's read: its state, `+cause` when it carries one; with `parts`, its parts' offsets. */
+const iiRead = (quote: string, source: string, parts = false): string => {
+  releaseQuoteCache();
+  const r = locateQuote(quote, source);
+  const cause = r.cause === undefined ? '' : `+${r.cause}`;
+  return parts
+    ? `${r.state}${cause} ${r.parts.map((p) => `${p.start}-${p.end}`).join(',')}`
+    : r.state + cause;
+};
+type IICase = readonly [member: string, quote: string, source: string, want: string];
+const iiRows = (cases: readonly IICase[], parts = false): Row[] =>
+  cases.map(([m, q, s, want]) => [m, iiRead(q, s, parts), want]);
+/** R-F's marks: `'` `’` `‘` `´` `` ` `` `′` `＇`. */
+const RF_MARKS = [0x27, 0x2019, 0x2018, 0xb4, 0x60, 0x2032, 0xff07];
+const RF_SRC = (mark: number): string => `The Landlord can${ch(mark)}t refuse consent.`;
+
+describe("#845 1b-ii-a check 1: R-F, a contraction ending in `'t` or `'nt` makes no word edge", () => {
+  it('one per mark, at the end edge (`The Landlord can`) and at the start edge (`t refuse consent.`)', () => {
+    const rows = iiRows(
+      RF_MARKS.flatMap((m): IICase[] => [
+        [`${hex(m)} end edge`, 'The Landlord can', RF_SRC(m), 'not_found'],
+        [`${hex(m)} start edge`, 't refuse consent.', RF_SRC(m), 'not_found'],
+      ]),
+    );
+    // (1) red when the rule is removed (every row reads `exact`, or `reformatted` for U+2032), when
+    //     one mark is left out of the class (its two rows), or when the start edge is left out (the
+    //     start-edge rows); (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it('the spacing accents R-D3 reads as apostrophes: U+00B4 and U+00A8, at both edges', () => {
+    const rows = iiRows(
+      [0xb4, 0xa8].flatMap((m): IICase[] => [
+        [`${hex(m)} end edge`, 'The Landlord can', RF_SRC(m), 'not_found'],
+        [`${hex(m)} start edge`, 't refuse consent.', RF_SRC(m), 'not_found'],
+      ]),
+    );
+    // (1) red when the spacing accents are left out of the class (U+00B4 is one of them, so it
+    //     leaves too); (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it("`nt` in any case: `did` in `did'nt`, `DID` in `DID'NT`, `NT PAY` and `nt make` at the start edge", () => {
+    const rows = iiRows([
+      [
+        "`did` in `did'nt`",
+        'The Tenant did',
+        `The Tenant did${ch(0x27)}nt pay the rent.`,
+        'not_found',
+      ],
+      ["`DID` in `DID'NT`", 'THE TENANT DID', `THE TENANT DID${ch(0x27)}NT PAY.`, 'not_found'],
+      ["`NT PAY` in `DID'NT PAY`", 'NT PAY', `THE TENANT DID${ch(0x27)}NT PAY.`, 'not_found'],
+      [
+        "`nt make` in `did'nt make`",
+        'nt make structural alterations.',
+        `The Tenant did${ch(0x27)}nt make structural alterations.`,
+        'not_found',
+      ],
+    ]);
+    // (1) red when `nt` is read in lower case only (`DID'NT`, `NT PAY`); (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it('the mark carried by the quote: `CAN´` in `CAN´T`, `´T REFUSE` in `CAN´T REFUSE`, `the Tenant´` in `the Tenant´s`', () => {
+    const src = `THE LANDLORD CAN${ch(0xb4)}T REFUSE CONSENT.`;
+    const rows = iiRows([
+      ['`CAN´`', `THE LANDLORD CAN${ch(0xb4)}`, src, 'not_found'],
+      ['`´T REFUSE`', `${ch(0xb4)}T REFUSE CONSENT.`, src, 'not_found'],
+      ['`the Tenant´`', `the Tenant${ch(0xb4)}`, `the Tenant${ch(0xb4)}s covenants`, 'not_found'],
+    ]);
+    // (1) red when the carried mark is read only for `'` and `’`, as on b3ae158a (each then reads
+    //     `exact`); (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it("the re-check's R-F rows (items3 7–26, extra2 119) read their wants", () => {
+    const lord = 'The Landlord can';
+    const rows = iiRows([
+      [
+        "7 `CAN'T`",
+        'THE LANDLORD CAN',
+        `THE LANDLORD CAN${ch(0x27)}T REFUSE CONSENT.`,
+        'not_found',
+      ],
+      [
+        '8 `CAN’T`',
+        'THE LANDLORD CAN',
+        `THE LANDLORD CAN${ch(0x2019)}T REFUSE CONSENT.`,
+        'not_found',
+      ],
+      [
+        "9 `Can'T`",
+        'The Landlord Can',
+        `The Landlord Can${ch(0x27)}T refuse consent.`,
+        'not_found',
+      ],
+      [
+        "10 `WON'T`",
+        'THE LANDLORD WON',
+        `THE LANDLORD WON${ch(0x27)}T REFUSE CONSENT.`,
+        'not_found',
+      ],
+      ...[0xb4, 0x60, 0x2018, 0x2032, 0xff07, 0x2bc].map((m, i): IICase => [
+        `${11 + i} ${hex(m)}`,
+        lord,
+        RF_SRC(m),
+        'not_found',
+      ]),
+      ["17 `can' t`", lord, `The Landlord can${ch(0x27)} t refuse consent.`, 'exact'],
+      ["18 `can 't`", lord, `The Landlord can ${ch(0x27)}t refuse consent.`, 'exact'],
+      ["19 `did'nt`", 'The Tenant did', `The Tenant did${ch(0x27)}nt pay the rent.`, 'not_found'],
+      [
+        '20 `t make`',
+        't make structural alterations.',
+        `The Tenant won${ch(0x27)}t make structural alterations.`,
+        'not_found',
+      ],
+      [
+        '21 `nt make`',
+        'nt make structural alterations.',
+        `The Tenant did${ch(0x27)}nt make structural alterations.`,
+        'not_found',
+      ],
+      ["22 `can't`", lord, `The Landlord can${ch(0x27)}t refuse consent.`, 'not_found'],
+      [
+        '23 stitched `can´t`',
+        `The Landlord of the Building can ${ch(0x2026)} The Tenant shall pay the rent monthly.`,
+        `The Landlord of the Building can${ch(0xb4)}t insure it. The Tenant shall pay the rent monthly.`,
+        'not_found',
+      ],
+      ["24 `THE TENANT'S`", 'THE TENANT', `THE TENANT${ch(0x27)}S COVENANTS`, 'exact'],
+      [
+        "25 `the Landlord's`",
+        'the Landlord',
+        `subject to the Landlord${ch(0x27)}s consent`,
+        'exact',
+      ],
+      ["26 `Tenants' t…`", 'the Tenants', `the Tenants${ch(0x27)} terms apply`, 'exact'],
+      [
+        'extra2 119 `CAN´T`',
+        'THE LANDLORD CAN',
+        `THE LANDLORD CAN${ch(0xb4)}T REFUSE CONSENT.`,
+        'not_found',
+      ],
+    ]);
+    // (1) red when the rule is removed (rows 7–15, 19–21, 23 and 119); (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+});
+
+describe("#845 1b-ii-a check 2: R-F's controls stay as on b3ae158a", () => {
+  it('F1: `The Tenant shall pay the rent.` from `‘The Tenant shall pay the rent.’` stays `exact`', () => {
+    const quote = 'The Tenant shall pay the rent.';
+    // (a) red when both start-edge conditions are dropped (no letter after `t`; a letter before the
+    //     mark), so a `t` after any mark is a contraction's; (b) prints the state.
+    expect(iiRead(quote, `${ch(0x2018)}${quote}${ch(0x2019)} is clause 4.`)).toBe('exact');
+  });
+
+  it('the end edge: `the Landlord` before `’The Tenant` (a space dropped after a closing mark) stays `exact`', () => {
+    // (a) red when the no-letter-or-digit-after condition is dropped at the end edge; (b) prints it.
+    expect(iiRead('the Landlord', `${ch(0x2018)}the Landlord${ch(0x2019)}The Tenant`)).toBe(
+      'exact',
+    );
+  });
+
+  it("a quote ending with the mark before a letter stays `not_found`: `THE TENANT'` in `THE TENANT'S`, `the Landlord’` in `the Landlord’s`", () => {
+    const rows = iiRows([
+      ["`THE TENANT'`", `THE TENANT${ch(0x27)}`, `THE TENANT${ch(0x27)}S COVENANTS`, 'not_found'],
+      [
+        '`the Landlord’`',
+        `subject to the Landlord${ch(0x2019)}`,
+        `subject to the Landlord${ch(0x2019)}s consent`,
+        'not_found',
+      ],
+    ]);
+    // (1) red when :894's rule is dropped (the carried mark at the end, before any letter); (2)
+    //     prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it("the possessive: `THE TENANT` in `THE TENANT'S` stays `exact`", () => {
+    // (a) red when any letter after the mark is taken as a contraction's; (b) prints the state.
+    expect(iiRead('THE TENANT', `THE TENANT${ch(0x27)}S COVENANTS`)).toBe('exact');
+  });
+
+  it("the OCR spellings: `can` in `can' t` and in `can 't` stay `exact`", () => {
+    const rows = iiRows([
+      ["`can' t`", 'can', `The Landlord can${ch(0x27)} t refuse consent.`, 'exact'],
+      ["`can 't`", 'can', `The Landlord can ${ch(0x27)}t refuse consent.`, 'exact'],
+    ]);
+    // (1) red when the rule is applied with a space beside the apostrophe; (2) prints each row.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it("a name: `Toole` in `O'Toole` stays `exact`", () => {
+    // (a) red when both start-edge conditions are dropped, as F1's; (b) prints the state.
+    expect(iiRead('Toole shall pay', `Mr O${ch(0x27)}Toole shall pay.`)).toBe('exact');
+  });
+});
+
+describe("#845 1b-ii-a check 3: R-F's canonical half, the prime at the start edge", () => {
+  it('`T REFUSE CONSENT.` over `The Landlord can′t refuse consent.` reads `not_found` (`reformatted` on b3ae158a)', () => {
+    // (a) red when the canonical half's start edge is left out (the prime, the one mark the
+    //     canonical form keeps, then read `reformatted`); (b) prints the state.
+    expect(iiRead('T REFUSE CONSENT.', RF_SRC(0x2032))).toBe('not_found');
+  });
+});
+
+const UNPAID = (hyphen: string, lineBreak = '\n'): string =>
+  `If any Rent is un${hyphen}${lineBreak}paid twenty-one (21) days after becoming payable.`;
+const PAID = 'paid twenty-one (21) days after becoming payable';
+const AGREES = 'The Tenant agrees to pay interest.';
+const MID = ' The Landlord may then charge a fee. ';
+
+describe('#845 1b-ii-a check 4: S1/F1, a hyphen at a line break makes no word edge', () => {
+  it('the literal layer: `-`, U+2010, U+2011, U+00AD, CR LF, blanks and an invisible character on each side (items3 51–55)', () => {
+    const rows = iiRows([
+      ...['-', ch(0x2010), ch(0x2011), ch(0xad)].map((h): IICase => [
+        `${hex(h.codePointAt(0)!)} start edge`,
+        PAID,
+        UNPAID(h),
+        'not_found',
+      ]),
+      ['CR LF start edge', PAID, UNPAID('-', '\r\n'), 'not_found'],
+      ['blanks and U+200B', PAID, `If any Rent is un- \n ${ch(0x200b)}${PAID}.`, 'not_found'],
+      ['51 U+00AD start edge', PAID, UNPAID(ch(0xad)), 'not_found'],
+      [
+        '52 U+00AD end edge',
+        'The Landlord can',
+        `The Landlord can${ch(0xad)}\nnot refuse consent.`,
+        'not_found',
+      ],
+      ['53 `-` start edge', PAID, UNPAID('-'), 'not_found'],
+      [
+        '54 `-` end edge',
+        'The Landlord can',
+        'The Landlord can-\nnot refuse consent.',
+        'not_found',
+      ],
+      [
+        '55 CR LF end edge',
+        'The Landlord can',
+        'The Landlord can-\r\nnot refuse consent.',
+        'not_found',
+      ],
+      [
+        '56 `well-`⏎`known`, never joined',
+        'a well-known firm',
+        'a well-\nknown firm of surveyors',
+        'not_found',
+      ],
+    ]);
+    // (1) red when the test is left out of the literal match (each row but 56 reads `exact`); (2)
+    //     prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it('the whole canonical match: an upper-cased quote over the same shapes', () => {
+    const rows = iiRows([
+      ['`-` start edge', PAID.toUpperCase(), UNPAID('-'), 'not_found'],
+      ['U+00AD start edge', PAID.toUpperCase(), UNPAID(ch(0xad)), 'not_found'],
+      ['`-` end edge', 'THE LANDLORD CAN', 'The Landlord can-\nnot refuse consent.', 'not_found'],
+    ]);
+    // (1) red when the test is left out of the canonical match (each reads `reformatted`); (2) prints
+    //     each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it('the count: M1, `paid` in `The rent is paid. If any rent remains un-`⏎`paid for a week.`, has one occurrence', () => {
+    releaseQuoteCache();
+    const r = locateQuote('paid', 'The rent is paid. If any rent remains un-\npaid for a week.');
+    // (a) red when the test is left out of the count (2, as on b3ae158a); (b) prints state and count.
+    expect(`${r.state} ${r.occurrences}`).toBe('exact 1');
+  });
+
+  it("a part's end after `extend`: T4 and GR-10's one-piece shape, each ending at `un`, read `not_found`", () => {
+    const rows = iiRows([
+      [
+        'T4, two pieces',
+        `The rent is due; if any Rent shall at any time remain un ${ch(0x2026)} ${AGREES}`,
+        `The rent is due; if any Rent shall at any time remain un-\npaid for twenty-one days.${MID}${AGREES}`,
+        'not_found',
+      ],
+      [
+        'GR-10, one piece',
+        `If any Rent shall at any time remain un ${ch(0x2026)} ${AGREES}`,
+        `If any Rent shall at any time remain un-\npaid for twenty-one days. ${AGREES}`,
+        'not_found',
+      ],
+    ]);
+    // (1) red when the test is left out of a part's end after `extend` (T4 `stitched` 0-56,120-154);
+    //     (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it("a part's start: T1, `paid for twenty-one days. … The Tenant agrees…` after `un-`⏎, reads `not_found`", () => {
+    const quote = `paid for twenty-one days. ${ch(0x2026)} ${AGREES}`;
+    // (a) red when the test is left out of a part's start (`stitched` 41-66,103-137); (b) prints it.
+    expect(
+      iiRead(
+        quote,
+        `If any Rent shall at any time remain un-\npaid for twenty-one days.${MID}${AGREES}`,
+      ),
+    ).toBe('not_found');
+  });
+
+  it('the quote ending with the hyphen: I2 `remain un-` and its U+00AD form read `not_found`', () => {
+    const rows = iiRows([
+      [
+        'I2 `-`',
+        'If any Rent shall remain un-',
+        'If any Rent shall remain un-\npaid for twenty-one days.',
+        'not_found',
+      ],
+      [
+        'I3 U+00AD',
+        `If any Rent shall remain un${ch(0xad)}`,
+        `If any Rent shall remain un${ch(0xad)}\npaid for twenty-one days.`,
+        'not_found',
+      ],
+    ]);
+    // (1) red when the hyphen-ended quote is not covered (each `exact`); (2) prints each row.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it('the letter before the hyphen: extra2 124, `monthly in advance` after `payable -`⏎, stays `exact`', () => {
+    // (a) red when the letter before the hyphen is not required; (b) prints the state.
+    expect(iiRead('monthly in advance', 'The rent is payable -\nmonthly in advance.')).toBe(
+      'exact',
+    );
+  });
+});
+
+describe("#845 1b-ii-a check 5: B1, a quote that keeps the document's hyphenated line break and skips stays `stitched`", () => {
+  it('`…remain un-`⏎`paid for twenty-one days. … The Tenant agrees…`, with `-`, U+00AD and CR LF', () => {
+    const quote = (h: string, lb = '\n'): string =>
+      `If any Rent shall at any time remain un${h}${lb}paid for twenty-one days. ${ch(0x2026)} ${AGREES}`;
+    const source = (h: string, lb = '\n'): string =>
+      `If any Rent shall at any time remain un${h}${lb}paid for twenty-one days.${MID}${AGREES}`;
+    const rows = iiRows(
+      [
+        ['`-` LF', quote('-'), source('-'), 'stitched 0-66,103-137'],
+        ['U+00AD LF', quote(ch(0xad)), source(ch(0xad)), 'stitched 0-66,103-137'],
+        ['`-` CR LF', quote('-', '\r\n'), source('-', '\r\n'), 'stitched 0-67,104-138'],
+      ],
+      true,
+    );
+    // (1) red when S1/F1 is tested at every piece edge (the join inside the part then refuses it);
+    //     (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+});
+
+describe('#845 1b-ii-a check 6: a candidate R-F or S1/F1 refuses is neither accepted nor held back', () => {
+  it('N2b (`CAN′T`) and R1 (`…remain un-`⏎`paid…`), each across a blank line, read `not_found` with no `cause`; R2 keeps it', () => {
+    const rows = iiRows([
+      [
+        'N2b',
+        `The Tenant shall pay the rent ${ch(0x2026)} and the Landlord CAN`,
+        `The Tenant shall pay the rent quarterly\n\nand the Landlord CAN${ch(0x2032)}T enter.`,
+        'not_found',
+      ],
+      [
+        'R1',
+        `The Tenant shall pay the rent ${ch(0x2026)} and the whole of the Rent shall remain un`,
+        'The Tenant shall pay the rent quarterly\n\nand the whole of the Rent shall remain un-\npaid for a week.',
+        'not_found',
+      ],
+      [
+        'R2, a whole word',
+        `The Tenant shall pay the rent ${ch(0x2026)} and the whole of the Rent shall remain`,
+        'The Tenant shall pay the rent quarterly\n\nand the whole of the Rent shall remain un-\npaid for a week.',
+        'not_found+blank_line_join',
+      ],
+    ]);
+    // (1) red when R-F's canonical half is left out (N2b reads `not_found+blank_line_join`), or S1/F1
+    //     is left out of the stitched placement (R1 the same); (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+});

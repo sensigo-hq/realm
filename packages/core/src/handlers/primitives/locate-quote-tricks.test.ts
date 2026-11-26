@@ -16,7 +16,9 @@
 // `n̶o̶t̶` is no `not`) and `u034f-inside-a-word` (a combining mark makes no word edge). #845 unit 1a-i
 // moved three more: `feff-inside-a-word` (U+FEFF is invisible, so it makes no word edge),
 // `format-character-in-a-number` (an invisible character leaves before the number rules) and
-// `figure-space-group` (every `\p{Zs}` space groups thousands). Every quote is fictional
+// `figure-space-group` (every `\p{Zs}` space groups thousands). #845 unit 1b-ii-a moved two:
+// `contraction-in-capitals` and `hyphen-at-a-line-break` (a contraction ending in `'t` or `'nt`, and a
+// hyphen breaking a word across a line, make no word edge). Every quote is fictional
 // and runs against the fictional lease (`fixtures/lease-public.txt`), its word-wrapped copies, or a
 // short constructed document held in its row.
 //
@@ -77,15 +79,17 @@ const sourceOf = (row: Row): string =>
       : row.source.doc!;
 
 describe('the permanent test set, T1: every trick found so far is not_found', () => {
-  it('holds the derived rows: 193 distinct named rows (203 named, 10 exact repeats dropped)', () => {
+  it('holds the derived rows: 195 distinct named rows (205 named, 10 exact repeats dropped)', () => {
     // (a) red when a row is lost or added without its derivation; (b) prints the count. The language
     //     unit: 185 → 187, `x_strike_not` and `u034f-inside-a-word` moved from T2; #845 unit 1a-i:
     //     187 → 190, `feff-inside-a-word`, `format-character-in-a-number` and `figure-space-group`;
     //     #845 unit 1a-ii: 190 → 191, `us-before-a-capital` (an initialism ends no sentence); #845
     //     unit 1b-i: 191 → 193, `blank-line-mid-sentence` (a blank line under a line that ends
     //     nothing is no line start before a lowercase word) and `colon-before-a-digit` (a `:`
-    //     between two digits ends no clause, even across a line break).
-    expect(SET.T1.length).toBe(193);
+    //     between two digits ends no clause, even across a line break); #845 unit 1b-ii-a: 193 → 195,
+    //     `contraction-in-capitals` (a contraction ending in `'t` makes no word edge, in any case) and
+    //     `hyphen-at-a-line-break` (a hyphen that breaks a word across a line makes none either).
+    expect(SET.T1.length).toBe(195);
   });
   for (const row of SET.T1) {
     it(`T1 ${row.group} ${row.id} → not_found`, () => {
