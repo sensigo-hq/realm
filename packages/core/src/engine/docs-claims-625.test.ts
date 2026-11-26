@@ -1657,7 +1657,7 @@ describe('#760 — handlers.md: check_quotes and locateQuote', () => {
     );
     claimOn(
       HANDLERS,
-      'Ask the model for one contiguous span copied character for character, or two spans joined by `…`; each span after the first starts where a sentence or clause of the document starts, or at a new line after a finished sentence, a finished clause or a blank line; after a full stop, or after a blank line inside a sentence, a span starts only at a word that begins with a capital letter, past one opening mark, or one label followed by at most one opening mark.',
+      "Ask the model for one contiguous span copied character for character, or two spans joined by `…`; each span after the first starts where a sentence or clause of the document starts, or at a new line after a finished sentence, a finished clause or a blank line; after a full stop, or after a blank line inside a sentence, a span starts only at a word that begins with a capital letter, past one opening mark, or, at a line's start, one label followed by at most one opening mark.",
     );
     // Correction 2 (03): the instruction is true of the rule — a second span that starts a sentence
     // stitches; one that starts mid-sentence does not.
@@ -1702,9 +1702,10 @@ describe('#760 — handlers.md: check_quotes and locateQuote', () => {
         `${blank}the Landlord shall repair the roof.`,
       ).state,
     ]).toEqual(['stitched', 'not_found']);
-    // #845 1b-i-n correction 1: "past one opening mark, or one label followed by at most one opening
-    // mark". (a) red when a span past a label and one mark is refused, or one past two opening marks,
-    // or a lowercase one past a label and a mark, is accepted; (b) prints the three states.
+    // #845 1b-i-n correction 1: "past one opening mark, or, at a line's start, one label followed by
+    // at most one opening mark". (a) red when a span past a label and one mark is refused, or one past
+    // two opening marks, or a lowercase one past a label and a mark, is accepted; (b) prints the
+    // three states.
     expect([
       locateQuote(
         'The Tenant shall pay the rent quarterly … The Landlord shall repair the roof',
@@ -1719,6 +1720,19 @@ describe('#760 — handlers.md: check_quotes and locateQuote', () => {
         `${blank}(a) \u{201c}the Landlord shall repair the roof.`,
       ).state,
     ]).toEqual(['stitched', 'not_found', 'not_found']);
+    // "at a line's start": after a full stop, a label skipped at the next line passes; one skipped in
+    // mid-line does not (a label is skipped only at a line start). (a) red when either flips;
+    // (b) prints the two states.
+    expect([
+      locateQuote(
+        'The Tenant shall pay the rent quarterly … The Landlord shall repair the roof',
+        'The Tenant shall pay the rent quarterly in advance.\n(a) The Landlord shall repair the roof.',
+      ).state,
+      locateQuote(
+        'The Tenant shall pay the rent quarterly … The Landlord shall repair the roof',
+        'The Tenant shall pay the rent quarterly in advance. (a) The Landlord shall repair the roof.',
+      ).state,
+    ]).toEqual(['stitched', 'not_found']);
     // `realm run export` is pinned by the CLI's `docs-claims-625.test.ts` (#760 cell); `get_run_state`
     // carrying no step output by `step-view.ts`'s StepView (F760-AUD-06).
     claimOn(
@@ -1886,7 +1900,7 @@ describe('#760 correction 1 — handlers.md, sentence by sentence (05)', () => {
     // Correction 2 (03): the skip rule's sentences, run below (`skipMidSentence`, `skipToLine`).
     expect(stateRow('stitched')).toContain(
       // Correction 3 (03, D2): rule rev 3, run by locate-quote.test.ts's "correction 3, 01" cells.
-      "After each skip, the next piece starts where the document starts a sentence, a clause (after `;` or `:`, but not a `:` between two digits, even across a line break) or a line. A line counts only after a line that ends a sentence, a clause or a table row (a line that ends with `|` and holds another `|`), or after a blank line; after a blank line that follows a line ending none of those, the next piece's first word, past one opening mark, or one clause number or list mark followed by at most one opening mark, at the line's start, begins with a capital letter; a clause number (`6.2`, `12.`, `(a)`, never bare digits such as `12`) or a list mark with a blank after it is skipped only at such a line start, and a clause number only before a capital letter or an opening mark (an opening mark, below). After a full stop, `!` or `?`, on the same line or at the end of the line before, the next piece begins with a capital letter or an opening mark (an opening mark, below), or starts right after one in the document; at a new line that counts, other than after a blank line under a line that ends none of those, an item after a list mark (a list mark, below) may open with any word, and a line quoted with its own clause number before a capital letter (`2. Send…`) passes. The piece before a skip may end mid-sentence. A `.` ends a sentence only when the word before it holds a letter or a digit (a spacing accent is neither): `2024. The` does, `§. Keep` and `ͺ. Keep` do not; after a blank line under a line that ends none of those, the `.` that closes the line's first word, when that is a clause number or a word of up to four letters (`2.`, `b.`, `IV.`), ends a sentence only before a capital letter, past any opening marks.",
+      "After each skip, the next piece starts where the document starts a sentence, a clause (after `;` or `:`, but not a `:` between two digits, even across a line break) or a line. A line counts only after a line that ends a sentence, a clause or a table row (a line that ends with `|` and holds another `|`), or after a blank line; after a blank line that follows a line ending none of those, the next piece's first word, past one opening mark, or one clause number or list mark followed by at most one opening mark (a `+`, `>`, `|`, `∙`, `⦾` or `⦿` list mark only when the quote leaves it out), at the line's start, begins with a capital letter; a clause number (`6.2`, `12.`, `(a)`, never bare digits such as `12`) or a list mark with a blank after it is skipped only at such a line start, and a clause number only before a capital letter or an opening mark (an opening mark, below). After a full stop, `!` or `?`, on the same line or at the end of the line before, the next piece begins with a capital letter or an opening mark (an opening mark, below), or starts right after one in the document; at a new line that counts, other than after a blank line under a line that ends none of those, an item after a list mark (a list mark, below) may open with any word, and a line quoted with its own clause number before a capital letter (`2. Send…`) passes. The piece before a skip may end mid-sentence. A `.` ends a sentence only when the word before it holds a letter or a digit (a spacing accent is neither): `2024. The` does, `§. Keep` and `ͺ. Keep` do not; after a blank line under a line that ends none of those, the `.` that closes the line's first word, when that is a clause number or a word of up to four letters (`2.`, `b.`, `IV.`), ends a sentence only before a capital letter, past any opening marks.",
     );
     // Correction 2 (03): the exact row's edges, run below (`exactMidWord`); correction 3 (03, D2):
     // the invisible character, run below (`exactInvisible`); the follow-up (§1): a format character
@@ -2120,7 +2134,7 @@ describe('#760 correction 1 — handlers.md, sentence by sentence (05)', () => {
     );
     claimOn(
       HANDLERS,
-      "3. `stitched`: the quote's pieces, split where it breaks (`…` or `...`, a sentence end, `;`, a `:` not between two digits, a double quotation mark or a line break), are each found whole, at word edges, and in order; pieces next to each other in `source` count as one part, and every part is at least `options.minPartChars` long (default `20`, at least `4`). After each skip, the next piece starts where the document starts a sentence, a clause (after `;` or `:`, but not a `:` between two digits, even across a line break) or a line. A line counts only after a line that ends a sentence, a clause or a table row (a line that ends with `|` and holds another `|`), or after a blank line; after a blank line that follows a line ending none of those, the next piece's first word, past one opening mark, or one clause number or list mark followed by at most one opening mark, at the line's start, begins with a capital letter; a clause number (`6.2`, `12.`, `(a)`, never bare digits such as `12`) or a list mark with a blank after it is skipped only at such a line start, and a clause number only before a capital letter or an opening mark (an opening mark, as the glossary above defines it). After a full stop, `!` or `?`, on the same line or at the end of the line before, the next piece begins with a capital letter or an opening mark (an opening mark, as the glossary above defines it), or starts right after one in the document; at a new line that counts, other than after a blank line under a line that ends none of those, an item after a list mark (a list mark, as the glossary above defines it) may open with any word, and a line quoted with its own clause number before a capital letter (`2. Send…`) passes. The piece before a skip may end mid-sentence. A `.` ends a sentence only when the word before it holds a letter or a digit (a spacing accent is neither): `2024. The` does, `§. Keep` and `ͺ. Keep` do not; after a blank line under a line that ends none of those, the `.` that closes the line's first word, when that is a clause number or a word of up to four letters (`2.`, `b.`, `IV.`), ends a sentence only before a capital letter, past any opening marks. A quote with no break is never stitched.",
+      "3. `stitched`: the quote's pieces, split where it breaks (`…` or `...`, a sentence end, `;`, a `:` not between two digits, a double quotation mark or a line break), are each found whole, at word edges, and in order; pieces next to each other in `source` count as one part, and every part is at least `options.minPartChars` long (default `20`, at least `4`). After each skip, the next piece starts where the document starts a sentence, a clause (after `;` or `:`, but not a `:` between two digits, even across a line break) or a line. A line counts only after a line that ends a sentence, a clause or a table row (a line that ends with `|` and holds another `|`), or after a blank line; after a blank line that follows a line ending none of those, the next piece's first word, past one opening mark, or one clause number or list mark followed by at most one opening mark (a `+`, `>`, `|`, `∙`, `⦾` or `⦿` list mark only when the quote leaves it out), at the line's start, begins with a capital letter; a clause number (`6.2`, `12.`, `(a)`, never bare digits such as `12`) or a list mark with a blank after it is skipped only at such a line start, and a clause number only before a capital letter or an opening mark (an opening mark, as the glossary above defines it). After a full stop, `!` or `?`, on the same line or at the end of the line before, the next piece begins with a capital letter or an opening mark (an opening mark, as the glossary above defines it), or starts right after one in the document; at a new line that counts, other than after a blank line under a line that ends none of those, an item after a list mark (a list mark, as the glossary above defines it) may open with any word, and a line quoted with its own clause number before a capital letter (`2. Send…`) passes. The piece before a skip may end mid-sentence. A `.` ends a sentence only when the word before it holds a letter or a digit (a spacing accent is neither): `2024. The` does, `§. Keep` and `ͺ. Keep` do not; after a blank line under a line that ends none of those, the `.` that closes the line's first word, when that is a clause number or a word of up to four letters (`2.`, `b.`, `IV.`), ends a sentence only before a capital letter, past any opening marks. A quote with no break is never stitched.",
     );
     claimOn(HANDLERS, '4. `stitched_out_of_order`: the same, with the parts in another order.');
     // #866 correction 1 (C2): only the longest piece is read, and Arabic and Hebrew are read bare —
@@ -2565,7 +2579,7 @@ describe('#760 follow-up — the words and tests: each changed sentence quoted, 
   it('§2 can still read found: a blank line inside a sentence, or a header between blank lines, before a word that begins with a capital letter, past one opening mark, or one clause number or list mark followed by at most one opening mark (#845 1b-i-n: no longer a lowercase word after an opening mark or a short first word’s `.`)', () => {
     claimOn(
       HANDLERS,
-      'A blank line inside a sentence, or a header between blank lines, counts as a line start, as at a PDF page break, before a word that begins with a capital letter, past one opening mark, or one clause number or list mark followed by at most one opening mark: a skip may land there.',
+      'A blank line inside a sentence, or a header between blank lines, counts as a line start, as at a PDF page break, before a word that begins with a capital letter, past one opening mark, or one clause number or list mark followed by at most one opening mark (a `+`, `>`, `|`, `∙`, `⦾` or `⦿` list mark only when the quote leaves it out): a skip may land there.',
     );
     const Rest =
       'The Landlord is not responsible for repairs to the structure, roof, foundations or exterior';
@@ -2613,18 +2627,21 @@ describe('#760 follow-up — the words and tests: each changed sentence quoted, 
       afterFirstWordAndStop: 'not_found+blank_line_join',
     });
     // #845 1b-i-n correction 1: what "one opening mark, or one clause number or list mark followed by
-    // at most one opening mark" passes, and what it does not. (a) red when a label and its one mark,
-    // skipped, stop being passed, or a `>` list mark the quote skips is not passed (408a0073 refused
-    // it: the canonical form keeps the sign), or two opening marks, or a mark before a label, are
-    // passed; (b) prints the states.
+    // at most one opening mark (a `+`, `>`, `|`, `∙`, `⦾` or `⦿` list mark only when the quote leaves it out)"
+    // passes, and what it does not. (a) red when a label and its one mark, skipped, stop being passed
+    // (`(a)`: the line's head decides, not a `.`), or a `>` list mark the quote leaves out is not
+    // passed (408a0073 refused it: the canonical form keeps the sign), or one the quote includes is,
+    // or two opening marks, or a mark before a label, are passed; (b) prints the states.
     expect({
-      labelThenMark: state(`${F} … ${Rest}`, doc('\n\n', `2. “${Rest}`)),
+      labelThenMark: state(`${F} … ${Rest}`, doc('\n\n', `(a) “${Rest}`)),
       keptListMarkSkipped: state(`${F} … ${Rest}`, doc('\n\n', `> ${Rest}`)),
+      keptListMarkQuoted: state(`${F} … > ${Rest}`, doc('\n\n', `> ${Rest}`)),
       twoMarks: state(`${F} … ((${Rest}`, doc('\n\n', `((${Rest}`)),
       markBeforeLabel: state(`${F} … “(a) ${Rest}`, doc('\n\n', `“(a) ${Rest}`)),
     }).toEqual({
       labelThenMark: 'stitched',
       keptListMarkSkipped: 'stitched',
+      keptListMarkQuoted: 'not_found',
       twoMarks: 'not_found',
       markBeforeLabel: 'not_found',
     });
@@ -2896,7 +2913,7 @@ describe('#760 follow-up — the words and tests: each changed sentence quoted, 
 
   it("§4 the example workflow's agent prompt gives the prose's quoting instruction, word for word", () => {
     const prose =
-      'Ask the model for one contiguous span copied character for character, or two spans joined by `…`; each span after the first starts where a sentence or clause of the document starts, or at a new line after a finished sentence, a finished clause or a blank line; after a full stop, or after a blank line inside a sentence, a span starts only at a word that begins with a capital letter, past one opening mark, or one label followed by at most one opening mark.';
+      "Ask the model for one contiguous span copied character for character, or two spans joined by `…`; each span after the first starts where a sentence or clause of the document starts, or at a new line after a finished sentence, a finished clause or a blank line; after a full stop, or after a blank line inside a sentence, a span starts only at a word that begins with a capital letter, past one opening mark, or, at a line's start, one label followed by at most one opening mark.";
     claimOn(HANDLERS, prose);
     const yaml = raw(HANDLERS)
       .split(/^```[a-z]*\n/m)
@@ -4956,7 +4973,7 @@ describe('#845 1b-i — the words of rules 1 and 2 (B3, a blank line inside a se
     );
     claimOn(
       HANDLERS,
-      '- A `…` skip that lands, after a blank line under a line that ends no sentence, clause or table row, on a piece whose first word, past one opening mark, or one clause number or list mark followed by at most one opening mark, does not begin with a capital letter (`The Tenant shall pay the rent on the usual quarter days`, a blank line, `- keep the Premises in good repair…`, quoted `The Tenant shall pay the rent … keep the Premises in good repair`; also `2. keep…`, `b. keep…`, `(b) keep…`, `(a) 30 days…` and `(subject to clause 5) not…` quoted as written, and `“the Landlord…`, and a lettered item after a list item that ends with `; and` or `; or` (`(ii) …; and`, a blank line, `(iii) not to allow…`): such a line ends no clause, so quote each item separately): refused the same way. A skip that also passes a label straight onto the lowercase word (`(b)`, `2.`, `b.`, `IV.`, then `keep…`) reads `not_found` with its nearest match and no `cause`; with an opening mark between (`2. “not be…`, or `b. (subject to clause 5) not…` landing on `subject`), it is refused the same way.',
+      '- A `…` skip that lands, after a blank line under a line that ends no sentence, clause or table row, on a piece whose first word, past one opening mark, or one clause number or list mark followed by at most one opening mark, does not begin with a capital letter (`The Tenant shall pay the rent on the usual quarter days`, a blank line, `- keep the Premises in good repair…`, quoted `The Tenant shall pay the rent … keep the Premises in good repair`; also `2. keep…`, `b. keep…`, `(b) keep…`, `(a) 30 days…` and `(subject to clause 5) not…` quoted as written, and `“the Landlord…`): refused the same way. A lettered item after a list item that ends with `; and` or `; or` (`(ii) …; and`, a blank line, `(iii) not to allow…`) is refused the same way: such a line ends no clause, so quote each item separately. A skip that also passes a label straight onto the lowercase word (`(b)`, `2.`, `b.`, `IV.`, then `keep…`) reads `not_found` with its nearest match and no `cause`; with an opening mark between (`2. “not be…`, or `b. (subject to clause 5) not…` landing on `subject`), it is refused the same way.',
     );
     const A = 'The Landlord says that the Tenant shall';
     const B = 'pay the rent quarterly in advance';

@@ -2231,27 +2231,46 @@ const N_KEEP_CAPITAL = 'Keep the Premises in good and substantial repair';
 const N_LANDLORD_LOWER = 'the Landlord shall keep the structure in good repair';
 
 describe('#845 1b-i-n correction 1: a kept-sign list mark after a blank line inside a sentence', () => {
-  it('C1-a: skipped onto a capital item, `> The Landlord…`, `+ Keep…` and `| Keep…` stay `stitched`; skipped onto a lowercase one, `> the Landlord…` is refused with `cause`', () => {
+  it('C1-a: skipped onto a capital item, a kept-sign list mark (`>`, `+`, `|`, `∙`, `⦾`, `⦿`) stays `stitched`; skipped onto a lowercase one, `> the Landlord…` is refused with `cause`', () => {
     const rows = [
       ...nStitched([
         ['`> The Landlord…`, mark skipped', N_Q + N_LANDLORD, nMid(`> ${N_LANDLORD}`)],
         ['`+ Keep…`, mark skipped', N_Q + N_KEEP_CAPITAL, nMid(`+ ${N_KEEP_CAPITAL}`)],
         ['`| Keep…`, mark skipped', N_Q + N_KEEP_CAPITAL, nMid(`| ${N_KEEP_CAPITAL}`)],
+        // the other kept-sign list marks, one pin each: U+2219, U+29BE, U+29BF
+        ['`∙ Keep…`, mark skipped', N_Q + N_KEEP_CAPITAL, nMid(`\u{2219} ${N_KEEP_CAPITAL}`)],
+        ['`⦾ Keep…`, mark skipped', N_Q + N_KEEP_CAPITAL, nMid(`\u{29be} ${N_KEEP_CAPITAL}`)],
+        ['`⦿ Keep…`, mark skipped', N_Q + N_KEEP_CAPITAL, nMid(`\u{29bf} ${N_KEEP_CAPITAL}`)],
       ]),
       ...nRefused([
         ['`> the Landlord…`, mark skipped', N_Q + N_LANDLORD_LOWER, nMid(`> ${N_LANDLORD_LOWER}`)],
       ]),
     ];
-    // (1) red when a kept sign is never passed, as at 408a0073 (the three capital items then read
+    // (1) red when a kept sign is never passed, as at 408a0073 (the six capital items then read
     //     `not_found` with `cause`); (2) prints each differing row.
     expect(misses(rows)).toEqual([]);
   });
 
-  it('C1-b: quoted with the sign, `> The Landlord…`, `+ Keep…` and `| Keep…` are refused with `cause`, as at 408a0073', () => {
+  it('C1-b: quoted with the sign, an item after a kept-sign list mark (`>`, `+`, `|`, `∙`, `⦾`, `⦿`) is refused with `cause`, as at 408a0073', () => {
     const rows = nRefused([
       ['`> The Landlord…` with the sign', `${N_Q}> ${N_LANDLORD}`, nMid(`> ${N_LANDLORD}`)],
       ['`+ Keep…` with the sign', `${N_Q}+ ${N_KEEP_CAPITAL}`, nMid(`+ ${N_KEEP_CAPITAL}`)],
       ['`| Keep…` with the sign', `${N_Q}| ${N_KEEP_CAPITAL}`, nMid(`| ${N_KEEP_CAPITAL}`)],
+      [
+        '`∙ Keep…` with the sign',
+        `${N_Q}\u{2219} ${N_KEEP_CAPITAL}`,
+        nMid(`\u{2219} ${N_KEEP_CAPITAL}`),
+      ],
+      [
+        '`⦾ Keep…` with the sign',
+        `${N_Q}\u{29be} ${N_KEEP_CAPITAL}`,
+        nMid(`\u{29be} ${N_KEEP_CAPITAL}`),
+      ],
+      [
+        '`⦿ Keep…` with the sign',
+        `${N_Q}\u{29bf} ${N_KEEP_CAPITAL}`,
+        nMid(`\u{29bf} ${N_KEEP_CAPITAL}`),
+      ],
     ]);
     // (1) red when a kept sign is passed whether or not the quote includes it (each then reads
     //     `stitched`); (2) prints each differing row.
