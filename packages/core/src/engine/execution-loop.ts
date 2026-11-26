@@ -167,7 +167,17 @@ import {
   propagateSkips,
   deriveRunPhase,
 } from './eligibility.js';
-import { requirementForStep, findCapabilityBlockedSteps } from './capability.js';
+import {
+  requirementForStep,
+  codeRequirementForStep,
+  findCapabilityBlockedSteps,
+} from './capability.js';
+import {
+  chosenCodeOf,
+  chosenCodeSlot,
+  notRegisteredCode,
+  type ChosenCodeSlot,
+} from './code-source.js';
 import {
   checkPreClaim,
   describePending,
@@ -612,6 +622,7 @@ export const DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD = 6;
  * @param rateLimiterRegistry - Stable registry for rate-limiter state. Must be the same
  *   instance across all retry attempts of this step so that pause/resume coordination
  *   is preserved. Created once per executeStep() invocation and shared here.
+ * @param chosen - The attempt's slot for the code it chose (#828 unit 2c), filled at the lookup.
  */
 async function callAdapter(
   stepDef: StepDefinition,
@@ -619,6 +630,7 @@ async function callAdapter(
   options: ExecuteStepOptions,
   pendingRun: RunRecord,
   rateLimiterRegistry: ExtensionRegistry,
+  chosen: ChosenCodeSlot,
   signal?: AbortSignal,
 ): Promise<{
   output: Record<string, unknown>;
@@ -640,6 +652,15 @@ async function callAdapter(
   // the built-in default registry (FileSystemAdapter etc.) when none is provided.
   const lookupRegistry = options.registry ?? createDefaultRegistry();
   const adapter = lookupRegistry.getAdapter(serviceDef.adapter);
+  // #828 unit 2c: the attempt's record takes the code chosen here, before the input map, the method
+  // check, the rate-limit wait and the call. A hand-built service that names no adapter keeps
+  // `not_looked_up`: there was no adapter name to look up.
+  if (typeof serviceDef.adapter === 'string') {
+    chosen.code =
+      adapter === undefined
+        ? notRegisteredCode('adapter', serviceDef.adapter, serviceName)
+        : chosenCodeOf(lookupRegistry, 'adapter', serviceDef.adapter, adapter, serviceName);
+  }
   if (adapter === undefined) {
     // UX hint: when the missing name is not among the registry's current names and the
     // definition declares no `extensions`, point at the deployment manifest.
@@ -829,17 +850,25 @@ type HandlerCallResult =
   | { kind: 'abort'; message: string };
 
 /**
- * Resolves and calls the step handler for an auto step with a `handler` reference.
+ * Resolves and calls the step handler for an auto step with a `handler` reference. `chosen` is the
+ * attempt's slot for the code it chose (#828 unit 2c), filled at the lookup, before the input map
+ * and the call.
  */
 async function callHandler(
   stepDef: StepDefinition,
   options: ExecuteStepOptions,
   pendingRun: RunRecord,
   evidenceByStep: Record<string, Record<string, unknown>>,
+  chosen: ChosenCodeSlot,
   signal?: AbortSignal,
 ): Promise<HandlerCallResult> {
   const handlerName = stepDef.handler!;
-  const handler = (options.registry ?? createDefaultRegistry()).getHandler(handlerName);
+  const lookupRegistry = options.registry ?? createDefaultRegistry();
+  const handler = lookupRegistry.getHandler(handlerName);
+  chosen.code =
+    handler === undefined
+      ? notRegisteredCode('handler', handlerName)
+      : chosenCodeOf(lookupRegistry, 'handler', handlerName, handler);
   if (handler === undefined) {
     throw new WorkflowError(`Handler '${handlerName}' is not registered`, {
       // #134 discriminator: minted at the NOT-REGISTERED site ONLY (not the ran-and-threw throw
@@ -3589,6 +3618,12 @@ async function executeStepBody(
   // Step 4: Dispatch with retry and timeout.
   const retryConfig = stepDef?.retry;
   const maxAttempts = retryConfig?.max_attempts ?? 1;
+  // #828 unit 2c: whether this step runs code, read once; each attempt's entry then records the
+  // code its lookup chose (the slot below), and a step that runs no code records none.
+  const codeStep =
+    stepDef !== undefined
+      ? codeRequirementForStep(options.command, stepDef, definition)
+      : undefined;
   // A3: every `execution: 'auto'` step is bounded — authored timeout_seconds if declared, else the
   // generous DEFAULT_EXECUTION_TIMEOUT_SECONDS default. Resolved ONCE here (before the retry loop
   // below), not per-attempt. Agent/guard steps (shouldEnforceTimeout false) are untouched: agent
@@ -3727,6 +3762,9 @@ async function executeStepBody(
       let attemptOutput: Record<string, unknown> = {};
       let attemptError: WorkflowError | null = null;
       let resolvedParams: Record<string, unknown> | undefined;
+      // #828 unit 2c: one slot per attempt, so a timed-out attempt's call still running in the
+      // background can never change a later attempt's record.
+      const chosen = chosenCodeSlot(codeStep);
 
       // issue #573: `effectiveMs` / `clippedToMs` / `boundWasCap` are all derived from the single
       // `remainingAtDispatch` read above — never a second call to `remainingMs()` (that reopened
@@ -3779,6 +3817,7 @@ async function executeStepBody(
               effectiveOptions,
               pendingRun,
               rateLimiterRegistry,
+              chosen,
               signal,
             );
           } else if (stepDef?.execution === 'auto' && stepDef.handler !== undefined) {
@@ -3787,6 +3826,7 @@ async function executeStepBody(
               effectiveOptions,
               pendingRun,
               evidenceByStep,
+              chosen,
               signal,
             );
             if (result.kind === 'abort') {
@@ -3835,6 +3875,7 @@ async function executeStepBody(
               output: { aborted: true, abort_message: abortMessage },
               error: abortMessage,
               ...(debugOutput !== undefined ? { debugOutput } : {}),
+              ...(chosen.code !== undefined ? { codeSource: chosen.code } : {}),
             }),
             status: 'skipped',
           };
@@ -4005,6 +4046,8 @@ async function executeStepBody(
         ...(options.driver !== undefined ? { drivenBy: options.driver } : {}),
         // issue #625 PR-2a (decision C3): a bare auto step's entry says where its output came from.
         ...(isBareAutoStep ? { outputSource: options.outputSource ?? 'driven_step' } : {}),
+        // #828 unit 2c: the code this attempt chose, however it ended.
+        ...(chosen.code !== undefined ? { codeSource: chosen.code } : {}),
         startedAt,
         completedAt,
         input: effectiveInput,
@@ -7222,9 +7265,11 @@ export async function drainFinalizers(
     };
     let markResult: MarkFinalizerResult;
     let evidenceSnapshot: EvidenceSnapshot;
+    // #828 unit 2c: the code this finalizer's attempt chooses, set by callHandler's own lookup.
+    const chosen = chosenCodeSlot(codeRequirementForStep(finalizerName, stepDef, definition));
     try {
       const callResult = await withTimeout(
-        (signal) => callHandler(stepDef, callOptions, run, evidenceByStep, signal),
+        (signal) => callHandler(stepDef, callOptions, run, evidenceByStep, chosen, signal),
         leaseSeconds * 1000,
         finalizerName,
       );
@@ -7239,6 +7284,7 @@ export async function drainFinalizers(
             input: {},
             output: { aborted: true, abort_message: callResult.message },
             error: `Finalizer '${finalizerName}' returned abort: ${callResult.message}`,
+            ...(chosen.code !== undefined ? { codeSource: chosen.code } : {}),
           }),
           // Q1 (#592) unit a: the handler declared the cleanup cannot be done — a person must act.
           // A cleanup step is never retried.
@@ -7257,6 +7303,7 @@ export async function drainFinalizers(
           input: {},
           output: callResult.output,
           ...(callResult.kind === 'warn' ? { warn: callResult.message } : {}),
+          ...(chosen.code !== undefined ? { codeSource: chosen.code } : {}),
         });
       }
     } catch (err) {
@@ -7271,6 +7318,7 @@ export async function drainFinalizers(
           input: {},
           output: {},
           error: `Finalizer '${finalizerName}' failed: ${message}`,
+          ...(chosen.code !== undefined ? { codeSource: chosen.code } : {}),
         }),
         // Q1 (#592) unit a: the thrown error's words (`callHandler` wraps an ordinary throw,
         // `withTimeout` throws `STEP_TIMEOUT`); anything else is the engine's own fault. A cleanup

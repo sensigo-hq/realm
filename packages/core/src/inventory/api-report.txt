@@ -1353,7 +1353,7 @@ ErrorFactsByCode · type · public
   }
 
 ErrorFactsOf · type · internal
-EvidenceSnapshot · type · public
+EvidenceSnapshot · type · public (beta: code_source)
   interface EvidenceSnapshot {
       step_id: string;
       started_at: string;
@@ -1373,6 +1373,7 @@ EvidenceSnapshot · type · public
       client_prompt_requested?: true;
       principal?: Principal;
       output_source?: OutputSource;
+      code_source?: StepCodeSource;
       supplied_by?: SupplierRole;
       claim_proof?: GateClaimVerdict;
       admitted_by?: AdmittedBy;
@@ -3763,6 +3764,26 @@ StepCacheDetail · type · public
 StepCaller · type · public
   type StepCaller = (typeof ENTRY_CALLERS.executeStep)[number];
 
+StepCodeSource · type · beta
+  type StepCodeSource = {
+      readonly kind: 'handler' | 'adapter';
+      readonly name: string;
+      readonly service?: string;
+      readonly from: CodeSource;
+      readonly realm_version?: string;
+      readonly replaces_built_in?: true;
+  } | {
+      readonly absent: 'not_registered';
+      readonly kind: 'handler' | 'adapter';
+      readonly name: string;
+      readonly service?: string;
+  } | {
+      readonly absent: 'not_looked_up';
+      readonly kind: 'handler' | 'adapter';
+      readonly name?: string;
+      readonly service?: string;
+  };
+
 StepContext · type · public
   interface StepContext {
       run_id: string;
@@ -4765,6 +4786,7 @@ clockErrorSink · value · public
   function clockErrorSink(): ((err: unknown) => void) | undefined;
 
 closeModelAttempts · value · internal
+codeRequirementForStep · value · internal
 codeTextOf · value · internal
 collectManifestSecretRefs · value · internal
 compareCanonical · value · internal
