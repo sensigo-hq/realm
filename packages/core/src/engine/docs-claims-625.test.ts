@@ -1909,7 +1909,7 @@ describe('#760 correction 1 — handlers.md, sentence by sentence (05)', () => {
     // by locate-quote-language-0480.test.ts's §3 cells (Thai `ไม` in `ไม้`, the 263-mark sweep, the
     // `the Tenant` control).
     expect(stateRow('exact')).toBe(
-      "The quote is in the document character for character, and starts and ends at word and number edges; an invisible character inside a word (a soft hyphen, a zero-width space, U+FEFF, U+034F, a variation selector) does not make a word edge, and neither does a visible combining mark (an accent); a contraction ending in `'t` or `'nt` makes no word edge either (`CAN` is not found in `CAN'T`, nor `can` in `can´t`, nor `did` in `did'nt`, nor `t make` in `won't make`), and neither does a hyphen or soft hyphen that breaks a word across a line (`paid` is not found after `un-` ending a line); the quote never starts or ends between a letter and a visible mark on it.",
+      "The quote is in the document character for character, and starts and ends at word and number edges; an invisible character inside a word (a soft hyphen, a zero-width space, U+FEFF, U+034F, a variation selector) does not make a word edge, and neither does a visible combining mark (an accent); a contraction ending in `'t` or `'nt`, written with any contraction apostrophe, makes no word edge either (`CAN` is not found in `CAN'T`, nor `can` in `can´t`, nor `did` in `did'nt`, nor `t make` in `won't make`), and neither does a word hyphen or a soft hyphen that breaks a word across one line (`paid` is not found after `un-` ending a line); the quote never starts or ends between a letter and a visible mark on it.",
     );
     // Correction 2 (03): the kept list, its `±` and `☒` members run below.
     expect(stateRow('reformatted')).toContain(
@@ -2501,7 +2501,7 @@ describe('#760 follow-up — the words and tests: each changed sentence quoted, 
   it('§1 the exact row: a format character (`Cf`) inside a word makes no word edge, and neither does a combining one (U+034F, a variation selector)', () => {
     // The language unit re-pin (§5.1): the read before a match steps past every mark (§3).
     expect(stateRow('exact')).toContain(
-      "an invisible character inside a word (a soft hyphen, a zero-width space, U+FEFF, U+034F, a variation selector) does not make a word edge, and neither does a visible combining mark (an accent); a contraction ending in `'t` or `'nt` makes no word edge either (`CAN` is not found in `CAN'T`, nor `can` in `can´t`, nor `did` in `did'nt`, nor `t make` in `won't make`), and neither does a hyphen or soft hyphen that breaks a word across a line (`paid` is not found after `un-` ending a line); the quote never starts or ends between a letter and a visible mark on it.",
+      "an invisible character inside a word (a soft hyphen, a zero-width space, U+FEFF, U+034F, a variation selector) does not make a word edge, and neither does a visible combining mark (an accent); a contraction ending in `'t` or `'nt`, written with any contraction apostrophe, makes no word edge either (`CAN` is not found in `CAN'T`, nor `can` in `can´t`, nor `did` in `did'nt`, nor `t make` in `won't make`), and neither does a word hyphen or a soft hyphen that breaks a word across one line (`paid` is not found after `un-` ending a line); the quote never starts or ends between a letter and a visible mark on it.",
     );
     const inside = (code: number) =>
       state(
@@ -2705,22 +2705,40 @@ describe('#760 follow-up — the words and tests: each changed sentence quoted, 
     });
   });
 
-  it('§2 can still read found: a hyphen that breaks a word across a blank line or a page break (#845 1b-ii-a re-pin: across one line break, no longer)', () => {
+  it('§2 can still read found: a hyphen that breaks a word across two line breaks or more; a page break alone is one line break (#845 1b-ii-a wording 1 re-pin)', () => {
     claimOn(
       HANDLERS,
-      'A hyphen that breaks a word across a blank line or a page break: `paid` is found after `un-` and a blank line.',
+      'A hyphen that breaks a word across two line breaks or more (CR LF counts as one), such as a blank line or a line break next to a page break (U+000A U+000C): `paid` is found after `un-` and a blank line. A page break alone (U+000C) is one line break, so there `paid` reads not found.',
     );
-    // #845 1b-ii-a re-pin: across one line break `paid` after `un-` now reads `not_found` (S1/F1,
-    // the exact row's sentence); only one line break is read. (a) red when the gap closes across a
-    // blank line or a page break, or the one-line-break rule breaks; (b) prints the states.
-    expect([
-      state('paid for twenty-one days', 'If any Rent is un-\n\npaid for twenty-one days.'),
-      state('paid for twenty-one days', 'If any Rent is un-\n\fpaid for twenty-one days.'),
+    // #845 1b-ii-a wording 1 re-pin: each break the sentence names, and the three single line
+    // breaks. (a) red when the gap closes across two line breaks, CR LF stops counting as one, or a
+    // lone page break (or one CR LF, or one LF) lets `paid` read found; (b) prints each state.
+    const after = (gap: string) =>
       state(
-        'paid twenty-one (21) days after becoming payable',
-        'If any Rent is un-\npaid twenty-one (21) days after becoming payable.',
-      ),
-    ]).toEqual(['exact', 'exact', 'not_found']);
+        'paid for twenty-one days',
+        `If any Rent shall at any time remain un-${gap}paid for twenty-one days.`,
+      );
+    expect({
+      'LF LF (a blank line)': after('\n\n'),
+      'LF FF': after('\n\f'),
+      'FF LF': after('\f\n'),
+      'CR LF CR LF': after('\r\n\r\n'),
+      'LF, blanks, LF': after('\n  \n'),
+      'CR LF FF': after('\r\n\f'),
+      'FF alone': after('\f'),
+      'CR LF alone': after('\r\n'),
+      'LF alone': after('\n'),
+    }).toEqual({
+      'LF LF (a blank line)': 'exact',
+      'LF FF': 'exact',
+      'FF LF': 'exact',
+      'CR LF CR LF': 'exact',
+      'LF, blanks, LF': 'exact',
+      'CR LF FF': 'exact',
+      'FF alone': 'not_found',
+      'CR LF alone': 'not_found',
+      'LF alone': 'not_found',
+    });
   });
 
   it("§2 can still read found: an abbreviation not on the check's list, before a capital letter or an opening mark, is read as a sentence end (every member: #855's correction §4); an initialism is not (#845 R-A3)", () => {
@@ -2895,20 +2913,35 @@ describe('#760 follow-up — the words and tests: each changed sentence quoted, 
     });
   });
 
-  it('honest not found: a quote that starts at the word after a suspended hyphen ending a line (#845 1b-ii-a)', () => {
+  it("honest not found: a quote that starts or ends beside a word hyphen right after a word at a line's end, where it breaks no word (#845 1b-ii-a wording 1 re-pin)", () => {
     claimOn(
       HANDLERS,
-      'A quote that starts at the word after a suspended hyphen ending a line (`and long-term liabilities` after `all short-` ending a line): the hyphen reads as breaking one word.',
+      "A quote that starts or ends beside a word hyphen written right after a word at a line's end, where it breaks no word: one that starts after a suspended hyphen (`and long-term liabilities` after `all short-` ending a line) or ends at the suspended word (`The accounts show all short-`), and one that starts on the line after a heading whose hyphen is a dash (`The Tenant shall pay…` after `4. RENT-`). The hyphen reads as breaking one word. A dash with a space before it, or an en or em dash, keeps the edge (`4. RENT -`, `4. RENT–`).",
     );
-    // (a) red when the quote after the suspended hyphen reads found (the bullet would then be false),
-    //     or the quote that spans the hyphen stops reading found; (b) prints the two states.
-    expect([
-      state('and long-term liabilities', 'all short-\nand long-term liabilities of the Tenant'),
-      state(
-        'all short- and long-term liabilities',
-        'all short-\nand long-term liabilities of the Tenant',
-      ),
-    ]).toEqual(['not_found', 'reformatted']);
+    const accounts = 'The accounts show all short-\nand long-term liabilities of the Company.';
+    const lease = (heading: string) =>
+      `4. ${heading}\r\nThe Tenant shall pay the Rent on the usual quarter days.\r\n5. REPAIR\r\n`;
+    const pay = 'The Tenant shall pay the Rent on the usual quarter days.';
+    // (a) red when one of the bullet's honest quotes reads found (the bullet would then be false),
+    //     a control loses its edge, or the quote that spans the hyphen stops reading found; (b)
+    //     prints each state.
+    expect({
+      'starts after `all short-`': state('and long-term liabilities', accounts),
+      'ends at `all short-`': state('The accounts show all short-', accounts),
+      'the line after `4. RENT-`': state(pay, lease('RENT-')),
+      'control `4. RENT -`': state(pay, lease('RENT -')),
+      'control `4. RENT\u2013`': state(pay, lease('RENT\u2013')),
+      'control `4. RENT\u2014`': state(pay, lease('RENT\u2014')),
+      'spans the hyphen': state('all short- and long-term liabilities', accounts),
+    }).toEqual({
+      'starts after `all short-`': 'not_found',
+      'ends at `all short-`': 'not_found',
+      'the line after `4. RENT-`': 'not_found',
+      'control `4. RENT -`': 'exact',
+      'control `4. RENT\u2013`': 'exact',
+      'control `4. RENT\u2014`': 'exact',
+      'spans the hyphen': 'reformatted',
+    });
   });
 
   it('§4 the CHANGELOG states the skip rule, and its `locateQuote` paragraph ends by pointing at the docs’ list of exceptions', () => {
@@ -4079,6 +4112,9 @@ describe("#855's correction: each sentence's members", () => {
       'an opening mark',
       'a list mark',
       'a dash',
+      // #845 1b-ii-a wording 1: two new rows, the sets R-F and S1/F1 read
+      'a contraction apostrophe',
+      'a word hyphen',
       'a capital letter',
       'a lowercase letter',
       'a digit',
@@ -4541,6 +4577,74 @@ describe("#855's correction: each sentence's members", () => {
         noBreakSpace: state('the rent', 'the rent'),
         misses: misses(rows),
       }).toEqual({ count: true, examples: [], noBreakSpace: 'reformatted', misses: [] });
+    });
+
+    // #845 1b-ii-a wording 1: the two new rows, each member and each named non-member run.
+    it('a contraction apostrophe: each listed member and each spacing accent, right after `can` and before `t`, makes no word edge; U+02BC is a letter; U+201B and U+0022 make one', () => {
+      const row = GLOSSARY.get('a contraction apostrophe') ?? '';
+      const cut = row.indexOf(', or a spacing accent');
+      const listed = cut < 0 ? [] : listedCodes(row.slice(0, cut));
+      const accents = codePoints(/^[^]$/u, 0, 0x10ffff).filter((c) =>
+        /^ \p{M}+$/u.test(ch(c).normalize('NFKC')),
+      );
+      const cutAt = (c: number) =>
+        state('The Landlord can', `The Landlord can${ch(c)}t refuse consent.`);
+      const rows: Row[] = [
+        ...listed.map((c): Row => [`${hex(c)}, listed`, cutAt(c), 'not_found']),
+        ...accents.map((c): Row => [`${hex(c)}, a spacing accent`, cutAt(c), 'not_found']),
+        ['U+02BC, a letter', cutAt(0x2bc), 'not_found'],
+        ['U+201B, not a member', cutAt(0x201b), 'exact'],
+        ['U+0022, not a member', cutAt(0x22), 'exact'],
+      ];
+      // (1) red when the row lists other members (its read is pinned: six of six), names an
+      //     example that is no spacing accent, or stops saying U+02BC is a letter, or when one
+      //     member makes a word edge, or a named non-member stops making one; (2) prints the
+      //     listed members, the examples outside, a boolean and each differing row.
+      expect({
+        listed: listed.map(hex),
+        examples: ['´', '¨'].filter((e) => !accents.includes(cp(e))),
+        letter:
+          /^\p{L}$/u.test(ch(0x2bc)) &&
+          row.includes(
+            'U+02BC MODIFIER LETTER APOSTROPHE is a letter, so a word goes on across it anyway',
+          ),
+        misses: misses(rows),
+      }).toEqual({
+        listed: ['U+0027', 'U+0060', 'U+2018', 'U+2019', 'U+2032', 'U+FF07'],
+        examples: [],
+        letter: true,
+        misses: [],
+      });
+    });
+
+    it("a word hyphen: each listed member, right after `un` at a line's end, breaks the word, so `paid` after it is not found; an en or em dash, U+2012 and U+2212 do not", () => {
+      const row = GLOSSARY.get('a word hyphen') ?? '';
+      const cut = row.indexOf('; never');
+      const listed = cut < 0 ? [] : listedCodes(row.slice(0, cut));
+      const atEnd = (c: number) =>
+        state(
+          'paid for twenty-one days',
+          `If any Rent shall remain un${ch(c)}\npaid for twenty-one days.`,
+        );
+      const rows: Row[] = [
+        ...listed.map((c): Row => [`${hex(c)}, listed`, atEnd(c), 'not_found']),
+        ['U+2013 EN DASH, named', atEnd(0x2013), 'exact'],
+        ['U+2014 EM DASH, named', atEnd(0x2014), 'exact'],
+        ['U+2012 FIGURE DASH', atEnd(0x2012), 'exact'],
+        ['U+2212 MINUS SIGN', atEnd(0x2212), 'exact'],
+      ];
+      // (1) red when the row lists other members (its read is pinned: five of five) or drops its
+      //     "never" clause, or when one member stops breaking the word or a dash starts to; (2)
+      //     prints the listed members, a boolean and each differing row.
+      expect({
+        listed: listed.map(hex),
+        never: row.endsWith('; never an en or em dash'),
+        misses: misses(rows),
+      }).toEqual({
+        listed: ['U+002D', 'U+2010', 'U+2011', 'U+FE63', 'U+FF0D'],
+        never: true,
+        misses: [],
+      });
     });
 
     it("the canonical form's new clauses (#845): invisible characters left out first, a spacing accent dropped unless next to a digit, a mark on anything but a letter dropped, a spacing accent between two digits kept as itself", () => {
@@ -5352,10 +5456,10 @@ describe('#845 1b-ii-a — the words, each executed', () => {
     hyphen: 'not_found',
   };
 
-  it("the exact row: a contraction ending in `'t` or `'nt` makes no word edge, nor a hyphen or soft hyphen that breaks a word across a line", () => {
+  it("the exact row: a contraction ending in `'t` or `'nt`, with any contraction apostrophe, makes no word edge, nor a word hyphen or a soft hyphen that breaks a word across one line (wording 1 re-pin; the two glossary words run by their own cells)", () => {
     claimOn(
       HANDLERS,
-      "a contraction ending in `'t` or `'nt` makes no word edge either (`CAN` is not found in `CAN'T`, nor `can` in `can´t`, nor `did` in `did'nt`, nor `t make` in `won't make`), and neither does a hyphen or soft hyphen that breaks a word across a line (`paid` is not found after `un-` ending a line);",
+      "a contraction ending in `'t` or `'nt`, written with any contraction apostrophe, makes no word edge either (`CAN` is not found in `CAN'T`, nor `can` in `can´t`, nor `did` in `did'nt`, nor `t make` in `won't make`), and neither does a word hyphen or a soft hyphen that breaks a word across one line (`paid` is not found after `un-` ending a line);",
     );
     // (a) red when one of the examples reads found (R-F or S1/F1 removed); (b) prints the states, and
     //     the soft hyphen's.
@@ -5368,13 +5472,24 @@ describe('#845 1b-ii-a — the words, each executed', () => {
     ).toBe('not_found');
   });
 
-  it("the CHANGELOG's Changed line: a quote that cuts a contraction ending in `'t` or `'nt`, or starts or ends at a hyphen breaking a word across a line, reads not_found", () => {
+  it("the CHANGELOG's Changed line: a quote that cuts a contraction ending in `'t` or `'nt`, or starts or ends at a hyphen breaking a word across a line, reads not_found; so does one beside such a hyphen where it breaks no word (wording 1 re-pin)", () => {
     claimOn(
       CL,
-      "check_quotes reads a quote that cuts a contraction ending in `'t` or `'nt` (`CAN` in `CAN'T`, `can` in `can´t`, `did` in `did'nt`, `t make` in `won't make`) or that starts or ends at a hyphen breaking a word across a line (`paid` after `un-` ending a line) as not_found, on purpose (#845).",
+      "check_quotes reads a quote that cuts a contraction ending in `'t` or `'nt` (`CAN` in `CAN'T`, `can` in `can´t`, `did` in `did'nt`, `t make` in `won't make`) or that starts or ends at a hyphen breaking a word across a line (`paid` after `un-` ending a line) as not_found, on purpose; so does a quote beside such a hyphen where it breaks no word (`and long-term liabilities` after `all short-` ending a line, or the line after a heading `4. RENT-`) (#845).",
     );
-    // (a) red when one of the examples reads found; (b) prints the states, and the end edge's.
+    // (a) red when one of the examples reads found; (b) prints the states, and the end edge's, and
+    //     (wording 1) the two quotes beside a hyphen that breaks no word.
     expect(examples()).toEqual(refused);
     expect(state('The Landlord can', 'The Landlord can-\nnot refuse consent.')).toBe('not_found');
+    expect([
+      state(
+        'and long-term liabilities',
+        'The accounts show all short-\nand long-term liabilities of the Company.',
+      ),
+      state(
+        'The Tenant shall pay the Rent on the usual quarter days.',
+        '4. RENT-\r\nThe Tenant shall pay the Rent on the usual quarter days.\r\n5. REPAIR\r\n',
+      ),
+    ]).toEqual(['not_found', 'not_found']);
   });
 });
