@@ -1,8 +1,9 @@
 // capability.ts — pure capability-requirement derivation and detection (issue #134).
 //
 // A "capability requirement" is the handler or adapter an `execution: auto` step needs the executing
-// runner's registry to provide. This module has three pure functions and no I/O:
+// runner's registry to provide. This module has four pure functions and no I/O:
 //   - requirementForStep  : the single requirement a step imposes (mirrors dispatch precedence)
+//   - codeRequirementForStep : #828 unit 2c — what a step that runs code runs, finalizers included
 //   - unmetCapabilities   : Part B pre-flight — requirements the registry can't satisfy (WARN input)
 //   - findCapabilityBlockedSteps : Part A recovery — steps parked by a mid-run not-registered failure
 //
@@ -44,6 +45,42 @@ export function requirementForStep(
     return { step, kind: 'handler', name: stepDef.handler };
   }
   return undefined;
+}
+
+/**
+ * What a step that runs code runs (#828 unit 2c): the one predicate for "this step runs a handler or
+ * an adapter", which the step's record reads at each attempt. `requirementForStep`'s answer, with two
+ * steps it leaves out: an `auto` step whose service is not declared (its attempt fails before any
+ * code is looked up, so it carries `service` and no `name`), and a finalizer that names a handler (a
+ * drain runs it). An adapter step's answer always carries its `service`, and `name` only when the
+ * service names an adapter. `undefined` for a step that runs no code: an agent step, a guard, a bare
+ * `auto` step the host's dispatcher serves.
+ */
+export function codeRequirementForStep(
+  step: string,
+  stepDef: StepDefinition,
+  definition: WorkflowDefinition,
+):
+  | { step: string; kind: 'handler'; name: string }
+  | { step: string; kind: 'adapter'; name?: string; service: string }
+  | undefined {
+  if (stepDef.execution === 'finalizer') {
+    return stepDef.handler !== undefined
+      ? { step, kind: 'handler', name: stepDef.handler }
+      : undefined;
+  }
+  const requirement = requirementForStep(step, stepDef, definition);
+  if (stepDef.execution !== 'auto' || stepDef.uses_service === undefined) {
+    return requirement === undefined
+      ? undefined
+      : { step, kind: 'handler', name: requirement.name };
+  }
+  const service = stepDef.uses_service;
+  // A hand-built service with no `adapter` reaches here as `name: undefined` (the loader refuses it).
+  const adapter: unknown = requirement?.name;
+  return typeof adapter === 'string'
+    ? { step, kind: 'adapter', name: adapter, service }
+    : { step, kind: 'adapter', service };
 }
 
 /**

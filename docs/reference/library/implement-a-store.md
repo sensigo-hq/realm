@@ -2955,6 +2955,7 @@ Names this job reaches whose entry is on another page.
 - [`CapabilityBlock`](read-a-runs-record.md#capabilityblock): The marker on a step that the program which last tried it could not run, because its handler or adapter was not registered there, keyed by step name (`RunRecord.capability_blocks`).
 - [`ChannelEvidence`](read-a-runs-record.md#channelevidence): The account a channel's door says sent an answer, as the channel reports it (`AnswerFacts.channel_evidence`).
 - [`ClaimRecord`](read-a-runs-record.md#claimrecord): A step's claim, as the run keeps it while the step is being run: its deadline, its token and the program that holds it (`RunRecord.claims`).
+- [`CodeSource`](run-and-drive-a-run.md#codesource): Where a registry entry's code came from: Realm's built-in, the built-in adapter catalog, a project's module, or the hosting program.
 - [`Cond`](run-and-drive-a-run.md#cond): A condition a way is offered with: a way offered with a condition is admitted only when the condition is met (`Base.conditions`).
 - [`COND_TAGS`](write-a-handler.md#cond_tags): Who discharges a condition outside Realm: `client`, the MCP client's own approval prompt.
 - [`CondTag`](write-a-handler.md#condtag): Who discharges a condition outside Realm; `client` is the MCP client's own approval prompt (`Cond`'s `client_prompt` member).
@@ -3011,6 +3012,7 @@ Names this job reaches whose entry is on another page.
 - [`Principal`](read-a-runs-record.md#principal): What a door's transport authenticated: an API key by its id, the one shared token of `realm serve`, or the door's typed absence (`EvidenceSnapshot.principal`).
 - [`PRINCIPAL_ABSENCES`](read-a-runs-record.md#principal_absences): Why a door names no principal (`Principal`'s `absent`).
 - [`PrincipalAbsence`](read-a-runs-record.md#principalabsence): One of the words in `PRINCIPAL_ABSENCES`: why a door names no principal for an answer (`Principal`'s `absent`).
+- [`ProjectSource`](run-and-drive-a-run.md#projectsource): Where a project's module came from: how it was declared, and the hashes of its file and its folder, or a typed absence when they could not be read.
 - [`ProtocolConfig`](define-and-load-a-workflow.md#protocolconfig): A workflow's own words for the agent protocol: a quick-start paragraph that replaces the generated one, and rules added as they are written (`WorkflowDefinition.protocol`).
 - [`RateLimitConfig`](write-a-handler.md#ratelimitconfig): How fast Realm calls a service: requests per second, the burst it allows, and how long it waits after a 429 (`ServiceDefinition.rate_limit`).
 - [`ReclaimWay`](run-and-drive-a-run.md#reclaimway): Free a held step so it can run again: a person's act, never an agent's.
@@ -3038,6 +3040,7 @@ Names this job reaches whose entry is on another page.
 - [`StableBoundary`](write-a-handler.md#stableboundary): Where a rendered text stops repeating between runs, in UTF-16 code units.
 - [`StepBrief`](write-a-handler.md#stepbrief): What a `run_step` way says about its step: its kind, its description, the prompt the agent reads, the input schema an agent's answer must fit, and its handler.
 - [`StepCacheDetail`](read-a-runs-record.md#stepcachedetail): A step's cache facts: its state, how they are known, and each request's detail (`EvidenceSnapshot.cache`).
+- [`StepCodeSource`](read-a-runs-record.md#stepcodesource): Which code Realm chose for one attempt of a step that runs a handler or an adapter, as its evidence entry records it (`EvidenceSnapshot.code_source`).
 - [`StepDefinition`](define-and-load-a-workflow.md#stepdefinition): One step of a workflow, as the loaders return it under `WorkflowDefinition.steps`: what it does, how it runs, the steps it waits for, and its input and settings.
 - [`StepDiagnostics`](read-a-runs-record.md#stepdiagnostics): Diagnostic metadata captured during step execution.
 - [`STORED_FILE_CLASSES`](write-a-handler.md#stored_file_classes): The kinds of fault a damaged stored JSON file can have (`UnreadableFileFacts.class`).
