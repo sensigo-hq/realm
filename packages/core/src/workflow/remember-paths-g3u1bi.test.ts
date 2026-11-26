@@ -490,7 +490,7 @@ describe('gap 3 (1b-i), check 7 — a block the loader refuses', () => {
       '    handler: h',
       '    remember:',
       '      as: offers',
-      '      key: [run.params.email]',
+      '      key: [context.resources.nope.email]',
       '      keep_days: 90',
     ]);
     // (a) red when a list key is walked as a map (a finding), or the check throws; (b) prints it.

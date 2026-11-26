@@ -1012,7 +1012,8 @@ export function loadWorkflowFromString(
 
 /**
  * Same as `loadWorkflowFromString`, but prints nothing and returns every collected `LoaderWarning`
- * alongside the definition, and the `input_map` paths not checked.
+ * alongside the definition, and the paths not checked (`input_map`, `when`, template and
+ * `remember`).
  * @public
  */
 export function loadWorkflowFromStringWithDiagnostics(

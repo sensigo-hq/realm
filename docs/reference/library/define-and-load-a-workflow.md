@@ -13,7 +13,7 @@ Where the docs teach it: [Workflow file: top-level fields](../workflow/top-level
 | [`loadWorkflowFromFile`](#loadworkflowfromfile) | function | Loads a WorkflowDefinition from a YAML file on disk. |
 | [`loadWorkflowFromFileWithDiagnostics`](#loadworkflowfromfilewithdiagnostics) | function | Same as `loadWorkflowFromFile`, but prints nothing and returns every collected `LoaderWarning` alongside the definition. |
 | [`loadWorkflowFromString`](#loadworkflowfromstring) | function | Loads a WorkflowDefinition from a YAML string. |
-| [`loadWorkflowFromStringWithDiagnostics`](#loadworkflowfromstringwithdiagnostics) | function | Same as `loadWorkflowFromString`, but prints nothing and returns every collected `LoaderWarning` alongside the definition, and the `input_map` paths not checked. |
+| [`loadWorkflowFromStringWithDiagnostics`](#loadworkflowfromstringwithdiagnostics) | function | Same as `loadWorkflowFromString`, but prints nothing and returns every collected `LoaderWarning` alongside the definition, and the paths not checked (`input_map`, `when`, template and `remember`). |
 | [`AuthGithub`](#authgithub) | interface | GitHub HMAC-SHA256 hex body signature (header 'X-Hub-Signature-256'). |
 | [`AuthHmac`](#authhmac) | interface | Generic HMAC body signature with a configurable header / algorithm / encoding. |
 | [`AuthNone`](#authnone) | interface | Documented, discouraged escape hatch — accept without verification (trusted network / localhost only). |
@@ -114,7 +114,8 @@ function loadWorkflowFromString(content: string, registry?: ExtensionRegistry): 
 function · public
 
 Same as `loadWorkflowFromString`, but prints nothing and returns every collected `LoaderWarning`
-alongside the definition, and the `input_map` paths not checked.
+alongside the definition, and the paths not checked (`input_map`, `when`, template and
+`remember`).
 
 ```ts
 function loadWorkflowFromStringWithDiagnostics(content: string, registry?: ExtensionRegistry, declared?: DeclaredNames): {
