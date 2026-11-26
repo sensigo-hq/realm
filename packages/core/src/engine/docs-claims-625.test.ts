@@ -2070,36 +2070,65 @@ describe('#760 correction 1 — handlers.md, sentence by sentence (05)', () => {
     // #866 correction 1 (C2): what `nearest` reads — run by locate-quote-language-0480.test.ts's
     // "the review’s correction: nearest" cells (`كُتِبَ`, `abcdefgh rent`, `старый замок`,
     // `qqq ndlord shall repair`). #845 1b-ii-c (A4): a word the piece cuts left out, each example run
-    // below (`nearestWords`), and by locate-quote-rules-845.test.ts's "#845 1b-ii-c check 1" and E5.
+    // below, and by locate-quote-rules-845.test.ts's "#845 1b-ii-c check 1" and E5; correction 1: its
+    // edges read as `exact` reads them, each claim of the sentence a row below and the rules each a
+    // cell of locate-quote-rules-845.test.ts's "#845 1b-ii-c correction 1".
     claimOn(
       HANDLERS,
-      "`nearest` is where the longest piece of the quote that is in the document lies (an Arabic or Hebrew piece, and the document, read without their Arabic or Hebrew marks); it is absent when that piece holds no whole word, and on a quote refused for joining text across a blank line. It leaves out a word that piece cuts at either end, so it never starts or ends inside a word of the document; a number keeps its sign or symbol (`€48,000`, `-5`, `4%`), and words joined by punctuation with no space between them count as one (`twenty-four`, `and/or`, `Landlord's`, `U.K.`).",
+      "`nearest` is where the longest piece of the quote that is in the document lies (an Arabic or Hebrew piece, and the document, read without their Arabic or Hebrew marks); it is absent when that piece holds no whole word, and on a quote refused for joining text across a blank line. It leaves out a word or a number that piece cuts at either end (a word cut inside a letter, between it and its accent, is left out whole), with the spaces beside it, so it starts and ends only where a quote could start and end and read `exact`: a word hyphen and the apostrophe of a contraction ending in `'t` join (`twenty-four`, `can't`), while a dash, a slash, any other apostrophe, a comma or an emoji between two words is an edge (`the building—but` keeps `the building`, `Landlord's` is two words), though it never starts right after an apostrophe inside a word (`it's due` gives `due`); a word broken by a hyphen at a line's end is one word; and a number keeps its sign (`€48,000`, `-5`, `4%`). When nothing whole is left, there is no `nearest`.",
     );
     /** The document's text at a not-found quote's `nearest`, or `none`. */
     const at = (quote: string, source: string): string => {
       const n = locateQuote(quote, source).nearest;
       return n === undefined ? 'none' : source.slice(n.start, n.end);
     };
-    // (a) red when a word the piece cuts is kept (`ndlord`, `four`, `and`, `Landlord`, `U`) or a
-    //     sign or symbol at its edge is dropped (`€`, `-`, `%`); (b) prints the text at each.
+    // (a) red when a word the piece cuts is kept (`ndlord`, `four`, `can`, `s`, `ing`, the Russian
+    //     `числа` without its accent), a whole word beside an edge is dropped (`building`, `and`,
+    //     `Landlord`, `rent`, `cake`, `U`), a sign at its edge is dropped (`€`, `-`, `%`), or a
+    //     pointer is given when nothing whole is left; (b) prints the text at each.
     expect({
       cutStart: at('qqq ndlord shall repair', 'The Landlord shall repair the roof.'),
+      accent: at(
+        'Арендная плата вносится до пятого числа',
+        'Арендная плата вносится до пятого числа\u0301.',
+      ),
+      twentyFour: at('qqq four thousand euro', 'a deposit of twenty-four thousand euro'),
+      cant: at('the Tenant can not assign', "the Tenant can't assign"),
+      dash: at(
+        'The Landlord shall insure the building against fire.',
+        'The Landlord shall insure the building—but not the contents—against fire.',
+      ),
+      andOr: at('the Landlord and the Tenant agree', 'the Landlord and/or the Tenant may agree'),
+      possessive: at('the Landlord shall pay', "the Landlord's agent shall pay"),
+      comma: at('The rent zzqx', 'The rent,service charge and rates are due.'),
+      emoji: at('Ben: bring the cake zzqx', 'Ben: bring the cake\u{1f382}\u{1f389}please, Ana.'),
+      uk: at('made in the U zzz', 'made in the U.K. today'),
+      itsDue: at('Ben: it is due today', "Ben: it's due today"),
+      lineEnd: at(
+        'shall keep the building insured against fire.',
+        'The Tenant shall keep the build-\ning insured against fire.',
+      ),
       euro: at('zzz €48,000 a year', 'The rent is €48,000 a year.'),
       minus: at('qqq -5 degrees at night', 'The reading is -5 degrees today.'),
       percent: at('the rate of 4% qqq', 'Interest at the rate of 4% per annum.'),
-      twentyFour: at('qqq four thousand euro', 'a deposit of twenty-four thousand euro'),
-      andOr: at('the Landlord and the Tenant agree', 'the Landlord and/or the Tenant may agree'),
-      possessive: at('the Landlord shall pay', "the Landlord's agent shall pay"),
-      uk: at('made in the U zzz', 'made in the U.K. today'),
+      nothingWhole: at('qqq VID-19 zz', 'the COVID-19 cases rose'),
     }).toEqual({
       cutStart: 'shall repair',
+      accent: 'Арендная плата вносится до пятого',
+      twentyFour: 'thousand euro',
+      cant: 'the Tenant',
+      dash: 'The Landlord shall insure the building',
+      andOr: 'the Landlord and',
+      possessive: 'the Landlord',
+      comma: 'The rent',
+      emoji: 'Ben: bring the cake',
+      uk: 'made in the U',
+      itsDue: 'due today',
+      lineEnd: 'insured against fire',
       euro: '€48,000 a year',
       minus: '-5 degrees',
       percent: 'the rate of 4%',
-      twentyFour: 'thousand euro',
-      andOr: 'the Landlord',
-      possessive: 'the',
-      uk: 'made in the',
+      nothingWhole: 'none',
     });
     claimOn(
       HANDLERS,
@@ -5812,7 +5841,7 @@ describe('#845 1b-ii-c — the words, each executed', () => {
   it("the CHANGELOG's Changed line: `nearest` without a cut word, the warning's cut, the step-level refusal", async () => {
     claimOn(
       CL,
-      "check_quotes gives a not-found quote's `nearest` without a word the piece it covers cuts at either end, never part of a word, and keeps a number's sign or symbol; its warning cuts a long quote and a field label before a letter or symbol the cut would split (an accented letter, a joined emoji), not inside it, unless one alone runs past the 80th character; and a source or candidates step whose output is not an object with fields is refused with words saying what it gave and to start a new run (#845).",
+      "check_quotes gives a not-found quote's `nearest` without a word or number the piece it covers cuts at either end, judged as exact judges a quote's edges and never starting right after an apostrophe inside a word, and keeps a number's sign; it is now given between two dashes and withheld when nothing whole is left; its warning cuts a long quote and a field label before a letter or symbol the cut would split (an accented letter, a joined emoji), not inside it, unless one alone runs from its start past the 80th character; and a source or candidates step whose output is not an object with fields is refused with words saying what it gave and to start a new run (#845).",
     );
     const nearAt = (quote: string, source: string): string => {
       const n = locateQuote(quote, source).nearest;
@@ -5838,6 +5867,7 @@ describe('#845 1b-ii-c — the words, each executed', () => {
             { field: 'accented', value: 'v', quote: `${x(79)}e\u0301yy` },
             { field: 'emoji', value: 'v', quote: `${x(79)}\u{1f468}\u200d\u{1f469}yy` },
             { field: 'alone', value: 'v', quote: `e${'\u0301'.repeat(100)}yy` },
+            { field: 'later', value: 'v', quote: `xe${'\u0301'.repeat(100)}yy` },
             { field: `${x(79)}e\u0301yy`, value: 'v', quote: 'nothing like it' },
           ],
         },
@@ -5857,10 +5887,21 @@ describe('#845 1b-ii-c — the words, each executed', () => {
     // (a) red when one of the line's examples reads otherwise; (b) prints each read.
     expect({
       cutWord: nearAt('qqq ndlord shall repair', 'The Landlord shall repair the roof.'),
+      // correction 1: the edges as `exact` judges them (a dash), the start after an apostrophe,
+      // given between two dashes, withheld when nothing whole is left
+      asExact: nearAt('The rent zzqx', 'The rent—payable'),
+      apostrophe: nearAt('Ben: it is due today', "Ben: it's due today"),
+      betweenDashes: nearAt(
+        'The rent is payable quarterly',
+        'The rent—payable quarterly—is due on the usual days.',
+      ),
+      nothingWhole: nearAt('qqq VID-19 zz', 'the COVID-19 cases rose'),
       sign: nearAt('zzz €48,000 a year', 'The rent is €48,000 a year.'),
       accented: (warn ?? '').includes(`accented — "${x(79)}…" (`),
       emoji: (warn ?? '').includes(`emoji — "${x(79)}…" (`),
       alone: (warn ?? '').includes(`alone — "e${'\u0301'.repeat(79)}…" (`),
+      // "from its start": the same letter after an `x` is cut before it, not at the 80th
+      later: (warn ?? '').includes(`later — "x…" (`),
       fieldLabel: (warn ?? '').includes(`; ${x(79)}… — "nothing like it"`),
       source: [
         source.includes("the source step 'fetch' gave no output (got an empty list)"),
@@ -5874,10 +5915,15 @@ describe('#845 1b-ii-c — the words, each executed', () => {
       ],
     }).toEqual({
       cutWord: 'shall repair',
+      asExact: 'The rent',
+      apostrophe: 'due today',
+      betweenDashes: 'payable quarterly',
+      nothingWhole: 'none',
       sign: '€48,000 a year',
       accented: true,
       emoji: true,
       alone: true,
+      later: true,
       fieldLabel: true,
       source: [true, true],
       candidates: [true, true],
