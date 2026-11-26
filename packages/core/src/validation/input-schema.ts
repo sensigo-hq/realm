@@ -72,6 +72,19 @@ export function asyncSchemaValidity(value: unknown): string {
 const SHOWN_STRING_ESCAPES = /[\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069`]/g;
 
 /**
+ * `text` with every character the house's shown-string rule escapes written out as `\uXXXX`
+ * (`SHOWN_STRING_ESCAPES`): what a shown string goes through after `JSON.stringify`, which already
+ * escapes C0 controls, the quote and the backslash. The one copy of the rule (#625 named keys 2b,
+ * correction 1); `replace` starts each call afresh, so nothing carries over between calls.
+ */
+export function escapeShownString(text: string): string {
+  return text.replace(
+    SHOWN_STRING_ESCAPES,
+    (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`,
+  );
+}
+
+/**
  * The `$async` value as written, for the validity clause. A string is quoted, so the refused
  * string `"false"` never reads as the accepted boolean `false`; it is cut at 30 code points (a
  * `…` after the closing quote says so) and every character a terminal or a Markdown code span
@@ -81,10 +94,7 @@ const SHOWN_STRING_ESCAPES = /[\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u20
 function renderAsyncValue(value: unknown): string {
   if (typeof value !== 'string') return renderAuthoredValue(value);
   const codePoints = Array.from(value);
-  const quoted = JSON.stringify(codePoints.slice(0, 30).join('')).replace(
-    SHOWN_STRING_ESCAPES,
-    (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`,
-  );
+  const quoted = escapeShownString(JSON.stringify(codePoints.slice(0, 30).join('')));
   return codePoints.length > 30 ? `${quoted}…` : quoted;
 }
 

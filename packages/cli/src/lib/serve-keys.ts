@@ -21,7 +21,8 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
-import { escapeC1, writerCtx } from '../output/writer.js';
+import { escapeShownString } from '@sensigo/realm';
+import { writerCtx } from '../output/writer.js';
 import { typedWord } from './callback/master-key-words.js';
 
 /** The key file's name in a Realm home. */
@@ -323,9 +324,14 @@ export function keyPath(path: string): string {
   return writerCtx().cmd(typedWord(path));
 }
 
-/** A typed key name as a refusal quotes it: every control character escaped, never the raw byte. */
+/**
+ * A typed key name (or a key's workflow id) as a line shows it: JSON's escaping of the string, then
+ * the house's shown-string escapes (core's one copy, #625 named keys 2b correction 1), so every
+ * control character, and each character that overrides or isolates the text's direction, is written
+ * out, never the raw character.
+ */
 export function escapedKeyName(name: string): string {
-  return escapeC1(JSON.stringify(name).slice(1, -1));
+  return escapeShownString(JSON.stringify(name).slice(1, -1));
 }
 
 /**

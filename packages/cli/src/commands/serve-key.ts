@@ -126,12 +126,22 @@ function limitsOfFlags(
 }
 
 /** A key's limits as `list` prints them: `limits: read-only; workflows invoices`. */
+/**
+ * A key's workflow id as `key list` shows it (correction 1): bare when every character is an ASCII
+ * letter, digit, `.`, `_` or `-` (core's `displayId` set), else a JSON string in double quotes, so an
+ * id holding a separator, a space or any other character never reads as two ids or a second limit.
+ * Both through `escapedKeyName`. The test is anchored and not global, so it keeps no state.
+ */
+function shownWorkflowId(id: string): string {
+  return /^[A-Za-z0-9._-]+$/.test(id) ? escapedKeyName(id) : `"${escapedKeyName(id)}"`;
+}
+
 function limitsWords(limits: ServeKeyLimits): string {
   const parts = [
     ...(limits.read_only === true ? ['read-only'] : []),
     ...(limits.tools !== undefined ? [`tools ${limits.tools.join(', ')}`] : []),
     ...(limits.workflows !== undefined
-      ? [`workflows ${limits.workflows.map(escapedKeyName).join(', ')}`]
+      ? [`workflows ${limits.workflows.map(shownWorkflowId).join(', ')}`]
       : []),
   ];
   return `limits: ${parts.join('; ')}`;
