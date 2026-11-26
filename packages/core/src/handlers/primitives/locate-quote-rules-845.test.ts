@@ -2662,3 +2662,322 @@ describe('#845 1b-ii-a check 6: a candidate R-F or S1/F1 refuses is neither acce
     expect(misses(rows)).toEqual([]);
   });
 });
+
+// ---------------------------------------------------------------------------------------------------
+// #845 unit 1b-ii-b (`prompts/fix-845-1b-ii-b-cut-short.md`): `cut_short` is read one way in every
+// state (R-G, D1), checks 1–4. Text outside ASCII is written as code points.
+
+/** A quote's state, `@` and its cut-short offsets when marked, then its parts. */
+const cutRead = (quote: string, source: string): string => {
+  const c = lq(quote, source);
+  const at = c.cut_short === true ? `@${(c.cut_short_at ?? []).join(',')}` : '';
+  return `${c.state}${at} ${c.parts.map((p) => `${p.start}-${p.end}`).join(',')}`;
+};
+const IIB_A = 'The rent is payable at approx.';
+const IIB_S = `${IIB_A} 412 pounds a month. The Tenant shall pay it on time.`;
+const IIB_DOTS = ch(0x2026);
+
+describe('#845 1b-ii-b check 1: an `exact` quote ends a sentence at its last character other than whitespace and invisible characters', () => {
+  it('marked right after its stop: `approx.` before ` 412`, `due.` before ` the`, `Pay now!` before ` said`; `due.` before ` The` stays unmarked', () => {
+    const rows: Row[] = [
+      ['`approx.` before ` 412`', cutRead(IIB_A, IIB_S), 'exact@30 0-30'],
+      [
+        '`due.` before ` the`',
+        cutRead('The rent is due.', 'The rent is due. the Tenant shall pay it.'),
+        'exact@16 0-16',
+      ],
+      [
+        '`due.` before ` The`',
+        cutRead('The rent is due.', 'The rent is due. The Tenant shall pay it.'),
+        'exact 0-16',
+      ],
+      [
+        '`Pay now!` before ` said`',
+        cutRead('Pay now!', 'Pay now! said the Landlord.'),
+        'exact@8 0-8',
+      ],
+    ];
+    // (1) red when the stop stops marking, or a capital after it starts to; (2) prints each
+    //     differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it('an invisible character or whitespace the quote carries after its stop changes neither the mark nor its offset: U+200B, U+034F, U+FEFF, a space, a space and U+200B', () => {
+    const carried = (tail: string, doc: string) => cutRead(`${IIB_A}${tail}`, `${IIB_A}${doc}`);
+    const rows: Row[] = [
+      ['U+200B', carried(ch(0x200b), `${ch(0x200b)} 412 pounds a month.`), 'exact@30 0-31'],
+      ['U+034F', carried(ch(0x34f), `${ch(0x34f)} 412 pounds a month.`), 'exact@30 0-31'],
+      ['U+FEFF', carried(ch(0xfeff), `${ch(0xfeff)} 412 pounds a month.`), 'exact@30 0-31'],
+      ['a space (AT1)', cutRead(`${IIB_A} `, IIB_S), 'exact@30 0-31'],
+      [
+        'a space, then U+200B',
+        carried(` ${ch(0x200b)}`, ` ${ch(0x200b)}412 pounds a month.`),
+        'exact@30 0-32',
+      ],
+    ];
+    // (1) red when the quote is trimmed by `trimEnd` (U+FEFF counted, U+034F and U+200B kept: their
+    //     rows read unmarked), the read stops at an invisible character, or the mark falls at the
+    //     quote's end (31 or 32); (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it('the read: past an invisible character in the document only (IV1), and past closing marks and blanks in any order (OR1 `. ) and`, OR2 `.) and`)', () => {
+    const rent = 'The Tenant shall pay the Rent.';
+    const rows: Row[] = [
+      ['IV1', cutRead(IIB_A, `${IIB_A}${ch(0x200b)} 412 pounds a month.`), 'exact@30 0-30'],
+      ['OR1', cutRead(rent, `${rent} ) and the service charge.`), 'exact@30 0-30'],
+      ['OR2', cutRead(rent, `${rent}) and the service charge.`), 'exact@30 0-30'],
+    ];
+    // (1) red when the read stops at an invisible character (IV1), or takes closing marks before
+    //     blanks only (OR1); (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it('a `.` L1 reads as an abbreviation, an initial, an initialism or a word with no letter or digit ends no sentence (`e.g.`, `Clause No.`, `the U.S.`, `20 °.`, `§.`); `m².` does', () => {
+    const rows: Row[] = [
+      [
+        '`e.g.`',
+        cutRead(
+          'such as rates, e.g.',
+          'The Tenant pays outgoings such as rates, e.g. the water rates.',
+        ),
+        'exact 26-45',
+      ],
+      [
+        '`Clause No.`',
+        cutRead(
+          'as set out in Clause No.',
+          'The rent is as set out in Clause No. 5 of this lease.',
+        ),
+        'exact 12-36',
+      ],
+      [
+        '`the U.S.`',
+        cutRead(
+          'the rules of the U.S.',
+          'The parties follow the rules of the U.S. and the parties agree.',
+        ),
+        'exact 19-40',
+      ],
+      [
+        '`20 °.`',
+        cutRead(
+          `The heating rises to 20 ${ch(0xb0)}.`,
+          `The heating rises to 20 ${ch(0xb0)}. the Landlord keeps it on.`,
+        ),
+        'exact 0-26',
+      ],
+      [
+        '`§.`',
+        cutRead(
+          `as provided in ${ch(0xa7)}.`,
+          `The notice is as provided in ${ch(0xa7)}. the parties agree.`,
+        ),
+        'exact 14-31',
+      ],
+      [
+        '`m².`',
+        cutRead(
+          `The floor area is 5 m${ch(0xb2)}.`,
+          `The floor area is 5 m${ch(0xb2)}. the Tenant accepts it.`,
+        ),
+        'exact@23 0-23',
+      ],
+    ];
+    // (1) red when L1 is not called on the quote (the first five read marked), or `m².` stops
+    //     ending a sentence; (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it('mid-sentence: `due.` then a line break then a lowercase word, and `.”` then a lowercase word, stay unmarked', () => {
+    const rows: Row[] = [
+      [
+        '`due.` then a line break',
+        cutRead('The rent is due.', 'The rent is due.\nthe Tenant shall pay it.'),
+        'exact 0-16',
+      ],
+      [
+        '`.”` then lowercase',
+        cutRead(
+          `The rent is ${ch(0x201c)}due.${ch(0x201d)}`,
+          `The rent is ${ch(0x201c)}due.${ch(0x201d)} the Tenant said.`,
+        ),
+        'exact 0-18',
+      ],
+    ];
+    // (1) red when a line break is read as a blank after the stop, or a closing mark the quote
+    //     carries is read as its stop; (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+});
+
+describe('#845 1b-ii-b check 2: a `reformatted` quote is read the same way', () => {
+  const R = 'the rent is payable at approx. 412 pounds a month and the tenant shall pay';
+
+  it("at the quote's end, the document's own stop then a digit or a lowercase word marks it, an invisible character in the document only too (IV2)", () => {
+    const rows: Row[] = [
+      ['own `.` then a digit', cutRead(IIB_A, R), 'reformatted@29 0-30'],
+      [
+        'own `.` then lowercase',
+        cutRead('The Rent is payable.', 'the rent is payable. monthly in advance'),
+        'reformatted@19 0-20',
+      ],
+      [
+        'IV2',
+        cutRead('THE RENT IS DUE.', `The rent is due.${ch(0x200b)} the Tenant shall pay it.`),
+        'reformatted@15 0-16',
+      ],
+    ];
+    // (1) red when the document's stop is read as the sentence's end (every row reads unmarked);
+    //     (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it('where the document has no stop: marked where the line goes on, unmarked before a line break', () => {
+    const rows: Row[] = [
+      [
+        'the line goes on',
+        cutRead('The Rent is payable.', 'the rent is payable monthly in advance'),
+        'reformatted@19 0-19',
+      ],
+      [
+        'a line break',
+        cutRead('The Rent is payable.', 'the rent is payable\nmonthly in advance'),
+        'reformatted 0-19',
+      ],
+    ];
+    // (1) red when the no-stop read changes; (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it("the document's own stop inside the quote, the quote going on with the document's next words, marks nothing (IN1, IN3, CN2)", () => {
+    const rows: Row[] = [
+      [
+        'IN1 `APPROX. 412 POUNDS`',
+        cutRead(
+          'THE RENT IS PAYABLE AT APPROX. 412 POUNDS A MONTH',
+          'The rent is payable at approx. 412 pounds a month and the Tenant shall pay it on time.',
+        ),
+        'reformatted 0-49',
+      ],
+      [
+        'IN3 `p.a. payable`',
+        cutRead(
+          `The Tenant shall pay the rent of 25,000 euro p.a. payable quarterly in advance ${IIB_DOTS} The Landlord shall insure the Building.`,
+          'The Tenant shall pay the rent of 25,000 euro p.a. payable quarterly in advance. The Landlord shall insure the Building.',
+        ),
+        'reformatted 0-119',
+      ],
+      [
+        'CN2 `1. pay the rent; 2. keep the Premises`',
+        cutRead(
+          'THE TENANT COVENANTS AS FOLLOWS: 1. PAY THE RENT; 2. KEEP THE PREMISES IN REPAIR',
+          'The Tenant covenants as follows: 1. pay the rent; 2. keep the Premises in repair.',
+        ),
+        'reformatted 0-80',
+      ],
+    ];
+    // (1) red when the own-stop rule is applied inside the quote (each row reads marked at its inner
+    //     stop); (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+});
+
+describe('#845 1b-ii-b check 3: a `stitched` quote is read the same way, at every part’s end', () => {
+  const T = (after: string) =>
+    `The Tenant shall pay the rent on the usual quarter days. The Tenant shall also pay the insurance rent on demand. The Landlord shall insure the Building.${after}`;
+  const TQ = `The Tenant shall pay the rent on the usual quarter days. ${IIB_DOTS} The Landlord shall insure the Building.`;
+  const tail = ' The Tenant shall pay it on time.';
+
+  it("the quote's last part: its own `.` then lowercase marks it at its end (T2), then a capital does not (T1); no stop and the text goes on marks every such end (T3)", () => {
+    const rows: Row[] = [
+      ['T2', cutRead(TQ, T(' the Tenant shall repair it.')), 'stitched@151 0-56,113-152'],
+      ['T1', cutRead(TQ, T(' The Tenant shall repair it.')), 'stitched 0-56,113-152'],
+      [
+        'T3',
+        cutRead(
+          `The Tenant shall pay the rent. ${IIB_DOTS} The Landlord shall insure the Building.`,
+          'The Tenant shall pay the rent on the usual quarter days. The Landlord shall insure the Building and the roof.',
+        ),
+        'stitched@29,95 0-29,57-95',
+      ],
+    ];
+    // (1) red when the document's stop is read as the sentence's end (T2 reads unmarked), or the
+    //     no-stop read changes; (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it("a part that is not the quote's last: `approx.` before ` 412` (NF1) marked at 29, `due.` before ` the` (NF2) at 38, `due.` before ` The` (NF3) not; and a `stitched_out_of_order` part's end", () => {
+    const rows: Row[] = [
+      [
+        'NF1',
+        cutRead(
+          `${IIB_A} ${IIB_DOTS} The Tenant shall pay it on time.`,
+          `${IIB_A} 412 pounds a month.${tail}`,
+        ),
+        'stitched@29 0-30,51-83',
+      ],
+      [
+        'NF2',
+        cutRead(
+          `The rent is payable in full and is due. ${IIB_DOTS} The Tenant shall pay it on time.`,
+          `The rent is payable in full and is due. the deposit is held apart.${tail}`,
+        ),
+        'stitched@38 0-39,67-99',
+      ],
+      [
+        'NF3',
+        cutRead(
+          `The rent is payable in full and is due. ${IIB_DOTS} The Tenant shall pay it on time.`,
+          `The rent is payable in full and is due. The deposit is held apart.${tail}`,
+        ),
+        'stitched 0-39,67-99',
+      ],
+      [
+        'out of order',
+        cutRead(
+          `The Landlord shall insure the Building. ${IIB_DOTS} ${IIB_A}`,
+          `${IIB_A} 412 pounds a month. The Landlord shall insure the Building.`,
+        ),
+        'stitched_out_of_order@29 51-90,0-30',
+      ],
+    ];
+    // (1) red when the own-stop rule is read only at the quote's last piece (NF1, NF2 and the
+    //     out-of-order part read unmarked), or the document's stop is read as the sentence's end;
+    //     (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it('a label inside a part, the quote going on with the document’s next words, marks nothing (CN1 `… 2. keep the Premises in repair`)', () => {
+    // (a) red when the own-stop rule is applied inside a part (the label's piece `2` reads marked at
+    //     51); (b) prints the read.
+    expect(
+      cutRead(
+        `The Tenant covenants as follows ${IIB_DOTS} 2. keep the Premises in repair`,
+        'The Tenant covenants as follows: 1. pay the rent; 2. keep the Premises in repair.',
+      ),
+    ).toBe('stitched 0-31,50-80');
+  });
+});
+
+describe('#845 1b-ii-b check 4: walk M8 places a part by the one read', () => {
+  it("T4: the last piece's first place is followed by `. the`, its second by `. The`: the parts move to the second, unmarked; with `. the` after both, the first placement stands, marked at 151", () => {
+    const TQ = `The Tenant shall pay the rent on the usual quarter days. ${IIB_DOTS} The Landlord shall insure the Building.`;
+    const M8 =
+      'The Tenant shall pay the rent on the usual quarter days. The Tenant shall also pay the insurance rent on demand. The Landlord shall insure the Building. the Tenant pays for it. The Landlord shall insure the Building. The Tenant shall repair the roof.';
+    const rows: Row[] = [
+      ['T4', cutRead(TQ, M8), 'stitched 0-56,177-216'],
+      [
+        'both `. the`',
+        cutRead(
+          TQ,
+          M8.replace('Building. The Tenant shall repair', 'Building. the Tenant shall repair'),
+        ),
+        'stitched@151 0-56,113-152',
+      ],
+    ];
+    // (1) red when walk M8's `cutOf` is left on the old read (T4 stays at 113-152, unmarked); (2)
+    //     prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+});
