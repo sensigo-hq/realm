@@ -19,6 +19,7 @@ import {
   KNOWN_RETRY_KEYS,
   KNOWN_GATE_KEYS,
   SERVICE_TRUST_LEVELS,
+  TRIGGER_RULES,
   isGateTrust,
   classifyStepTrust,
   buildTrustRefusal,
@@ -44,6 +45,12 @@ import { checkTemplates } from './template-check.js';
 import { templateLeaves } from './template-paths.js';
 import type { ExtensionRegistry } from '../extensions/registry.js';
 import { normalizeTriggerFilter, validateTriggerStructure } from './trigger-schema.js';
+import {
+  CONTEXT_WRAPPER_FORMATS,
+  EXECUTION_KINDS,
+  FINALIZER_TRIGGERS,
+  SERVICE_METHODS,
+} from './word-lists.js';
 import { checkParamsMap } from './params-map-check.js';
 import { isCredentialName } from '../utils/redaction.js';
 import { splitComparison, isPathShaped } from '../engine/comparison-expr.js';
@@ -663,9 +670,10 @@ export const CURRENT_WORKFLOW_SCHEMA_VERSION = 1;
  * Ajv-strict schema for one `services:` entry — CLOSED key set (`adapter`, `trust`,
  * `rate_limit`). `auth`/`token_from` get a targeted migration rejection BEFORE this schema
  * runs (removed in v0.14.0 — credentials bind in the deployment manifest). rate_limit's
- * field-level numeric rules keep their existing dedicated checks below.
+ * field-level numeric rules keep their existing dedicated checks below. Exported for the published
+ * schema of the workflow file (`workflow-schema.ts`, CP-3a-i), which embeds it.
  */
-const SERVICE_ENTRY_JSON_SCHEMA = {
+export const SERVICE_ENTRY_JSON_SCHEMA = {
   type: 'object',
   additionalProperties: false,
   required: ['adapter'],
@@ -676,7 +684,7 @@ const SERVICE_ENTRY_JSON_SCHEMA = {
   },
 };
 
-const VALID_EXECUTIONS = new Set(['auto', 'agent', 'guard', 'finalizer']);
+const VALID_EXECUTIONS = new Set<string>(EXECUTION_KINDS);
 // issue #517 (the drive-flip): the two kind-prohibition sets are DERIVED from the consumption
 // registry — every key whose cell on the kind is prohibited WITHOUT an except arm. Their meaning
 // upgraded with #517 from "the loop's array" to "the prohibited set": they now also carry the
@@ -686,34 +694,22 @@ const VALID_EXECUTIONS = new Set(['auto', 'agent', 'guard', 'finalizer']);
 // arrays are deleted; the registry-driven mint below is the single enforcement mechanism.
 export const FINALIZER_PROHIBITED_STEP_KEYS: readonly string[] = prohibitedKeysFor('finalizer');
 export const GUARD_PROHIBITED_STEP_KEYS: readonly string[] = prohibitedKeysFor('guard');
-const VALID_FINALIZER_TRIGGERS = new Set([
-  'complete',
-  'fail',
-  'abort',
-  'always',
-  // issue #302: author-opt-in — fires IN ADDITION to complete/always on a complete seal that
-  // still carries failed_steps (a designed-recovery seal, #304's own class); never on a clean
-  // complete.
-  'completed_with_failed_steps',
-]);
-// issue #220 (PR-2): the full set of recognized validation_exhaustion sub-keys.
-const KNOWN_VALIDATION_EXHAUSTION_KEYS = ['threshold', 'mode', 'default_output'];
-const VALID_SERVICE_METHODS = new Set(['fetch', 'create', 'update', 'delete']);
-const VALID_TRIGGER_RULES = new Set<TriggerRule>([
-  'all_success',
-  'all_failed',
-  'all_done',
-  'one_failed',
-  'one_success',
-  'none_failed',
-]);
+// The words of these four sets and of the trigger rules live once each in `word-lists.ts` and
+// `TRIGGER_RULES` (CP-3a-i), in the order their messages print them.
+const VALID_FINALIZER_TRIGGERS = new Set<string>(FINALIZER_TRIGGERS);
+// issue #220 (PR-2): the full set of recognized validation_exhaustion sub-keys. Exported for the
+// published schema of the workflow file (CP-3a-i).
+export const KNOWN_VALIDATION_EXHAUSTION_KEYS = ['threshold', 'mode', 'default_output'];
+const VALID_SERVICE_METHODS = new Set<string>(SERVICE_METHODS);
+const VALID_TRIGGER_RULES = new Set<TriggerRule>(TRIGGER_RULES);
 
 /**
  * JSON Schema (Ajv strict) for the top-level `extensions` key: a non-empty module path or a
  * non-empty array of them. Relative-path enforcement is a separate explicit check (isAbsolute)
- * so the error message can be actionable.
+ * so the error message can be actionable. Exported for the published schema of the workflow file
+ * (CP-3a-i), which embeds it.
  */
-const EXTENSIONS_JSON_SCHEMA = {
+export const EXTENSIONS_JSON_SCHEMA = {
   anyOf: [
     { type: 'string', minLength: 1 },
     { type: 'array', minItems: 1, items: { type: 'string', minLength: 1 } },
@@ -966,8 +962,9 @@ export function loadWorkflowFromFile(
  * Opt-in for callers that want to surface warnings
  * themselves (validate/register/watch/`--strict`) instead of the default console.warn behavior.
  * `notChecked` (fix 1, unit 1) lists the `input_map` paths into data the workflow declares no
- * shape for, which `validate` reports; `notes` (gap 2, unit (iv-a1)) the placeholders that put a
- * step's failure message into a prompt or a gated step's instructions, which `validate` prints.
+ * shape for, which `validate` reports; `notes` (gap 2, unit (iv-a1)) the placeholders and
+ * `input_map` leaves that put a step's failure message into a prompt, a gated step's instructions
+ * or an `input_map`, which `validate` prints.
  * @public
  */
 export function loadWorkflowFromFileWithDiagnostics(
@@ -3917,7 +3914,7 @@ function parseWorkflowString(
     // thrown: the accumulator mints `Invalid workflow:` once and the #425 per-line grammar composes.
     const contextWrapperRaw = doc['context_wrapper'];
     if (contextWrapperRaw !== undefined) {
-      const VALID_WRAPPER_FORMATS = new Set(['xml', 'brackets', 'none']);
+      const VALID_WRAPPER_FORMATS = new Set<string>(CONTEXT_WRAPPER_FORMATS);
       if (!VALID_WRAPPER_FORMATS.has(contextWrapperRaw as string)) {
         errors.push(
           withTopLevelLine(

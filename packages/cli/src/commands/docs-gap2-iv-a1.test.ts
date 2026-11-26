@@ -48,7 +48,7 @@ describe('gap 2 (iv-a1), check 9 — the words', () => {
     // note cells.
     claim(
       'docs/reference/workflow/agent-step-controls.md',
-      'A later step reads why the request failed as `$settlement.<step>.message` (in a template or an `input_map`, `context.resources.$settlement.<step>.message`): in its prompt, its approval question or its `input_map`. `realm workflow validate` prints a note when it reaches a prompt. An approval question hides every secret Realm knows of in it; a prompt `realm agent` sends is masked as every prompt it sends is; an `input_map` hands the text on as the record keeps it.',
+      'A later step reads why the request failed as `$settlement.<step>.message` (in a template or an `input_map`, `context.resources.$settlement.<step>.message`): in its prompt, its approval question or its `input_map`. `realm workflow validate` prints a note when it reaches a prompt or an `input_map`. An approval question hides every secret Realm knows of in it; a prompt `realm agent` sends is masked as every prompt it sends is; an `input_map` hands the text on as the record keeps it.',
     );
   });
 
@@ -64,7 +64,7 @@ describe('gap 2 (iv-a1), check 9 — the words', () => {
     // Executed by validate's note cells (file mode, --json `notes`, --strict passes).
     claim(
       'docs/reference/workflow/loader-diagnostics.md',
-      "**Notes.** `realm workflow validate` prints a note, marked `ℹ`, when a `prompt` or a gated step's `instructions` puts a step's failure message (`$settlement.<step>.message`) into the text: that text is the failure's own. A note is not a warning and never counts toward `--strict`; `--json` lists the notes under `notes`. Added after version 0.50.0.",
+      "**Notes.** `realm workflow validate` prints a note, marked `ℹ`, when a `prompt` or a gated step's `instructions` puts a step's failure message (`$settlement.<step>.message`) into the text, or an `input_map` hands it to a step that uses its map: that text is the failure's own. A note is not a warning and never counts toward `--strict`; `--json` lists the notes under `notes`. Added after version 0.50.0.",
     );
     // Wording correction 1, item 2: the `--json` example and its field table. Executed by validate's
     // `--json` cells (the notes, each with its four fields); `notes` follows `not_checked` and is
@@ -75,7 +75,7 @@ describe('gap 2 (iv-a1), check 9 — the words', () => {
     );
     claim(
       'docs/reference/workflow/loader-diagnostics.md',
-      '| `notes` | The notes: `step`, `placement` (`prompt` or `instructions`), `reads` (the path) and `message`; empty when the file could not be loaded. Added after version 0.50.0. |',
+      '| `notes` | The notes: `step`, `placement` (`prompt`, `instructions` or `input_map`), `reads` (the path) and `message`; empty when the file could not be loaded. Added after version 0.50.0. |',
     );
   });
 
@@ -113,7 +113,7 @@ describe('gap 2 (iv-a1), check 9 — the words', () => {
     // Executed by the drive cells, the loader cells and validate's note cells.
     claim(
       'CHANGELOG.md',
-      "- **A later step can read why a step failed.** `$settlement.<step>.message` holds the failure's own message (a provider's, a handler's, an adapter's or Realm's own), for a step that failed or took its default answer after its model request failed. An approval question, and so the Slack post, can show it, with every secret Realm knows of hidden (your home folder and user name aside when a `realm` command other than `realm mcp` and `realm serve` opens the question); a prompt or an `input_map` can take it. `realm workflow validate` prints a note when it reaches a prompt, listed under `notes` in `--json`; `loadWorkflowFromFileWithDiagnostics` and `loadWorkflowFromStringWithDiagnostics` return those notes beside `notChecked`. Each note is a `LoaderNote`.",
+      "- **A later step can read why a step failed.** `$settlement.<step>.message` holds the failure's own message (a provider's, a handler's, an adapter's or Realm's own), for a step that failed or took its default answer after its model request failed. An approval question, and so the Slack post, can show it, with every secret Realm knows of hidden (your home folder and user name aside when a `realm` command other than `realm mcp` and `realm serve` opens the question); a prompt or an `input_map` can take it. `realm workflow validate` prints a note when it reaches a prompt or an `input_map`, listed under `notes` in `--json`; `loadWorkflowFromFileWithDiagnostics` and `loadWorkflowFromStringWithDiagnostics` return those notes beside `notChecked`. Each note is a `LoaderNote`.",
     );
   });
 });

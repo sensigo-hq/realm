@@ -232,7 +232,6 @@ describe('gap 2 (iv-a1), check 8 at the loader — the notes', () => {
 
   it.each([
     ['a gate message', workflow(gated(`{{ ${PATH} }}`), { rule: 'one_failed' })],
-    ['an input_map', workflow(inputMap, { rule: 'one_failed' })],
     ['a when', workflow(['    when: "$settlement.classify.message == \'x\'"'])],
     [
       'an ungated step’s instructions',
@@ -241,6 +240,14 @@ describe('gap 2 (iv-a1), check 8 at the loader — the notes', () => {
   ])('no note for %s', (_n, yaml) => {
     // (a) red when the note is made for any placement; (b) prints the notes.
     expect(load(yaml).notes).toEqual([]);
+  });
+
+  it('an input_map: one note (gap 2, unit (iv-a3), check 1 at the loader)', () => {
+    const got = load(workflow(inputMap, { rule: 'one_failed' }));
+    // (a) red when the note is not built for input_map leaves; (b) prints the notes.
+    expect(got.notes).toEqual([
+      `reader|input_map|${PATH}|Step 'reader' is handed a failure message (\`${PATH}\`) in its input_map at 'why': the text is the failure's own, and whatever the step copies of it into its output is shown to assistants even under --failure-text hidden.`,
+    ]);
   });
 
   it('no note for a placement the loader refuses (a step name that does not exist)', () => {

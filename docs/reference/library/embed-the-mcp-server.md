@@ -53,6 +53,7 @@ Where the docs teach it: [Core library: serve MCP from your own program](../core
 | [`LOAD_ERROR_CODES`](#load_error_codes) | const | Every code a reply's `basis.enactor.error_code` can hold: each error code, then `uncoded`. |
 | [`NOT_PRICED_CAUSES`](#not_priced_causes) | const | Why a request has no price. |
 | [`PRICE_SOURCE_CLASSES`](#price_source_classes) | const | Every class of source a priced request can name (`PricedBy.source_class`), in the type's order. |
+| [`READING_TOOLS`](#reading_tools) | const | The reading tools: every tool whose annotation is `readOnlyHint: true`, in the table's order. |
 
 ## Functions
 
@@ -314,7 +315,7 @@ interface PriceUsage {
 
 ### RealmMcpServerOptions
 
-interface · public · from `@sensigo/realm-mcp`
+interface · public (beta: limits): those members may change in a minor release until they settle · from `@sensigo/realm-mcp`
 
 What `createRealmMcpServer` is given: the four stores, which it requires, and the registry,
 prices and other settings it may take.
@@ -344,6 +345,12 @@ interface RealmMcpServerOptions {
     onSessionWithoutForms?: () => void;
     deprecationNotifications?: boolean;
     principal?: Principal;
+    limits?: {
+        caller: string;
+        readOnly?: true;
+        tools?: readonly string[];
+        workflows?: readonly string[];
+    };
     monotonicNow?: () => number;
 }
 ```
@@ -827,6 +834,7 @@ const LOAD_ERROR_CODES: readonly [
     "VALIDATION_CALLER_INVALID",
     "VALIDATION_OPTION_INVALID",
     "VALIDATION_CURSOR",
+    "CALL_OUTSIDE_LIMITS",
     "STEP_HANDLER_ERROR",
     "ENGINE_INTERNAL",
     "ENGINE_STORE_FAILED",
@@ -922,6 +930,18 @@ const PRICE_SOURCE_CLASSES: readonly [
     "economics",
     "price_list"
 ];
+```
+
+### READING_TOOLS
+
+const · beta: may change in a minor release until it settles · from `@sensigo/realm-mcp`
+
+The reading tools: every tool whose annotation is `readOnlyHint: true`, in the table's order. A key
+made with `--read-only` (or a server built with `limits.readOnly`) may call only these, so a reading
+tool added to the table is included with no other change.
+
+```ts
+const READING_TOOLS: readonly string[];
 ```
 
 ## Also used by this job
@@ -1160,6 +1180,7 @@ Names this job reaches whose entry is on another page.
 - [`StampSealResult`](implement-a-store.md#stampsealresult): The outcome of a `RunStore.stampSeal` attempt.
 - [`StepBrief`](write-a-handler.md#stepbrief): What a `run_step` way says about its step: its kind, its description, the prompt the agent reads, the input schema an agent's answer must fit, and its handler.
 - [`StepCacheDetail`](read-a-runs-record.md#stepcachedetail): A step's cache facts: its state, how they are known, and each request's detail (`EvidenceSnapshot.cache`).
+- [`StepCodeSource`](read-a-runs-record.md#stepcodesource): Which code Realm chose for one attempt of a step that runs a handler or an adapter, as its evidence entry records it (`EvidenceSnapshot.code_source`).
 - [`StepContext`](write-a-handler.md#stepcontext): What a handler is told about the run: its id and params, the step's `config`, and earlier steps' outputs in `resources`, keyed by step id (`StepHandler.execute`'s second argument).
 - [`StepDefinition`](define-and-load-a-workflow.md#stepdefinition): One step of a workflow, as the loaders return it under `WorkflowDefinition.steps`: what it does, how it runs, the steps it waits for, and its input and settings.
 - [`StepDiagnostics`](read-a-runs-record.md#stepdiagnostics): Diagnostic metadata captured during step execution.

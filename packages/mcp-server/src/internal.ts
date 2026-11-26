@@ -35,6 +35,8 @@ export { VERSION } from './version.js';
 export { loadPriceSource, readCacheEconomics } from './price-source.js';
 // #828 unit 2b: a host's own module's source, for `ExtensionRegistry.register`.
 export { projectSourceOf } from './project-source.js';
+// #625 named keys unit 2: the tools a read-only key may call (the `limits` option's `readOnly`).
+export { READING_TOOLS } from './tool-annotations.js';
 // #627 W: the gate-answers value a server runs with (for an embedder's log), the bins' readings of
 // the two settings with their refusal texts, the form's named constants, and the door's route words.
 export {

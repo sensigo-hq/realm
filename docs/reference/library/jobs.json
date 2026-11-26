@@ -243,7 +243,8 @@
         "DECLARED_CAUSES",
         "ENVIRONMENT_STATES",
         "PRICE_SOURCE_CLASSES",
-        "projectSourceOf"
+        "projectSourceOf",
+        "READING_TOOLS"
       ]
     },
     {

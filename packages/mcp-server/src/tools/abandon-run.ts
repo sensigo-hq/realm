@@ -15,13 +15,13 @@ import {
 import {
   disclosureOfTool,
   renderReply,
-  safeTool,
   toolContentOf,
   MCP_ENVELOPE_TABLE,
   type WithDoorDisclosure,
   replySubject,
   setForSubject,
 } from '../render-reply.js';
+import { limitedTool } from './caller-limits.js';
 import { toolMeta } from '../tool-annotations.js';
 import { mcpHostOf } from './start-run.js';
 import type { McpDoor } from '../door.js';
@@ -147,7 +147,9 @@ export function registerAbandonRun(
       description: ABANDON_RUN_DESCRIPTION,
       inputSchema: boundedRefusal(z.object({ run_id: z.string(), reason: z.string().optional() })),
     },
-    safeTool(
+    limitedTool(
+      'abandon_run',
+      opts,
       async (args) => {
         const result = await handleAbandonRun(args, opts);
         const set = await setForSubject(door, await replySubject(opts, { runId: args.run_id }));

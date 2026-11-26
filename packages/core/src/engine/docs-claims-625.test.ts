@@ -1988,19 +1988,28 @@ describe('#760 correction 1 — handlers.md, sentence by sentence (05)', () => {
   it("the stitched row's abbreviations and the not_found row's 1,000 searches are the code's own (L1, A8)", () => {
     const row = stateRow('stitched');
     // #845 (R-A3): the list is its own sentence; the initialisms' sentence follows it
+    // #845 1b-ii-b correction 1: the list ends at ", in any letter case (…)", whose examples run below
     const list = row.slice(
       row.indexOf('after an initial or one of '),
-      row.indexOf(' is not a sentence end.'),
+      row.indexOf(', in any letter case ('),
     );
     const listed = [...list.matchAll(/`([^`]+)`/g)].map((m) => m[1]!);
+    const anyCase = row.slice(
+      row.indexOf(', in any letter case ('),
+      row.indexOf(' is not a sentence end.'),
+    );
+    const caseExamples = [...anyCase.matchAll(/`([^`]+)`/g)].map((m) => m[1]!);
     const tail = row.slice(row.indexOf(' is not a sentence end.'));
     const initialisms = [...tail.matchAll(/`([^`]+)`/g)].map((m) => m[1]!).filter((a) => a !== '.');
     // (a) red when the row's list and the code's differ, a listed abbreviation or an initial ends a
-    //     piece, or the budget is not the row's figure; (b) prints the two lists, the abbreviations
-    //     that split a quote, the initial's piece count and the budget.
+    //     piece, a letter-case example the row names ends one, or the budget is not the row's figure;
+    //     (b) prints the two lists, the abbreviations that split a quote, the initial's piece count
+    //     and the budget.
     expect({
       listed,
       splits: listed.filter((a) => segmentsOf(`see ${a} the roof`).length !== 1),
+      caseExamples,
+      caseSplits: caseExamples.filter((a) => segmentsOf(`see ${a} the roof`).length !== 1),
       initial: segmentsOf('signed by J. Smith today').length,
       initialisms,
       initialismSplits: initialisms.filter(
@@ -2010,6 +2019,8 @@ describe('#760 correction 1 — handlers.md, sentence by sentence (05)', () => {
     }).toEqual({
       listed: [...NOT_SENTENCE_ENDS],
       splits: [],
+      caseExamples: ['NO.', 'INC.'],
+      caseSplits: [],
       initial: 1,
       initialisms: ['U.S.', 'U.K.', 'J.R.R.'],
       initialismSplits: [],
@@ -2292,7 +2303,7 @@ describe('#760 correction 3 — handlers.md: what check_quotes does not catch, a
       'A clause joined to a later sentence (`stitched`) or an earlier one (`stitched_out_of_order`): the piece before a skip may end mid-sentence.',
       'A number written in words, matched as words: `five hundred thousand euro` is found inside `six million five hundred thousand euro`.',
       'A true quote that stops before its sentence ends is found. It is marked `cut_short` only at a `.`, `!` or `?` the quote itself carries.',
-      "An abbreviation that is not on the check's list (`e.g.`, `i.e.`, `etc.`, `No.`, `Nos.`, `cl.`, `para.`, `Sch.`, `Ltd.`, `Co.`, `Inc.`, `St.`, `Mr.`, `Mrs.`, `Ms.`, `Dr.`, an initial, and an initialism), before a capital letter or an opening mark, is read as a sentence end (`a.m. Monday`, `excl. VAT`): a skip may land there.",
+      "An abbreviation that is not on the check's list (`e.g.`, `i.e.`, `etc.`, `No.`, `Nos.`, `cl.`, `para.`, `Sch.`, `Ltd.`, `Co.`, `Inc.`, `St.`, `Mr.`, `Mrs.`, `Ms.`, `Dr.`, in any letter case, an initial, and an initialism), before a capital letter or an opening mark, is read as a sentence end (`a.m. Monday`, `excl. VAT`): a skip may land there.",
       'A grouped amount written with a letter prefix (`500 euro` in `EUR2 500 euro`), and a middle-dot decimal (`·5`).',
       // The follow-up (§2): which enclosed letters read as letters, run by its own cell. The language
       // unit re-pin (§5.2): a mark on a letter stays with it, so the bullet keeps marks on digits and
@@ -2745,17 +2756,19 @@ describe('#760 follow-up — the words and tests: each changed sentence quoted, 
     // #855's correction (§4): `:396`'s `U.S.` sentence merged into the abbreviation bullet.
     claimOn(
       HANDLERS,
-      "An abbreviation that is not on the check's list (`e.g.`, `i.e.`, `etc.`, `No.`, `Nos.`, `cl.`, `para.`, `Sch.`, `Ltd.`, `Co.`, `Inc.`, `St.`, `Mr.`, `Mrs.`, `Ms.`, `Dr.`, an initial, and an initialism), before a capital letter or an opening mark, is read as a sentence end (`a.m. Monday`, `excl. VAT`): a skip may land there.",
+      "An abbreviation that is not on the check's list (`e.g.`, `i.e.`, `etc.`, `No.`, `Nos.`, `cl.`, `para.`, `Sch.`, `Ltd.`, `Co.`, `Inc.`, `St.`, `Mr.`, `Mrs.`, `Ms.`, `Dr.`, in any letter case, an initial, and an initialism), before a capital letter or an opening mark, is read as a sentence end (`a.m. Monday`, `excl. VAT`): a skip may land there.",
     );
     const capital = 'Capital rules apply to the Tenant at all times';
     // (a) red when the gap closes for `a.m.`, or an initial or an initialism starts ending a sentence
-    //     (#845 R-A3 re-pin: `U.S.` and `U.S.A.` no longer do); (b) prints the states.
+    //     (#845 R-A3 re-pin: `U.S.` and `U.S.A.` no longer do), or (#845 1b-ii-b correction 1: "in
+    //     any letter case") a listed abbreviation in capitals does; (b) prints the states.
     expect([
       state(...skipTo(' before 9 a.m. ', capital)),
       state(...skipTo(' in the U.S. ', capital)),
       state(...skipTo(' in the U.S.A. ', capital)),
       state(...skipTo(' by J. ', 'Smith shall pay the insurance rent at once')),
-    ]).toEqual(['stitched', 'not_found', 'not_found', 'not_found']);
+      state(...skipTo(' as in Clause NO. ', capital)),
+    ]).toEqual(['stitched', 'not_found', 'not_found', 'not_found', 'not_found']);
   });
 
   it('§2 #845 closed (R-B, Outside-b): a group of thousands spaced with any `\\p{Zs}` space, and a `:` at a line end before a digit', () => {
@@ -2830,10 +2843,12 @@ describe('#760 follow-up — the words and tests: each changed sentence quoted, 
     });
   });
 
-  it("§2 `cut_short`: an `exact` quote is marked when its last character is its stop and the document goes on with a lowercase letter or a digit, not when the quote carries a space after it (every member: #855's correction §1)", () => {
+  it("§2 `cut_short`: an `exact` quote is marked at its stop, past the whitespace it carries, when the document goes on with a lowercase letter or a digit (every member: #855's correction §1; #845 1b-ii-b re-pin)", () => {
+    // #845 1b-ii-b re-pin: the paragraph replaced whole (its walk M8 sentence is claimed by its own
+    // cell, "#845 1b-i — the words of rule 7").
     claimOn(
       HANDLERS,
-      "A quote that ends a sentence where the document's sentence goes on is marked `cut_short`, with where; the reviewer reads the rest. An `exact` quote is marked when its last character is its `.`, `!` or `?` and the document, past closing marks, whitespace other than a line break, and invisible characters, goes on with a lowercase letter or a digit (`approx. 412`); a line break there, or whitespace the quote carries after its stop, leaves it unmarked. In every other state, the mark falls at each `.`, `!` or `?` inside the quote, but the dots of `...` and a `.` right after `…`, that whitespace or the quote's end follows past any invisible characters, unless it ends an abbreviation on the check's list, an initial or an initialism, where the document has no stop and does not end its line or its text there; a space, tab or line break the quote carries changes nothing.",
+      "A quote that ends a sentence where the document's sentence goes on is marked `cut_short`, with where; the reviewer reads the rest. An `exact` quote ends a sentence at its last character other than whitespace and invisible characters, when that is `.`, `!` or `?`; in every other state, it ends one at each `.`, `!` or `?` inside the quote, but the dots of `...` and a `.` right after `…`, that whitespace or the quote's end follows past any invisible characters. A `.` that ends an abbreviation on the check's list, an initial, an initialism or a word with no letter or digit ends no sentence (`Clause No.`, `e.g.`, `U.S.`, `20 °.`). From there the check reads the document, past closing marks and invisible characters. Where the document has its own `.`, `!` or `?` and the quote stops there (an exact quote's end, a part's end in a `stitched` or `stitched_out_of_order` quote, a reformatted quote's end), the quote is marked when, past that stop, closing marks and whitespace other than a line break, a lowercase letter or a digit follows (`approx. 412`); inside a quote that goes on with the document's own next words, that stop marks nothing. Where the document has no stop, the quote is marked unless whitespace other than a line break, then a line break or the text's end, follows. Whitespace the quote carries after its stop changes nothing.",
     );
     // #866 correction 1 (C4): the handlers paragraph carries the CHANGELOG's `….` words too.
     // the owner's word, 2026-10-24 ("i agree"): a `.` right after `…` is no sentence end inside a
@@ -2845,16 +2860,19 @@ describe('#760 follow-up — the words and tests: each changed sentence quoted, 
     const doc = 'The area is not less than approx. 412 square metres.';
     const marked = (q: string) => {
       const r = locateQuote(q, doc);
-      return [r.state, r.cut_short === true];
+      return [r.state, r.cut_short === true, r.cut_short_at];
     };
-    // (a) red when the space case gets the label (the sentence would then be false; its code fix is
-    //     #845's), or the stop case loses it; (b) prints the states and labels.
+    // #845 1b-ii-b re-pin: the released CHANGELOG line above ([0.48.0]) is claimed as written; the
+    // run follows the new paragraph ("Whitespace the quote carries after its stop changes nothing"),
+    // so the quote carrying a space is marked, right after its stop, as the one without it. (a) red
+    // when either loses the mark, or the space case's mark falls at the quote's end (34); (b) prints
+    // the states, labels and offsets.
     expect([
       marked('The area is not less than approx.'),
       marked('The area is not less than approx. '),
     ]).toEqual([
-      ['exact', true],
-      ['exact', false],
+      ['exact', true, [33]],
+      ['exact', true, [33]],
     ]);
   });
 
@@ -3151,8 +3169,9 @@ describe("#855's correction: each sentence's members", () => {
     const d2 = `${F} for its full reinstatement cost. The Tenant shall pay the insurance rent, on demand, and promptly. Then more.`;
     const ins = 'The Tenant shall pay the insurance rent';
     const rows: Row[] = [
-      // `exact` (`exactGoesOn`): the quote's last character is its stop; past closing marks, spaces and
-      // tabs, the document goes on with a lowercase letter or a digit.
+      // `exact`: the quote's last character other than whitespace and invisible characters is its
+      // stop (#845 1b-ii-b: `exactSentenceEnd`); past closing marks and blanks in any order, the
+      // document goes on with a lowercase letter or a digit.
       [
         'exact, a lowercase letter next',
         read(approx, at(' four hundred square metres.')),
@@ -3196,33 +3215,36 @@ describe("#855's correction: each sentence's members", () => {
         read(`${rent}.`, `${rent}.\nand more on demand.`),
         'exact',
       ],
+      // #845 1b-ii-b re-pin: whitespace the quote carries after its stop changes nothing
       [
         'exact, the quote carries a space after its stop',
         read(`${approx} `, at(' 412 square metres.')),
-        'exact',
+        'exact+cut_short',
       ],
       [
         'exact, the quote carries a tab (the document too)',
         read(`${approx}\t`, at('\t412 square metres.')),
-        'exact',
+        'exact+cut_short',
       ],
       [
         'exact, the quote carries a line break (the document too)',
         read(`${approx}\n`, at('\n412 square metres.')),
         'exact',
       ],
+      // #845 1b-ii-b re-pin: the quote's last piece ends at the document's own stop, before a digit
       [
         'the quote carries a tab, the document a space',
         read(`${approx}\t`, at(' 412 square metres.')),
-        'reformatted',
+        'reformatted+cut_short',
       ],
       [
         'the quote carries a line break, the document a space',
         read(`${approx}\n`, at(' 412 square metres.')),
-        'reformatted',
+        'reformatted+cut_short',
       ],
       // Every other state (`sentenceGoesOn`): at each sentence end inside the quote where the document
-      // has no stop and does not end its line or its text.
+      // has no stop and does not end its line or its text; #845 1b-ii-b: and at the quote's last
+      // piece, or a part's, where the document has the same stop before a lowercase letter or a digit.
       ['reformatted, the document has no stop (B1)', read(`${rent}.`, d1), 'reformatted+cut_short'],
       ['reformatted, `!`', read(`${rent}!`, d1), 'reformatted+cut_short'],
       ['reformatted, `?`', read(`${rent}?`, d1), 'reformatted+cut_short'],
@@ -3231,10 +3253,11 @@ describe("#855's correction: each sentence's members", () => {
         read('the tenant shall pay the rent. on demand and promptly', d1),
         'reformatted+cut_short',
       ],
+      // #845 1b-ii-b re-pin: marked, the document's own stop then a digit
       [
         'reformatted, the document has the same stop',
         read('the area is not less than approx.', at(' 412 square metres.')),
-        'reformatted',
+        'reformatted+cut_short',
       ],
       ['reformatted, a trailing space', read(`${rent}. `, d1), 'reformatted+cut_short'],
       ['reformatted, a trailing tab', read(`${rent}.\t`, d1), 'reformatted+cut_short'],
@@ -3294,22 +3317,25 @@ describe("#855's correction: each sentence's members", () => {
         'stitched_out_of_order+cut_short',
       ],
     ];
-    // (1) red when `exactGoesOn` accepts a capital (the capital row), or either test moves; (2) prints
-    // each differing row's label and state.
+    // (1) red when the read accepts a capital after the stop (the capital row), or either test moves;
+    // (2) prints each differing row's label and state.
     expect(misses(rows)).toEqual([]);
   });
 
   // ─── #855's second correction: the fifteen ─────────────────────────────────────────────────────
 
-  it("B1 the CHANGELOG's `exact` sentence: marked only when the quote's last character is its `.`, `!` or `?`", () => {
-    // The sentence is claimed by the re-pinned "§2 `cut_short` …" cell (#760 follow-up).
+  it("B1 the CHANGELOG's `exact` sentence: marked at the quote's stop, past the whitespace it carries, never past a closing mark it carries (#845 1b-ii-b re-pin)", () => {
+    // The sentence is claimed by the re-pinned "§2 `cut_short` …" cell (#760 follow-up). #845 1b-ii-b
+    // re-pin: the released line keeps its words; the run follows the new paragraph, where whitespace
+    // the quote carries after its stop changes nothing.
     const set = (stop: string) => `The fee is set${stop}`;
     const rows: Row[] = [
-      // F760-855CR-01: a quote whose last character is not its stop is not marked
+      // F760-855CR-01: a quote whose last character is not its stop is not marked; #845 1b-ii-b
+      // re-pin: a space is no such character
       [
         'a space after the stop',
         read('The fee is approx. ', 'The fee is approx. 412 euro.'),
-        'exact',
+        'exact+cut_short',
       ],
       [
         'a closing `"` after the stop',
@@ -3329,8 +3355,9 @@ describe("#855's correction: each sentence's members", () => {
         ],
       ]),
     ];
-    // (1) red when an `exact` quote whose last character is not its stop is marked, or a stop the
-    //     sentence names stops marking; (2) prints each differing row's label and state.
+    // (1) red when an `exact` quote whose last character other than whitespace is not its stop is
+    //     marked, the quote carrying a space loses the mark, or a stop the sentence names stops
+    //     marking; (2) prints each differing row's label and state.
     expect(misses(rows)).toEqual([]);
   });
 
@@ -3592,9 +3619,14 @@ describe("#855's correction: each sentence's members", () => {
       const list = t.slice(from).split(/, (?:plain spaces and tabs|U\+0020 and U\+0009)/)[0]!;
       return [...list.matchAll(/`([^`]+)`/g)].map((m) => cp(m[1]!)).sort((a, b) => a - b);
     };
+    // #845 1b-ii-b re-pin: the paragraph's new words for the same read
     claimOn(
       HANDLERS,
-      'past closing marks, whitespace other than a line break, and invisible characters, goes on with a lowercase letter or a digit (`approx. 412`)',
+      'From there the check reads the document, past closing marks and invisible characters.',
+    );
+    claimOn(
+      HANDLERS,
+      'the quote is marked when, past that stop, closing marks and whitespace other than a line break, a lowercase letter or a digit follows (`approx. 412`)',
     );
     whole(MARKS, MARK_GROUP, 0, BMP);
     const rent = 'The Tenant shall pay the Rent';
@@ -5491,5 +5523,186 @@ describe('#845 1b-ii-a — the words, each executed', () => {
         '4. RENT-\r\nThe Tenant shall pay the Rent on the usual quarter days.\r\n5. REPAIR\r\n',
       ),
     ]).toEqual(['not_found', 'not_found']);
+  });
+});
+
+describe('#845 1b-ii-b — the words, each executed', () => {
+  const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..');
+  const HANDLERS = 'docs/reference/handlers.md';
+  const CL = 'CHANGELOG.md';
+  const raw = (p: string) => readFileSync(join(ROOT, p), 'utf8');
+  const flatten = (t: string) => t.replace(/\\\|/g, '|').replace(/\s+/g, ' ');
+  /** (a) red when the page no longer holds the sentence word for word; (b) prints it. */
+  const claimOn = (p: string, sentence: string): void => {
+    expect(flatten(raw(p)), `${p} no longer says: ${sentence}`).toContain(flatten(sentence));
+  };
+  const ch = String.fromCodePoint;
+  /** A quote's state, `@` and its cut-short offsets when marked. */
+  const cut = (quote: string, source: string): string => {
+    const c = locateQuote(quote, source);
+    return `${c.state}${c.cut_short === true ? `@${(c.cut_short_at ?? []).join(',')}` : ''}`;
+  };
+  const A = 'The rent is payable at approx.';
+  const S = `${A} 412 pounds a month. The Tenant shall pay it on time.`;
+  const DOTS = ch(0x2026);
+  const tail = ' The Tenant shall pay it on time.';
+
+  it('the paragraph, where a quote ends a sentence: an `exact` quote at its last character other than whitespace and invisible characters; a `.` an abbreviation, an initial, an initialism or a word with no letter or digit ends is none; whitespace the quote carries changes nothing', () => {
+    claimOn(
+      HANDLERS,
+      'An `exact` quote ends a sentence at its last character other than whitespace and invisible characters, when that is `.`, `!` or `?`;',
+    );
+    claimOn(
+      HANDLERS,
+      "A `.` that ends an abbreviation on the check's list, an initial, an initialism or a word with no letter or digit ends no sentence (`Clause No.`, `e.g.`, `U.S.`, `20 °.`).",
+    );
+    claimOn(HANDLERS, 'Whitespace the quote carries after its stop changes nothing.');
+    // (a) red when one of the sentences' examples reads otherwise; (b) prints each read.
+    expect({
+      'approx. 412': cut(A, S),
+      'approx. and a space': cut(`${A} `, S),
+      'approx. and U+200B': cut(`${A}${ch(0x200b)}`, `${A}${ch(0x200b)} 412 pounds a month.`),
+      'Clause No.': cut(
+        'as set out in Clause No.',
+        'The rent is as set out in Clause No. 5 of this lease.',
+      ),
+      'e.g.': cut(
+        'such as rates, e.g.',
+        'The Tenant pays outgoings such as rates, e.g. the water rates.',
+      ),
+      'U.S.': cut(
+        'the rules of the U.S.',
+        'The parties follow the rules of the U.S. and the parties agree.',
+      ),
+      '20 °.': cut(
+        `The heating rises to 20 ${ch(0xb0)}.`,
+        `The heating rises to 20 ${ch(0xb0)}. the Landlord keeps it on.`,
+      ),
+    }).toEqual({
+      'approx. 412': 'exact@30',
+      'approx. and a space': 'exact@30',
+      'approx. and U+200B': 'exact@30',
+      'Clause No.': 'exact',
+      'e.g.': 'exact',
+      'U.S.': 'exact',
+      '20 °.': 'exact',
+    });
+  });
+
+  it("the paragraph, the document's own stop: it marks a quote only where the quote stops there, in each state that has one; inside a quote that goes on with the document's next words, it marks nothing", () => {
+    claimOn(
+      HANDLERS,
+      "Where the document has its own `.`, `!` or `?` and the quote stops there (an exact quote's end, a part's end in a `stitched` or `stitched_out_of_order` quote, a reformatted quote's end), the quote is marked when, past that stop, closing marks and whitespace other than a line break, a lowercase letter or a digit follows (`approx. 412`); inside a quote that goes on with the document's own next words, that stop marks nothing.",
+    );
+    // (a) red when one producing branch loses the mark, a stop inside the quote marks it, or a line
+    //     break or a capital after the stop marks it; (b) prints each read.
+    expect({
+      exact: cut(A, S),
+      'a stitched part, not the last': cut(
+        `${A} ${DOTS} The Tenant shall pay it on time.`,
+        `${A} 412 pounds a month.${tail}`,
+      ),
+      'a stitched_out_of_order part': cut(
+        `The Landlord shall insure the Building. ${DOTS} ${A}`,
+        `${A} 412 pounds a month. The Landlord shall insure the Building.`,
+      ),
+      reformatted: cut(
+        A,
+        'the rent is payable at approx. 412 pounds a month and the tenant shall pay',
+      ),
+      'inside a reformatted quote': cut(
+        'THE RENT IS PAYABLE AT APPROX. 412 POUNDS A MONTH',
+        'The rent is payable at approx. 412 pounds a month and the Tenant shall pay it on time.',
+      ),
+      'inside a part': cut(
+        `The Tenant covenants as follows ${DOTS} 2. keep the Premises in repair`,
+        'The Tenant covenants as follows: 1. pay the rent; 2. keep the Premises in repair.',
+      ),
+      'a line break after the stop': cut(
+        'The rent is due.',
+        'The rent is due.\nthe Tenant shall pay it.',
+      ),
+      'a capital after the stop': cut(
+        'The rent is due.',
+        'The rent is due. The Tenant shall pay it.',
+      ),
+    }).toEqual({
+      exact: 'exact@30',
+      'a stitched part, not the last': 'stitched@30',
+      'a stitched_out_of_order part': 'stitched_out_of_order@30',
+      reformatted: 'reformatted@30',
+      'inside a reformatted quote': 'reformatted',
+      'inside a part': 'stitched',
+      'a line break after the stop': 'exact',
+      'a capital after the stop': 'exact',
+    });
+  });
+
+  it('the paragraph, where the document has no stop: marked unless whitespace, then a line break or the text’s end, follows', () => {
+    claimOn(
+      HANDLERS,
+      "Where the document has no stop, the quote is marked unless whitespace other than a line break, then a line break or the text's end, follows.",
+    );
+    // (a) red when the no-stop read changes; (b) prints each read.
+    expect({
+      'the line goes on': cut('The Rent is payable.', 'the rent is payable monthly in advance'),
+      'blanks, then a line break': cut(
+        'The Rent is payable.',
+        'the rent is payable  \nmonthly in advance',
+      ),
+      "the text's end": cut('The Rent is payable.', 'the rent is payable'),
+    }).toEqual({
+      'the line goes on': 'reformatted@19',
+      'blanks, then a line break': 'reformatted',
+      "the text's end": 'reformatted',
+    });
+  });
+
+  it("the CHANGELOG's Changed line: `cut_short` is read one way in every state", () => {
+    claimOn(
+      CL,
+      'check_quotes reads `cut_short` one way in every state: a reformatted quote or a stitched part that stops where the document has its own stop and then a lowercase letter or a digit is now marked, and so is an exact quote that carries whitespace or an invisible character after its stop; an exact quote that ends an abbreviation, an initial, an initialism or a word with no letter or digit (`Clause No.`, `e.g.`, `U.S.`, `20 °.`) is no longer marked (#845).',
+    );
+    // (a) red when one of the line's examples reads otherwise; (b) prints each read.
+    expect({
+      'a reformatted quote, then a lowercase letter': cut(
+        'The Rent is payable.',
+        'the rent is payable. monthly in advance',
+      ),
+      'a stitched part, then a digit': cut(
+        `${A} ${DOTS} The Tenant shall pay it on time.`,
+        `${A} 412 pounds a month.${tail}`,
+      ),
+      'an exact quote and whitespace': cut(`${A} `, S),
+      'an exact quote and an invisible character': cut(
+        `${A}${ch(0x34f)}`,
+        `${A}${ch(0x34f)} 412 pounds a month.`,
+      ),
+      'Clause No.': cut(
+        'as set out in Clause No.',
+        'The rent is as set out in Clause No. 5 of this lease.',
+      ),
+      'e.g.': cut(
+        'such as rates, e.g.',
+        'The Tenant pays outgoings such as rates, e.g. the water rates.',
+      ),
+      'U.S.': cut(
+        'the rules of the U.S.',
+        'The parties follow the rules of the U.S. and the parties agree.',
+      ),
+      '20 °.': cut(
+        `The heating rises to 20 ${ch(0xb0)}.`,
+        `The heating rises to 20 ${ch(0xb0)}. the Landlord keeps it on.`,
+      ),
+    }).toEqual({
+      'a reformatted quote, then a lowercase letter': 'reformatted@20',
+      'a stitched part, then a digit': 'stitched@30',
+      'an exact quote and whitespace': 'exact@30',
+      'an exact quote and an invisible character': 'exact@30',
+      'Clause No.': 'exact',
+      'e.g.': 'exact',
+      'U.S.': 'exact',
+      '20 °.': 'exact',
+    });
   });
 });
