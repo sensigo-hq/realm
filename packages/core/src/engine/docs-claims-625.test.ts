@@ -1988,19 +1988,28 @@ describe('#760 correction 1 — handlers.md, sentence by sentence (05)', () => {
   it("the stitched row's abbreviations and the not_found row's 1,000 searches are the code's own (L1, A8)", () => {
     const row = stateRow('stitched');
     // #845 (R-A3): the list is its own sentence; the initialisms' sentence follows it
+    // #845 1b-ii-b correction 1: the list ends at ", in any letter case (…)", whose examples run below
     const list = row.slice(
       row.indexOf('after an initial or one of '),
-      row.indexOf(' is not a sentence end.'),
+      row.indexOf(', in any letter case ('),
     );
     const listed = [...list.matchAll(/`([^`]+)`/g)].map((m) => m[1]!);
+    const anyCase = row.slice(
+      row.indexOf(', in any letter case ('),
+      row.indexOf(' is not a sentence end.'),
+    );
+    const caseExamples = [...anyCase.matchAll(/`([^`]+)`/g)].map((m) => m[1]!);
     const tail = row.slice(row.indexOf(' is not a sentence end.'));
     const initialisms = [...tail.matchAll(/`([^`]+)`/g)].map((m) => m[1]!).filter((a) => a !== '.');
     // (a) red when the row's list and the code's differ, a listed abbreviation or an initial ends a
-    //     piece, or the budget is not the row's figure; (b) prints the two lists, the abbreviations
-    //     that split a quote, the initial's piece count and the budget.
+    //     piece, a letter-case example the row names ends one, or the budget is not the row's figure;
+    //     (b) prints the two lists, the abbreviations that split a quote, the initial's piece count
+    //     and the budget.
     expect({
       listed,
       splits: listed.filter((a) => segmentsOf(`see ${a} the roof`).length !== 1),
+      caseExamples,
+      caseSplits: caseExamples.filter((a) => segmentsOf(`see ${a} the roof`).length !== 1),
       initial: segmentsOf('signed by J. Smith today').length,
       initialisms,
       initialismSplits: initialisms.filter(
@@ -2010,6 +2019,8 @@ describe('#760 correction 1 — handlers.md, sentence by sentence (05)', () => {
     }).toEqual({
       listed: [...NOT_SENTENCE_ENDS],
       splits: [],
+      caseExamples: ['NO.', 'INC.'],
+      caseSplits: [],
       initial: 1,
       initialisms: ['U.S.', 'U.K.', 'J.R.R.'],
       initialismSplits: [],
@@ -2292,7 +2303,7 @@ describe('#760 correction 3 — handlers.md: what check_quotes does not catch, a
       'A clause joined to a later sentence (`stitched`) or an earlier one (`stitched_out_of_order`): the piece before a skip may end mid-sentence.',
       'A number written in words, matched as words: `five hundred thousand euro` is found inside `six million five hundred thousand euro`.',
       'A true quote that stops before its sentence ends is found. It is marked `cut_short` only at a `.`, `!` or `?` the quote itself carries.',
-      "An abbreviation that is not on the check's list (`e.g.`, `i.e.`, `etc.`, `No.`, `Nos.`, `cl.`, `para.`, `Sch.`, `Ltd.`, `Co.`, `Inc.`, `St.`, `Mr.`, `Mrs.`, `Ms.`, `Dr.`, an initial, and an initialism), before a capital letter or an opening mark, is read as a sentence end (`a.m. Monday`, `excl. VAT`): a skip may land there.",
+      "An abbreviation that is not on the check's list (`e.g.`, `i.e.`, `etc.`, `No.`, `Nos.`, `cl.`, `para.`, `Sch.`, `Ltd.`, `Co.`, `Inc.`, `St.`, `Mr.`, `Mrs.`, `Ms.`, `Dr.`, in any letter case, an initial, and an initialism), before a capital letter or an opening mark, is read as a sentence end (`a.m. Monday`, `excl. VAT`): a skip may land there.",
       'A grouped amount written with a letter prefix (`500 euro` in `EUR2 500 euro`), and a middle-dot decimal (`·5`).',
       // The follow-up (§2): which enclosed letters read as letters, run by its own cell. The language
       // unit re-pin (§5.2): a mark on a letter stays with it, so the bullet keeps marks on digits and
@@ -2745,17 +2756,19 @@ describe('#760 follow-up — the words and tests: each changed sentence quoted, 
     // #855's correction (§4): `:396`'s `U.S.` sentence merged into the abbreviation bullet.
     claimOn(
       HANDLERS,
-      "An abbreviation that is not on the check's list (`e.g.`, `i.e.`, `etc.`, `No.`, `Nos.`, `cl.`, `para.`, `Sch.`, `Ltd.`, `Co.`, `Inc.`, `St.`, `Mr.`, `Mrs.`, `Ms.`, `Dr.`, an initial, and an initialism), before a capital letter or an opening mark, is read as a sentence end (`a.m. Monday`, `excl. VAT`): a skip may land there.",
+      "An abbreviation that is not on the check's list (`e.g.`, `i.e.`, `etc.`, `No.`, `Nos.`, `cl.`, `para.`, `Sch.`, `Ltd.`, `Co.`, `Inc.`, `St.`, `Mr.`, `Mrs.`, `Ms.`, `Dr.`, in any letter case, an initial, and an initialism), before a capital letter or an opening mark, is read as a sentence end (`a.m. Monday`, `excl. VAT`): a skip may land there.",
     );
     const capital = 'Capital rules apply to the Tenant at all times';
     // (a) red when the gap closes for `a.m.`, or an initial or an initialism starts ending a sentence
-    //     (#845 R-A3 re-pin: `U.S.` and `U.S.A.` no longer do); (b) prints the states.
+    //     (#845 R-A3 re-pin: `U.S.` and `U.S.A.` no longer do), or (#845 1b-ii-b correction 1: "in
+    //     any letter case") a listed abbreviation in capitals does; (b) prints the states.
     expect([
       state(...skipTo(' before 9 a.m. ', capital)),
       state(...skipTo(' in the U.S. ', capital)),
       state(...skipTo(' in the U.S.A. ', capital)),
       state(...skipTo(' by J. ', 'Smith shall pay the insurance rent at once')),
-    ]).toEqual(['stitched', 'not_found', 'not_found', 'not_found']);
+      state(...skipTo(' as in Clause NO. ', capital)),
+    ]).toEqual(['stitched', 'not_found', 'not_found', 'not_found', 'not_found']);
   });
 
   it('§2 #845 closed (R-B, Outside-b): a group of thousands spaced with any `\\p{Zs}` space, and a `:` at a line end before a digit', () => {
@@ -5615,9 +5628,9 @@ describe('#845 1b-ii-b — the words, each executed', () => {
       ),
     }).toEqual({
       exact: 'exact@30',
-      'a stitched part, not the last': 'stitched@29',
-      'a stitched_out_of_order part': 'stitched_out_of_order@29',
-      reformatted: 'reformatted@29',
+      'a stitched part, not the last': 'stitched@30',
+      'a stitched_out_of_order part': 'stitched_out_of_order@30',
+      reformatted: 'reformatted@30',
       'inside a reformatted quote': 'reformatted',
       'inside a part': 'stitched',
       'a line break after the stop': 'exact',
@@ -5682,8 +5695,8 @@ describe('#845 1b-ii-b — the words, each executed', () => {
         `The heating rises to 20 ${ch(0xb0)}. the Landlord keeps it on.`,
       ),
     }).toEqual({
-      'a reformatted quote, then a lowercase letter': 'reformatted@19',
-      'a stitched part, then a digit': 'stitched@29',
+      'a reformatted quote, then a lowercase letter': 'reformatted@20',
+      'a stitched part, then a digit': 'stitched@30',
       'an exact quote and whitespace': 'exact@30',
       'an exact quote and an invisible character': 'exact@30',
       'Clause No.': 'exact',

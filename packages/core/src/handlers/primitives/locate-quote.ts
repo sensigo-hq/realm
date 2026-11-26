@@ -1900,29 +1900,30 @@ function trimmed(
   };
 }
 
-/** L2, #845 (R-G): whether a quote that ends a sentence at `at` of the source stops where the
- *  source's sentence goes on, one read for every state. From `at`, by code point past invisible
- *  characters, past closing marks:
+/** L2, #845 (R-G): where a quote that ends a sentence at `at` of the source stops where the
+ *  source's sentence goes on, one read for every state: the `cut_short_at` offset, or -1 when it
+ *  does not. From `at`, by code point past invisible characters, past closing marks:
  *  - where the source has its own `.` `!` or `?` there, the quote is cut short only where it stops
  *    there (`stopsHere`: an exact quote's end, the last piece of a part, the last piece of a
  *    reformatted quote), when past that stop, closing marks and blanks in any order, a lowercase
- *    letter or a digit follows (N7, `approx. 412`). Inside the quote the source's own next words
- *    follow, so it cuts nothing there (D1);
+ *    letter or a digit follows (N7, `approx. 412`); the mark falls right after the stop, in every
+ *    state. Inside the quote the source's own next words follow, so it cuts nothing there (D1);
  *  - where the source has no stop, its sentence goes on unless blanks, then a line break or the
- *    text's end, follow. */
-function sentenceGoesOn(source: string, at: number, stopsHere: boolean): boolean {
+ *    text's end, follow; the mark falls at `at`. */
+function cutShortAt(source: string, at: number, stopsHere: boolean): number {
   // #845 (R-C2, R-A2, R-B): by code point, past invisible characters; closing marks, blanks and
   // lowercase letters are the property sets
   let p = stepOn(source, at);
   while (isClosingMark(p.c)) p = stepOn(source, p.at);
   if (p.c === '.' || p.c === '!' || p.c === '?') {
-    if (!stopsHere) return false;
+    if (!stopsHere) return -1;
+    const afterStop = p.at;
     p = stepOn(source, p.at);
     while (isClosingMark(p.c) || isBlank(p.c)) p = stepOn(source, p.at);
-    return p.c !== undefined && (isLowercase(p.c) || isDigit(p.c));
+    return p.c !== undefined && (isLowercase(p.c) || isDigit(p.c)) ? afterStop : -1;
   }
   while (isBlank(p.c)) p = stepOn(source, p.at);
-  return p.c !== undefined && !isLineBreak(p.c);
+  return p.c !== undefined && !isLineBreak(p.c) ? at : -1;
 }
 
 /** L2, #845 (R-G): where an exact quote ends a sentence: the offset of its last character other than
@@ -1999,12 +2000,12 @@ function ladder(
     // N7, #845 (R-G): the source has the quote's own stop, so L2's read starts there; the mark falls
     // right after it, whatever whitespace the quote carries after it
     const stop = exactSentenceEnd(quote);
-    const cut = stop >= 0 && sentenceGoesOn(source, literal + stop, true);
+    const cut = stop < 0 ? -1 : cutShortAt(source, literal + stop, true);
     return {
       state: 'exact',
       parts: [{ start: literal, end }],
       occurrences,
-      ...cutShort(cut ? [literal + stop + 1] : []),
+      ...cutShort(cut < 0 ? [] : [cut]),
     };
   }
 
@@ -2039,8 +2040,8 @@ function ladder(
       if (!s.endsSentence) return [];
       const k = quoteCanonical.from.findIndex((o) => o >= s.end);
       const last = (k < 0 ? canonicalQuote.length : k) - 1;
-      const at = canonical.to[whole + last]!;
-      return sentenceGoesOn(source, at, n === segments.length - 1) ? [at] : [];
+      const mark = cutShortAt(source, canonical.to[whole + last]!, n === segments.length - 1);
+      return mark < 0 ? [] : [mark];
     });
     return {
       state: 'reformatted',
@@ -2075,7 +2076,8 @@ function ladder(
         p.pieces.forEach((placed, n) => {
           if (!segments[p.first + n]!.endsSentence) return;
           const end = canonical.to[placed.at + placed.length - 1]!;
-          if (sentenceGoesOn(source, end, p.first + n === p.last)) at.push(end);
+          const mark = cutShortAt(source, end, p.first + n === p.last);
+          if (mark >= 0) at.push(mark);
         });
         return at;
       };

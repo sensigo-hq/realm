@@ -2816,16 +2816,16 @@ describe('#845 1b-ii-b check 2: a `reformatted` quote is read the same way', () 
 
   it("at the quote's end, the document's own stop then a digit or a lowercase word marks it, an invisible character in the document only too (IV2)", () => {
     const rows: Row[] = [
-      ['own `.` then a digit', cutRead(IIB_A, R), 'reformatted@29 0-30'],
+      ['own `.` then a digit', cutRead(IIB_A, R), 'reformatted@30 0-30'],
       [
         'own `.` then lowercase',
         cutRead('The Rent is payable.', 'the rent is payable. monthly in advance'),
-        'reformatted@19 0-20',
+        'reformatted@20 0-20',
       ],
       [
         'IV2',
         cutRead('THE RENT IS DUE.', `The rent is due.${ch(0x200b)} the Tenant shall pay it.`),
-        'reformatted@15 0-16',
+        'reformatted@16 0-16',
       ],
     ];
     // (1) red when the document's stop is read as the sentence's end (every row reads unmarked);
@@ -2889,9 +2889,9 @@ describe('#845 1b-ii-b check 3: a `stitched` quote is read the same way, at ever
   const TQ = `The Tenant shall pay the rent on the usual quarter days. ${IIB_DOTS} The Landlord shall insure the Building.`;
   const tail = ' The Tenant shall pay it on time.';
 
-  it("the quote's last part: its own `.` then lowercase marks it at its end (T2), then a capital does not (T1); no stop and the text goes on marks every such end (T3)", () => {
+  it("the quote's last part: its own `.` then lowercase marks it right after the stop (T2), then a capital does not (T1); no stop and the text goes on marks every such end (T3)", () => {
     const rows: Row[] = [
-      ['T2', cutRead(TQ, T(' the Tenant shall repair it.')), 'stitched@151 0-56,113-152'],
+      ['T2', cutRead(TQ, T(' the Tenant shall repair it.')), 'stitched@152 0-56,113-152'],
       ['T1', cutRead(TQ, T(' The Tenant shall repair it.')), 'stitched 0-56,113-152'],
       [
         'T3',
@@ -2907,7 +2907,7 @@ describe('#845 1b-ii-b check 3: a `stitched` quote is read the same way, at ever
     expect(misses(rows)).toEqual([]);
   });
 
-  it("a part that is not the quote's last: `approx.` before ` 412` (NF1) marked at 29, `due.` before ` the` (NF2) at 38, `due.` before ` The` (NF3) not; and a `stitched_out_of_order` part's end", () => {
+  it("a part that is not the quote's last: `approx.` before ` 412` (NF1) marked at 30, `due.` before ` the` (NF2) at 39, `due.` before ` The` (NF3) not; and a `stitched_out_of_order` part's end", () => {
     const rows: Row[] = [
       [
         'NF1',
@@ -2915,7 +2915,7 @@ describe('#845 1b-ii-b check 3: a `stitched` quote is read the same way, at ever
           `${IIB_A} ${IIB_DOTS} The Tenant shall pay it on time.`,
           `${IIB_A} 412 pounds a month.${tail}`,
         ),
-        'stitched@29 0-30,51-83',
+        'stitched@30 0-30,51-83',
       ],
       [
         'NF2',
@@ -2923,7 +2923,7 @@ describe('#845 1b-ii-b check 3: a `stitched` quote is read the same way, at ever
           `The rent is payable in full and is due. ${IIB_DOTS} The Tenant shall pay it on time.`,
           `The rent is payable in full and is due. the deposit is held apart.${tail}`,
         ),
-        'stitched@38 0-39,67-99',
+        'stitched@39 0-39,67-99',
       ],
       [
         'NF3',
@@ -2939,7 +2939,7 @@ describe('#845 1b-ii-b check 3: a `stitched` quote is read the same way, at ever
           `The Landlord shall insure the Building. ${IIB_DOTS} ${IIB_A}`,
           `${IIB_A} 412 pounds a month. The Landlord shall insure the Building.`,
         ),
-        'stitched_out_of_order@29 51-90,0-30',
+        'stitched_out_of_order@30 51-90,0-30',
       ],
     ];
     // (1) red when the own-stop rule is read only at the quote's last piece (NF1, NF2 and the
@@ -2961,7 +2961,7 @@ describe('#845 1b-ii-b check 3: a `stitched` quote is read the same way, at ever
 });
 
 describe('#845 1b-ii-b check 4: walk M8 places a part by the one read', () => {
-  it("T4: the last piece's first place is followed by `. the`, its second by `. The`: the parts move to the second, unmarked; with `. the` after both, the first placement stands, marked at 151", () => {
+  it("T4: the last piece's first place is followed by `. the`, its second by `. The`: the parts move to the second, unmarked; with `. the` after both, the first placement stands, marked at 152", () => {
     const TQ = `The Tenant shall pay the rent on the usual quarter days. ${IIB_DOTS} The Landlord shall insure the Building.`;
     const M8 =
       'The Tenant shall pay the rent on the usual quarter days. The Tenant shall also pay the insurance rent on demand. The Landlord shall insure the Building. the Tenant pays for it. The Landlord shall insure the Building. The Tenant shall repair the roof.';
@@ -2973,11 +2973,69 @@ describe('#845 1b-ii-b check 4: walk M8 places a part by the one read', () => {
           TQ,
           M8.replace('Building. The Tenant shall repair', 'Building. the Tenant shall repair'),
         ),
-        'stitched@151 0-56,113-152',
+        'stitched@152 0-56,113-152',
       ],
     ];
     // (1) red when walk M8's `cutOf` is left on the old read (T4 stays at 113-152, unmarked); (2)
     //     prints each differing row.
     expect(misses(rows)).toEqual([]);
+  });
+});
+
+describe('#845 1b-ii-b correction 1, check 1: `cut_short_at` names one offset for one document stop, in every state', () => {
+  const T = (stop: string, rest: string) =>
+    `The Tenant shall pay the rent on the usual quarter days. The Tenant shall also pay the insurance rent on demand. The Landlord shall insure the Building${stop}${rest}`;
+  const F1 = 'The Tenant shall pay the rent on the usual quarter days.';
+  const at = (quote: string, doc: string) => {
+    const c = lq(quote, doc);
+    return `${c.state}@${(c.cut_short_at ?? []).join(',')}`;
+  };
+  const inEveryState = (stop: string, rest: string) => {
+    const doc = T(stop, rest);
+    const last = `The Landlord shall insure the Building${stop}`;
+    return {
+      exact: at(last, doc),
+      reformatted: at(last.toUpperCase(), doc),
+      stitched: at(`${F1} ${IIB_DOTS} ${last}`, doc),
+      outOfOrder: at(`${last} ${IIB_DOTS} ${F1}`, doc),
+    };
+  };
+
+  it('the document has its own `.` then a lowercase word: every state marks right after the `.` (152)', () => {
+    // (a) red when a state other than `exact` marks at its piece's end (151), as e253d4d2 did; (b)
+    //     prints each state's offset.
+    expect(inEveryState('.', ' the Tenant pays for it.')).toEqual({
+      exact: 'exact@152',
+      reformatted: 'reformatted@152',
+      stitched: 'stitched@152',
+      outOfOrder: 'stitched_out_of_order@152',
+    });
+  });
+
+  it('the document has its own `!` then a lowercase word: the same, right after the `!` (152)', () => {
+    // (a) red as above; (b) prints each state's offset.
+    expect(inEveryState('!', ' the Tenant pays for it.')).toEqual({
+      exact: 'exact@152',
+      reformatted: 'reformatted@152',
+      stitched: 'stitched@152',
+      outOfOrder: 'stitched_out_of_order@152',
+    });
+  });
+
+  it("the document has no stop, its text going on: every state marks at the piece's end (151), unchanged; an exact quote needs the document's stop, so it reads `reformatted`", () => {
+    const doc = T('', ' and the roof.');
+    const last = 'The Landlord shall insure the Building.';
+    // (a) red when the no-stop mark moves off the piece's end; (b) prints each state's offset.
+    expect({
+      quotedAsIs: at(last, doc),
+      reformatted: at(last.toUpperCase(), doc),
+      stitched: at(`${F1} ${IIB_DOTS} ${last}`, doc),
+      outOfOrder: at(`${last} ${IIB_DOTS} ${F1}`, doc),
+    }).toEqual({
+      quotedAsIs: 'reformatted@151',
+      reformatted: 'reformatted@151',
+      stitched: 'stitched@151',
+      outOfOrder: 'stitched_out_of_order@151',
+    });
   });
 });
