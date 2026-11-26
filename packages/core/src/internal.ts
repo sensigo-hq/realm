@@ -897,7 +897,14 @@ export type { Processor, ProcessorInput, ProcessorOutput } from './extensions/pr
 export { ExtensionRegistry } from './extensions/registry.js';
 export { codeTextOf } from './extensions/code-text.js';
 export { createDefaultRegistry } from './extensions/default-registry.js';
-export { BUILT_IN_REQUIREMENTS, isBuiltInRequirement } from './extensions/built-in-requirements.js';
+export {
+  BUILT_IN_REQUIREMENTS,
+  isBuiltInRequirement,
+  // #828 unit 2b: whether an entry replaces a built-in, the one rule (the CLI loader reads it in unit 4).
+  replacesBuiltIn,
+} from './extensions/built-in-requirements.js';
+// #828 unit 2b: where a registry entry's code came from.
+export type { CodeSource, ProjectSource } from './types/code-source.js';
 export type { ExtensionManifest, ExtensionModuleRef } from './extensions/manifest.js';
 export {
   validateDeploymentManifest,

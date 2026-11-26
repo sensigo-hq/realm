@@ -879,6 +879,20 @@ Clock · type · public
   }
 
 ClockReadClass · type · internal
+CodeSource · type · beta
+  type CodeSource = {
+      readonly source: 'built_in';
+  } | {
+      readonly source: 'catalog';
+      readonly use: string;
+  } | ProjectSource | {
+      readonly source: 'host_registered';
+      readonly code_text_sha256: string;
+  } | {
+      readonly source: 'host_registered';
+      readonly absent: 'code_text_unavailable';
+  };
+
 CodeTag · type · internal
 ComposedWays · type · internal
 Cond · type · public
@@ -1531,11 +1545,17 @@ ExtensionIdentityTree · type · public
 
 ExtensionManifest · type · internal
 ExtensionModuleRef · type · internal
-ExtensionRegistry · both · public
+ExtensionRegistry · both · public (beta: entry, entry.name, entry.type, register.source, register.source, register.source)
   class ExtensionRegistry {
-      register(type: 'adapter', name: string, impl: ServiceAdapter): void;
-      register(type: 'processor', name: string, impl: Processor): void;
-      register(type: 'handler', name: string, impl: StepHandler): void;
+      register(type: 'adapter', name: string, impl: ServiceAdapter, source?: CodeSource | null): void;
+      register(type: 'processor', name: string, impl: Processor, source?: CodeSource | null): void;
+      register(type: 'handler', name: string, impl: StepHandler, source?: CodeSource | null): void;
+      entry(type: 'adapter' | 'processor' | 'handler', name: string): {
+          readonly impl: ServiceAdapter | Processor | StepHandler;
+          readonly source: CodeSource;
+          readonly replacesBuiltIn: boolean;
+      } | undefined;
+      copyEntry(from: ExtensionRegistry, type: 'adapter' | 'processor' | 'handler', name: string): void;
       setIdentity(entry: ExtensionIdentityEntry): void;
       get identity(): ExtensionIdentityEntry | undefined;
       has(type: 'adapter' | 'processor' | 'handler', name: string): boolean;
@@ -2851,6 +2871,20 @@ ProcessorOutput · type · public
 ProgramFit · type · internal
 ProgramIdentityFacts · type · internal
 ProgressVerb · type · internal
+ProjectSource · type · beta
+  type ProjectSource = {
+      readonly source: 'project';
+      readonly declared: string;
+      readonly via: 'manifest' | 'extensions_file' | 'override_flag' | 'host_stated';
+      readonly entry_hash: string;
+      readonly folder_tree_hash: string;
+  } | {
+      readonly source: 'project';
+      readonly declared: string;
+      readonly via: 'manifest' | 'extensions_file' | 'override_flag' | 'host_stated';
+      readonly absent: 'hashes_unavailable';
+  };
+
 PromptCacheSetting · type · internal
 ProtocolConfig · type · public
   interface ProtocolConfig {
@@ -5171,6 +5205,7 @@ renderUnreadableStoredFile · value · public
   function renderUnreadableStoredFile(facts: UnreadableFileFacts): string;
 
 repairActFor · value · internal
+replacesBuiltIn · value · internal
 requirementForStep · value · internal
 resolveAgentProfiles · value · internal
 resolveCapMs · value · internal

@@ -134,6 +134,9 @@ loadPriceSource · value · public
   }): Promise<PriceSource>;
 
 offeredGivenToProgram · value · internal
+projectSourceOf · value · beta
+  function projectSourceOf(module: string | URL): ProjectSource;
+
 readBinDoorSettings · value · internal
 readCacheEconomics · value · internal
 renderOutcome · value · internal

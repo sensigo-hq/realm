@@ -5,8 +5,16 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createDefaultRegistry, CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
+import {
+  brandClass,
+  createDefaultRegistry,
+  createRealmBrand,
+  CURRENT_WORKFLOW_SCHEMA_VERSION,
+  WorkflowError,
+} from '@sensigo/realm';
 import type {
+  CodeSource,
+  ExtensionRegistry,
   ExtensionIdentityEntry,
   WorkflowDefinition,
   ServiceAdapter,
@@ -442,5 +450,79 @@ describe('secret-bearing processors (v0.14 symmetric guard)', () => {
       .getProcessor('pure_proc')!
       .process({ text: 'hello', metadata: {} }, {});
     expect(out.text).toBe('hello');
+  });
+});
+
+// #828 unit 2b (prompt feat-828-u2b-registry-source.md rev 2.1, check 8): the runner copies a caller's
+// entries and the extensions' with their sources (`copyEntry`), never re-registering them as its own.
+describe('#828 unit 2b check 8 — the runner keeps each copied entry’s source', () => {
+  // (1) red when the copy goes through `register` (a built_in refused, or host_registered recorded);
+  //     (2) prints each copied entry's source in both registries.
+  it("a caller's createDefaultRegistry() passes through with built_in kept, and an extension's project source too", () => {
+    const project: CodeSource = {
+      source: 'project',
+      declared: '../../dist/registry.js',
+      via: 'extensions_file',
+      entry_hash: 'a'.repeat(64),
+      folder_tree_hash: 'b'.repeat(64),
+    };
+    const extensions = makeExtensions();
+    extensions.registry.register('handler', 'my_custom_handler', realHandler, project);
+    const { fixtureRegistry, fallbackRegistry } = buildFixtureRegistries(
+      makeFixture(),
+      SERVICE_DEFINITION,
+      { registry: createDefaultRegistry(), extensions },
+    );
+    expect({
+      callerFilesystem: fallbackRegistry?.entry('adapter', 'filesystem')?.source,
+      callerCheckQuotes: fallbackRegistry?.entry('handler', 'check_quotes')?.source,
+      extension: [
+        fixtureRegistry.entry('handler', 'my_custom_handler')?.source,
+        fallbackRegistry?.entry('handler', 'my_custom_handler')?.source,
+      ],
+    }).toEqual({
+      callerFilesystem: { source: 'built_in' },
+      callerCheckQuotes: { source: 'built_in' },
+      extension: [project, project],
+    });
+  });
+});
+
+// #828 unit 2b correction 1 (prompt feat-828-u2b-correction-1.md, check 1): a caller's registry of
+// another Realm release is refused on both paths, under the runner's own name.
+describe('#828 unit 2b correction 1 check 1 — the runner refuses a registry of another release', () => {
+  class ExtensionRegistryOfAnother {}
+  brandClass(
+    ExtensionRegistryOfAnother,
+    Symbol.for('@sensigo/realm/ExtensionRegistry'),
+    createRealmBrand('@sensigo/realm', '9.9.9', 'file:///tmp/other-realm/'),
+  );
+  const foreign = new ExtensionRegistryOfAnother() as unknown as ExtensionRegistry;
+
+  // (1) red when only the extensions path checks the registry (then alone it becomes the dispatcher's
+  //     fallback, and with extensions copyEntry refuses it under its own name); (2) prints the code,
+  //     the role and the message's opening.
+  it.each([
+    ['alone', () => ({ registry: foreign })],
+    ['with extensions', () => ({ registry: foreign, extensions: makeExtensions() })],
+  ] as const)('passed %s: ENGINE_RELEASE_LINE_MISMATCH naming runFixtureTests', (_, options) => {
+    let refusal: unknown = 'no throw';
+    try {
+      buildFixtureRegistries(makeFixture(), SERVICE_DEFINITION, options());
+    } catch (err) {
+      refusal =
+        err instanceof WorkflowError
+          ? {
+              code: err.code,
+              role: err.details?.['role'],
+              opening: err.message.split(' (class')[0],
+            }
+          : String(err);
+    }
+    expect(refusal).toEqual({
+      code: 'ENGINE_RELEASE_LINE_MISMATCH',
+      role: 'the registry handed to runFixtureTests',
+      opening: 'The registry handed to runFixtureTests',
+    });
   });
 });
