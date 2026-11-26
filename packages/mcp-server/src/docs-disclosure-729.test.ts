@@ -83,7 +83,7 @@ describe('#729 PR-3 — the MCP pages: `disclosure` on every JSON reply', () => 
     );
     claim(
       TOOLS_PAGE,
-      "What Realm hid from the reply before the agent read it: `declared` (whether Realm knew the secrets a deployment manifest declares: `resolved`, `partial` or `unknown`, with `declared_cause` when not `resolved`), `environment` (`swept` when the server's environment variables were checked), `hidden` (how many values were replaced with `[REDACTED]` by this reply's own mask, by kind: `declared`, `environment`, `pattern`; a value hidden before a template's filters ran (a step's prompt, a gate's instructions) shows its marker and is not counted here), `unchecked` (always `0` in this version), `unmaskable` (declared secrets too short to hide), `too_deep` (values shown as their type and size because they lie more than 64 levels deep) and, when the reply shows a gate's question, `question: declared_only` (the question hides only the declared secrets, except a failure's message the question reads through `$settlement.<step>.message`, in which every secret Realm knows of was hidden when the question opened, under `realm agent` and `realm listen` your home folder and user name aside (added after version 0.50.0)).",
+      "What Realm hid from the reply before the agent read it: `declared` (whether Realm knew the secrets a deployment manifest declares: `resolved`, `partial` or `unknown`, with `declared_cause` when not `resolved`), `environment` (`swept` when the server's environment variables were checked), `hidden` (how many values were replaced with `[REDACTED]` by this reply's own mask, by kind: `declared`, `environment`, `pattern`; a value hidden before a template's filters ran (a step's prompt, a gate's instructions) shows its marker and is not counted here), `unchecked` (always `0` in this version), `unmaskable` (declared secrets too short to hide), `too_deep` (values shown as their type and size because they lie more than 64 levels deep) and, when the reply shows a gate's question, `question: declared_only` (the question hides only the declared secrets, except a failure's message the question reads through `$settlement.<step>.message`, in which every secret Realm knows of was hidden when the question opened; when a `realm` command other than `realm mcp` and `realm serve` opened the question, your home folder and user name were not among them (added after version 0.50.0)).",
     );
     claim(
       CONNECT_PAGE,
@@ -251,7 +251,7 @@ describe('#729 PR-3 correction 1 — whose standing a reply reports (F11, D-11),
     claim(
       CONNECT_PAGE,
       // Gap 2, unit (iv-a1), Words 10b: the clause for a failure's message.
-      "When a reply shows a gate's question, `question: declared_only` says the question hides only the declared secrets, except a failure's message the question reads through `$settlement.<step>.message`, in which every secret Realm knows of was hidden when the question opened, under `realm agent` and `realm listen` your home folder and user name aside (added after version 0.50.0).",
+      "When a reply shows a gate's question, `question: declared_only` says the question hides only the declared secrets, except a failure's message the question reads through `$settlement.<step>.message`, in which every secret Realm knows of was hidden when the question opened; when a `realm` command other than `realm mcp` and `realm serve` opened the question, your home folder and user name were not among them (added after version 0.50.0).",
     );
     claim(
       CONNECT_PAGE,
