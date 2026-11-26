@@ -59,7 +59,7 @@ describe('gap 2 (iv-a1), check 9 — the words', () => {
     // agent/question-hidden-agent-iva2ii.test.ts (people's words).
     claim(
       'docs/reference/mcp/run-state-and-health.md',
-      'An approval question that reads the message shows it to an assistant as its length too (`gate.display`, `pending_gate.resolved_message`); people still see its words.',
+      "An approval question that reads the message shows it to an assistant as its length too (`gate.display`, `pending_gate.resolved_message`), and so to a person who reads the question in the assistant's chat. The question Realm stores keeps its words: a form the assistant's app shows, the Slack post, `realm agent` and `realm run inspect` show them.",
     );
     // Executed by validate's note cells (file mode, --json `notes`, --strict passes).
     claim(

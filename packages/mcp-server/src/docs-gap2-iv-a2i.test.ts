@@ -30,7 +30,7 @@ describe('gap 2 (iv-a2-i), check 10 — the words', () => {
     // question-hidden-iva2ii.test.ts. The four copies Realm cannot see are not built (Not built).
     claim(
       RUN_STATE,
-      "Under `hidden`, a copy a workflow makes of a failure's message through `$settlement.<step>.message` is shown as its length too, before any filter: in a step's prompt (`next_actions[].prompt`), in a gated step's instructions (`gate.agent_hint`), and in the value a condition read (`skip_details`, a guard's `abort_context.conditions`, a precondition's refusal). A message already over 500 characters reads `‹N characters, not kept›` either way. An approval question that reads the message shows it to an assistant as its length too (`gate.display`, `pending_gate.resolved_message`); people still see its words. A copy Realm cannot see is never shaped: a step that copies the message into its own output, a gate's preview of that output, an agent's own answer, and a run's parameters. Added after version 0.50.0.",
+      "Under `hidden`, a copy a workflow makes of a failure's message through `$settlement.<step>.message` is shown as its length too, before any filter: in a step's prompt (`next_actions[].prompt`), in a gated step's instructions (`gate.agent_hint`), and in the value a condition read (`skip_details`, a guard's `abort_context.conditions`, a precondition's refusal). A message already over 500 characters reads `‹N characters, not kept›` either way. An approval question that reads the message shows it to an assistant as its length too (`gate.display`, `pending_gate.resolved_message`), and so to a person who reads the question in the assistant's chat. The question Realm stores keeps its words: a form the assistant's app shows, the Slack post, `realm agent` and `realm run inspect` show them. A copy Realm cannot see is never shaped: a step that copies the message into its own output, a gate's preview of that output, an agent's own answer, and a run's parameters. Added after version 0.50.0.",
     );
   });
 
@@ -57,7 +57,7 @@ describe('gap 2 (iv-a2-i), check 10 — the words', () => {
     // call's suggestion, the hint), and by (iv-b2a)'s cells for a step's output.
     claim(
       RUN_STATE,
-      "Text a workflow copies into a question or into a step's output is shown as that field always is; a copy through `$settlement.<step>.message` into a prompt, a gated step's `instructions` or a condition's value is shown as above.",
+      "Text a workflow copies into a question or into a step's output is shown as that field always is, except that a copy through `$settlement.<step>.message` into a prompt, an approval question, a gated step's `instructions` or a condition's value is shown as above.",
     );
   });
 

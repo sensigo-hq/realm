@@ -30,7 +30,7 @@ describe('gap 2 (iv-a2-ii), check 10 — the words', () => {
     // the shape before any filter, the rest of the question kept) and checks 2 and 6 (people's words).
     claim(
       'docs/reference/mcp/run-state-and-health.md',
-      'An approval question that reads the message shows it to an assistant as its length too (`gate.display`, `pending_gate.resolved_message`); people still see its words.',
+      "An approval question that reads the message shows it to an assistant as its length too (`gate.display`, `pending_gate.resolved_message`), and so to a person who reads the question in the assistant's chat. The question Realm stores keeps its words: a form the assistant's app shows, the Slack post, `realm agent` and `realm run inspect` show them.",
     );
     claim(
       'docs/reference/mcp/run-state-and-health.md',
@@ -76,7 +76,7 @@ describe('gap 2 (iv-a2-ii), check 10 — the words', () => {
     // Executed by check 1 (the stored twin) and checks 3, 4 and 9.
     claim(
       'docs/reference/run-record-and-export.md',
-      '| `resolved_message_shaped` | No | The same question with each failure message it read as its length, for an assistant under `--failure-text hidden`. Added after version 0.50.0. |',
+      '| `resolved_message_shaped` | No | The same question with each failure message it read as its length. It is kept whenever the question read a failure message the record holds, whatever the setting, and an assistant is served it, in place of `resolved_message`, only under `--failure-text hidden`. Added after version 0.50.0. |',
     );
     claim(
       'CHANGELOG.md',
