@@ -1540,7 +1540,7 @@ describe('#845 1b-i check 4: B3, a blank line inside a sentence', () => {
     expect(misses(rows)).toEqual([]);
   });
 
-  it('the conjunct controls stay `stitched`: a list mark with a capital item after such a blank line, skipped onto and quoted with its mark; an opening mark before a lowercase word', () => {
+  it('the conjunct controls: a list mark with a capital item after such a blank line, skipped onto and quoted with its mark, and an opening mark before a capital word stay `stitched`; an opening mark before a lowercase word is refused with `cause` (#845 1b-i-n)', () => {
     const A = 'The Tenant covenants with the Landlord as set out below';
     const rows: Row[] = [
       [
@@ -1568,16 +1568,21 @@ describe('#845 1b-i check 4: B3, a blank line inside a sentence', () => {
         'stitched',
       ],
       [
+        // #845 1b-i-n re-pin (main: `stitched`): after such a blank line, the first word past the
+        // opening mark must begin with a capital letter; refused only by rule 1, so with `cause`
         'an opening mark before a lowercase word',
-        lq(
-          `${A} … \u{201c}the Premises\u{201d} means the whole of the Building`,
-          `${A} in this clause\n\n\u{201c}the Premises\u{201d} means the whole of the Building.`,
-        ).state,
-        'stitched',
+        ((c) => `${c.state}${c.cause === undefined ? '' : `+${c.cause}`}`)(
+          lq(
+            `${A} … \u{201c}the Premises\u{201d} means the whole of the Building`,
+            `${A} in this clause\n\n\u{201c}the Premises\u{201d} means the whole of the Building.`,
+          ),
+        ),
+        'not_found+blank_line_join',
       ],
     ];
-    // (1) red when every list mark is refused after such a blank line, or the opening-mark allowance
-    //     is removed; (2) prints each differing row.
+    // (1) red when every list mark is refused after such a blank line, the opening-mark allowance
+    //     is removed, or an opening mark alone admits a lowercase word again; (2) prints each
+    //     differing row.
     expect(misses(rows)).toEqual([]);
   });
 });
@@ -1851,6 +1856,424 @@ describe('#845 1b-i check 9: walk M8 — a part found in two places that fit equ
     //     returns, or without fewer cut-short ends (as many), or with a part under the floor, takes a
     //     held-back candidate (R4), or runs on a budget of its own (the last row); (2) prints each
     //     differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------
+// #845 1b-i-n (`prompts/fix-845-1b-i-narrow.md`): after a blank line inside a sentence, the next
+// piece's first word, past opening marks and one clause number or list mark, begins with a capital
+// letter; there the `.` of the line's short first word ends a sentence only before a capital.
+
+const N_NOEND =
+  'The Landlord shall insure the Building against fire for its full reinstatement cost and the Tenant shall';
+const N_Q = 'The Landlord shall insure the Building against fire \u{2026} ';
+const N_PREV =
+  'The Landlord shall insure the Building against fire for its full reinstatement cost.';
+/** Under a line that ends mid-sentence, then a blank line. */
+const nMid = (line: string): string => `${N_NOEND}\n\n${line} to the roof.`;
+/** Under a heading that ends nothing (`4. RENT`), then a blank line. */
+const nHead = (line: string, indent = ''): string =>
+  `${N_PREV}\n\n4. RENT\n\n${indent}${line} on the usual quarter days.`;
+const N_NR = 'not be responsible for structural repairs';
+const N_SUB = `(subject to clause 5) ${N_NR}`;
+const N_KEEP = 'keep the Premises in good and substantial repair';
+const N_TT = 'The Tenant shall pay the insurance rent';
+const N_LANDLORD = 'The Landlord shall keep the structure in good repair';
+/** A quote's read: its state; on `not_found`, `+cause[join_at]` or `+nearest`. */
+const nRead = (quote: string, source: string): string => {
+  const c = lq(quote, source);
+  if (c.state !== 'not_found') return c.state;
+  if (c.cause !== undefined) return `not_found+${c.cause}${JSON.stringify(c.join_at)}`;
+  return c.nearest === undefined ? 'not_found' : 'not_found+nearest';
+};
+/** A refused row's want: `cause`, its join where the first piece after the `…` begins: right after
+ *  the `…`, or after a `“` before the first letter or digit (a double quotation mark is a break too,
+ *  so the piece between them is empty). */
+const nCause = (quote: string): string => {
+  const at = quote.indexOf('\u{2026}') + 1;
+  const word = at + quote.slice(at).search(/[\p{L}\p{N}]/u);
+  const mark = quote.indexOf('\u{201c}', at);
+  return `not_found+blank_line_join[${mark >= 0 && mark < word ? mark + 1 : at}]`;
+};
+type NCase = readonly [member: string, quote: string, source: string];
+const nRefused = (cases: readonly NCase[]): Row[] =>
+  cases.map(([member, quote, source]) => [member, nRead(quote, source), nCause(quote)]);
+const nStitched = (cases: readonly NCase[]): Row[] =>
+  cases.map(([member, quote, source]) => [member, nRead(quote, source), 'stitched']);
+
+describe('#845 1b-i-n check 1: after a blank line inside a sentence, a piece whose first word does not begin with a capital letter is refused with `cause`', () => {
+  it('read 1, the document’s opening mark: rows 1 to 4, and row 5’s `(a) “not…` with its label', () => {
+    const rows = nRefused([
+      ['row 1: `(subject…` with the `(`', N_Q + N_SUB, nMid(N_SUB)],
+      [
+        'row 2: `“not…` with the mark',
+        `${N_Q}\u{201c}${N_NR}\u{201d}`,
+        nMid(`\u{201c}${N_NR}\u{201d}`),
+      ],
+      ['row 2: `“not…` without the mark', N_Q + N_NR, nMid(`\u{201c}${N_NR}\u{201d}`)],
+      [
+        'row 3: `“the Landlord…` quoted from `the`',
+        `${N_Q}the Landlord shall keep the structure in good repair`,
+        nMid('\u{201c}the Landlord shall keep the structure in good repair'),
+      ],
+      ...(['(b)', '(a)', '(ii)'] as const).map((l): NCase => [
+        `row 4: \`${l} keep…\` with its label`,
+        `${N_Q}${l} ${N_KEEP}`,
+        nMid(`${l} ${N_KEEP}`),
+      ]),
+      [
+        'row 5: `(a) “not…` with its label',
+        `${N_Q}(a) \u{201c}${N_NR}`,
+        nMid(`(a) \u{201c}${N_NR}`),
+      ],
+    ]);
+    // (1) red when an opening mark alone is enough again (ce898697's clause); (2) prints each
+    //     differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it('read 2: row 5’s `6.2 “not…` and `(a) “not…` with the label skipped', () => {
+    const rows = nRefused([
+      ['row 5: `6.2 “not…`, label skipped', N_Q + N_NR, nMid(`6.2 \u{201c}${N_NR}`)],
+      ['row 5: `(a) “not…`, label skipped', N_Q + N_NR, nMid(`(a) \u{201c}${N_NR}`)],
+    ]);
+    // (1) red when read 2 reads as at ce898697 (an opening mark after the label is enough); (2)
+    //     prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it('read 3: rows 6 and 7, a list mark before an opening mark and a lowercase word', () => {
+    const rows = nRefused([
+      ['row 6: `- “not…`, the mark kept', `${N_Q}- \u{201c}${N_NR}`, nMid(`- \u{201c}${N_NR}`)],
+      ['row 6: `- “not…`, the mark dropped', N_Q + N_NR, nMid(`- \u{201c}${N_NR}`)],
+      [
+        'row 7: `• (subject…` with the bullet',
+        `${N_Q}\u{2022} ${N_SUB}`,
+        nMid(`\u{2022} ${N_SUB}`),
+      ],
+    ]);
+    // (1) red when read 3 reads as at ce898697; (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it('the numbered route: row 5’s `6.2 “not…` with its label', () => {
+    const rows = nRefused([
+      [
+        'row 5: `6.2 “not…` with its label',
+        `${N_Q}6.2 \u{201c}${N_NR}`,
+        nMid(`6.2 \u{201c}${N_NR}`),
+      ],
+    ]);
+    // (1) red when the numbered route reads as at ce898697 (a clause number before an opening mark
+    //     is enough); (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it('the `.` of the line’s first word: row 8, the label skipped, also on an indented line', () => {
+    const rows = nRefused([
+      ['row 8: `2. “not…`', N_Q + N_NR, nMid(`2. \u{201c}${N_NR}`)],
+      ['row 8: `b. (subject…`', N_Q + N_SUB, nMid(`b. ${N_SUB}`)],
+      ['row 8: `IV. (subject…`', N_Q + N_SUB, nMid(`IV. ${N_SUB}`)],
+      ['row 8: `12. (subject…`', N_Q + N_SUB, nMid(`12. ${N_SUB}`)],
+      ['row 8: `  b. (subject…`, indented', N_Q + N_SUB, nMid(`  b. ${N_SUB}`)],
+    ]);
+    // (1) red when rule 3 is left out (every row), or read without "past its indentation" (the
+    //     indented row); (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it('row 9, the stated tightenings: `(B) keep…`, `[b] The…`, two labels, `(a) 30 days…`, `(a) £48,000…`', () => {
+    const rows = nRefused([
+      ['row 9: `(B) keep…`', `${N_Q}(B) ${N_KEEP}`, nMid(`(B) ${N_KEEP}`)],
+      ['row 9: `[b] The…`', `${N_Q}[b] ${N_TT}`, nHead(`[b] ${N_TT}`)],
+      ['row 9: `6.1 (a) The…`, two labels', `${N_Q}6.1 (a) ${N_TT}`, nHead(`6.1 (a) ${N_TT}`)],
+      ['row 9: `- (a) The…`, two labels', `${N_Q}- (a) ${N_TT}`, nHead(`- (a) ${N_TT}`)],
+      [
+        'row 9: `(a) 30 days…`',
+        `${N_Q}(a) 30 days after the date of the invoice`,
+        `${N_PREV}\n\nPayment terms\n\n(a) 30 days after the date of the invoice.`,
+      ],
+      [
+        'row 9: `(a) £48,000…`',
+        `${N_Q}(a) \u{a3}48,000 per annum payable quarterly`,
+        `${N_PREV}\n\nSCHEDULE 3 Rent\n\n(a) \u{a3}48,000 per annum payable quarterly.`,
+      ],
+    ]);
+    // (1) red when an opening mark alone is enough again (`(B)`, `[b]`, `(a) 30`, `(a) £`), the
+    //     numbered route reads as at ce898697 (`6.1 (a)`), read 3 does (`- (a)`), or a second label
+    //     is passed (both two-label rows); (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it('row 10: `+ Keep…` and `= The…` with the sign, refused as at ce898697', () => {
+    const rows = nRefused([
+      [
+        'row 10: `+ Keep…` with the sign',
+        `${N_Q}+ Keep the Premises in good and substantial repair`,
+        nMid('+ Keep the Premises in good and substantial repair'),
+      ],
+      ['row 10: `= The…` with the sign', `${N_Q}= ${N_TT}`, nHead(`= ${N_TT}`)],
+    ]);
+    // GROUNDING for the routes (both read the same at ce898697). (1) `+ Keep…` is red when a list
+    //     mark the canonical form keeps is passed as a label though the quote includes it
+    //     (correction 1: it is passed only when the quote skips it); (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+});
+
+describe('#845 1b-i-n check 2: after a blank line inside a sentence, a first word that begins with a capital letter, past opening marks and one label, stays `stitched`', () => {
+  it('rows 11 to 13: every opening mark passed (`(The…`, `- “The…`, `2. “The…`, `“Rent” means…`)', () => {
+    const rows = nStitched([
+      ['row 13: `(The Landlord…`', `${N_Q}(${N_LANDLORD}`, nMid(`(${N_LANDLORD}`)],
+      ['row 13: `- “The…`', `${N_Q}- \u{201c}${N_LANDLORD}`, nMid(`- \u{201c}${N_LANDLORD}`)],
+      ['row 13: `2. “The…`', `${N_Q}2. \u{201c}${N_LANDLORD}`, nMid(`2. \u{201c}${N_LANDLORD}`)],
+      [
+        'row 13: `“Rent” means…`',
+        `${N_Q}\u{201c}Rent\u{201d} means the yearly rent reserved by this Lease`,
+        nMid('\u{201c}Rent\u{201d} means the yearly rent reserved by this Lease'),
+      ],
+    ]);
+    // `“The…` alone is the 1b-i conjunct control above. (1) red when every opening mark is refused
+    //     at such a line start; (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it('row 11: a lettered label read from the line’s start, its `(` part of it (`(a) The…`, `(ii) The…`, `(b) To keep…`)', () => {
+    const rows = nStitched(
+      (['(a)', '(ii)'] as const)
+        .flatMap((l): NCase[] => [
+          [`row 11: \`${l} The…\` under a heading`, `${N_Q}${l} ${N_TT}`, nHead(`${l} ${N_TT}`)],
+          [
+            `row 11: \`${l} The…\` under a line ending mid-sentence`,
+            `${N_Q}${l} ${N_TT}`,
+            nMid(`${l} ${N_TT}`),
+          ],
+        ])
+        .concat([
+          [
+            'row 11: `(b) To keep…` under a heading',
+            `${N_Q}(b) To ${N_KEEP}`,
+            nHead(`(b) To ${N_KEEP}`),
+          ],
+          [
+            'row 11: `(b) To keep…` under a line ending mid-sentence',
+            `${N_Q}(b) To ${N_KEEP}`,
+            nMid(`(b) To ${N_KEEP}`),
+          ],
+        ]),
+    );
+    // (1) red when the rule is read from inside the label (rev 2's reading, where `a)`, `ii)`, `b)`
+    //     are no clause numbers); (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it('rows 11 to 13: one clause number or list mark passed (`(1) The…`, `(i) The…`, `2. Keep…`, `6.1 The…`, `- Keep…`)', () => {
+    const rows = nStitched([
+      ['row 11: `(1) The…` under a heading', `${N_Q}(1) ${N_TT}`, nHead(`(1) ${N_TT}`)],
+      [
+        'row 11: `(1) The…` under a line ending mid-sentence',
+        `${N_Q}(1) ${N_TT}`,
+        nMid(`(1) ${N_TT}`),
+      ],
+      ['row 11: `(i) The…` under a heading', `${N_Q}(i) ${N_TT}`, nHead(`(i) ${N_TT}`)],
+      [
+        'row 13: `2. Keep…`',
+        `${N_Q}2. Keep the Premises in good and substantial repair`,
+        nMid('2. Keep the Premises in good and substantial repair'),
+      ],
+      ['row 13: `6.1 The…`', `${N_Q}6.1 ${N_TT}`, nMid(`6.1 ${N_TT}`)],
+      [
+        'row 13: `- Keep…`',
+        `${N_Q}- Keep the Premises in good and substantial repair`,
+        nMid('- Keep the Premises in good and substantial repair'),
+      ],
+    ]);
+    // (1) red when no label is passed (the first word read at the line's first letter or digit,
+    //     845-V-02's literal reading); (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it('row 13: a capital word that is no label stays a word (`A) keep…`, `IV. Keep…`)', () => {
+    const rows = nStitched([
+      ['row 13: `A) keep…`', `${N_Q}A) ${N_KEEP}`, nMid(`A) ${N_KEEP}`)],
+      [
+        'row 13: `IV. Keep…`',
+        `${N_Q}IV. Keep the Premises in good and substantial repair`,
+        nMid('IV. Keep the Premises in good and substantial repair'),
+      ],
+    ]);
+    // (1) red when `A)` or `IV.` is read as a label (handlers.md: `a)`, `A)` and `A.` are no clause
+    //     numbers), so the lowercase word after it decides; (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it('row 12: an indented line (two spaces, a tab, U+FEFF) under a heading', () => {
+    const lines = [
+      `(1) ${N_TT}`,
+      `(a) ${N_TT}`,
+      `(i) ${N_TT}`,
+      `(ii) ${N_TT}`,
+      `6.1 ${N_TT}`,
+      '\u{201c}Rent\u{201d} means the yearly rent reserved by this Lease',
+      `- ${N_TT}`,
+      N_TT,
+    ];
+    const rows = nStitched(
+      (
+        [
+          ['two spaces', '  '],
+          ['a tab', '\t'],
+          ['U+FEFF', '\u{feff}'],
+        ] as const
+      ).flatMap(([name, indent]) =>
+        lines.map((line): NCase => [
+          `row 12: \`${line.slice(0, 12)}…\`, ${name}`,
+          N_Q + line,
+          nHead(line, indent),
+        ]),
+      ),
+    );
+    // (1) red when the blanks before the label or mark are not passed; (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it('row 12: a blank between marks (`«` + no-break space + `Le Preneur »`, `“ The Landlord…`)', () => {
+    const rows = nStitched([
+      [
+        'row 12: `«` + no-break space + `Le Preneur » désigne…`',
+        'The Landlord shall insure the Building against fire \u{2026} \u{ab} Le Preneur \u{bb} d\u{e9}signe la soci\u{e9}t\u{e9}',
+        `${N_PREV}\n\n4. RENT\n\n\u{ab}\u{a0}Le Preneur\u{a0}\u{bb} d\u{e9}signe la soci\u{e9}t\u{e9}.`,
+      ],
+      ['row 12: `“ The Landlord…`', `${N_Q}\u{201c} ${N_LANDLORD}`, nMid(`\u{201c} ${N_LANDLORD}`)],
+    ]);
+    // (1) red when the blanks between marks are not passed; (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it('row 14: `b. “The…` with the label skipped, its `.` a sentence end before a capital past the mark', () => {
+    const rows = nStitched([
+      ['row 14: `b. “The…`, label skipped', N_Q + N_LANDLORD, nMid(`b. \u{201c}${N_LANDLORD}`)],
+    ]);
+    // (1) red when rule 3 reads the capital without passing opening marks; (2) prints the row.
+    expect(misses(rows)).toEqual([]);
+  });
+});
+
+describe('#845 1b-i-n check 3: a skip that also passes a label (row 15 and handlers.md :434)', () => {
+  it('straight onto the lowercase word: `nearest`, no `cause`; with an opening mark between: refused with `cause`', () => {
+    const R = 'The Tenant shall pay the rent on the usual quarter days';
+    const doc = (line: string) => `${R}\n\n${line} at all times.`;
+    const quote = (tail: string) => `The Tenant shall pay the rent \u{2026} ${tail}`;
+    const rows: Row[] = [
+      ...(['(b)', '2.', 'b.', 'IV.'] as const).map((l): Row => [
+        `row 15: \`${l} keep…\`, label skipped`,
+        nRead(
+          quote('keep the Premises in good repair'),
+          doc(`${l} keep the Premises in good repair`),
+        ),
+        'not_found+nearest',
+      ]),
+      [
+        ':434: `2. “not be…`, label skipped',
+        nRead(
+          quote('not be responsible for repairs'),
+          doc('2. \u{201c}not be responsible for repairs'),
+        ),
+        nCause(quote('not be responsible for repairs')),
+      ],
+      [
+        ':434: `b. (subject to clause 5) not…`, label skipped',
+        nRead(
+          quote('(subject to clause 5) not be responsible for repairs'),
+          doc('b. (subject to clause 5) not be responsible for repairs'),
+        ),
+        nCause(quote('(subject to clause 5) not be responsible for repairs')),
+      ],
+    ];
+    // (1) red when rule 3 is left out (`b. (subject…` reads `stitched`), or read 2 reads as at
+    //     ce898697 (`2. “not…` reads `stitched`); (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+});
+
+describe('#845 1b-i-n check 4: unchanged after a full stop', () => {
+  const END =
+    'The Landlord shall insure the Building against fire for its full reinstatement cost. The Tenant shall';
+  it('after `.` and one line break, the refused pieces read as at ce898697 (`stitched`)', () => {
+    const rows = nStitched([
+      ['`(subject…`', N_Q + N_SUB, `${END} pay.\n${N_SUB} to the roof.`],
+      ['`(b) keep…` with its label', `${N_Q}(b) ${N_KEEP}`, `${END} pay.\n(b) ${N_KEEP}.`],
+      ['`2. “not…`, label skipped', N_Q + N_NR, `${END} pay.\n2. \u{201c}${N_NR}.`],
+      ['`“not…`', N_Q + N_NR, `${END} pay.\n\u{201c}${N_NR}.`],
+      ['`b. (subject…`, label skipped', N_Q + N_SUB, `${END} pay.\nb. ${N_SUB}.`],
+    ]);
+    // (1) red when rules 1 to 3 apply at every line start; (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it('GROUNDING: after `. ` in mid-line, the same pieces pass by the full-stop test, at no line start', () => {
+    const rows = nStitched([
+      ['`(subject…`', N_Q + N_SUB, `${END} pay. ${N_SUB} to the roof.`],
+      ['`“not…`', N_Q + N_NR, `${END} pay. \u{201c}${N_NR}.`],
+    ]);
+    // GROUNDING: nothing in this unit can turn these red. (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------
+// #845 1b-i-n correction 1 (`prompts/fix-845-1b-i-n-correction-1.md`): a list mark the canonical form
+// keeps (`+`, `>`, `|` …), with a blank after it, at a blank line start: passed as the line's one list
+// mark when the quote skips it, as `-` is; the first word when the quote includes it.
+
+const N_KEEP_CAPITAL = 'Keep the Premises in good and substantial repair';
+const N_LANDLORD_LOWER = 'the Landlord shall keep the structure in good repair';
+
+describe('#845 1b-i-n correction 1: a kept-sign list mark after a blank line inside a sentence', () => {
+  it('C1-a: skipped onto a capital item, a kept-sign list mark (`>`, `+`, `|`, `∙`, `⦾`, `⦿`) stays `stitched`; skipped onto a lowercase one, `> the Landlord…` is refused with `cause`', () => {
+    const rows = [
+      ...nStitched([
+        ['`> The Landlord…`, mark skipped', N_Q + N_LANDLORD, nMid(`> ${N_LANDLORD}`)],
+        ['`+ Keep…`, mark skipped', N_Q + N_KEEP_CAPITAL, nMid(`+ ${N_KEEP_CAPITAL}`)],
+        ['`| Keep…`, mark skipped', N_Q + N_KEEP_CAPITAL, nMid(`| ${N_KEEP_CAPITAL}`)],
+        // the other kept-sign list marks, one pin each: U+2219, U+29BE, U+29BF
+        ['`∙ Keep…`, mark skipped', N_Q + N_KEEP_CAPITAL, nMid(`\u{2219} ${N_KEEP_CAPITAL}`)],
+        ['`⦾ Keep…`, mark skipped', N_Q + N_KEEP_CAPITAL, nMid(`\u{29be} ${N_KEEP_CAPITAL}`)],
+        ['`⦿ Keep…`, mark skipped', N_Q + N_KEEP_CAPITAL, nMid(`\u{29bf} ${N_KEEP_CAPITAL}`)],
+      ]),
+      ...nRefused([
+        ['`> the Landlord…`, mark skipped', N_Q + N_LANDLORD_LOWER, nMid(`> ${N_LANDLORD_LOWER}`)],
+      ]),
+    ];
+    // (1) red when a kept sign is never passed, as at 408a0073 (the six capital items then read
+    //     `not_found` with `cause`); (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it('C1-b: quoted with the sign, an item after a kept-sign list mark (`>`, `+`, `|`, `∙`, `⦾`, `⦿`) is refused with `cause`, as at 408a0073', () => {
+    const rows = nRefused([
+      ['`> The Landlord…` with the sign', `${N_Q}> ${N_LANDLORD}`, nMid(`> ${N_LANDLORD}`)],
+      ['`+ Keep…` with the sign', `${N_Q}+ ${N_KEEP_CAPITAL}`, nMid(`+ ${N_KEEP_CAPITAL}`)],
+      ['`| Keep…` with the sign', `${N_Q}| ${N_KEEP_CAPITAL}`, nMid(`| ${N_KEEP_CAPITAL}`)],
+      [
+        '`∙ Keep…` with the sign',
+        `${N_Q}\u{2219} ${N_KEEP_CAPITAL}`,
+        nMid(`\u{2219} ${N_KEEP_CAPITAL}`),
+      ],
+      [
+        '`⦾ Keep…` with the sign',
+        `${N_Q}\u{29be} ${N_KEEP_CAPITAL}`,
+        nMid(`\u{29be} ${N_KEEP_CAPITAL}`),
+      ],
+      [
+        '`⦿ Keep…` with the sign',
+        `${N_Q}\u{29bf} ${N_KEEP_CAPITAL}`,
+        nMid(`\u{29bf} ${N_KEEP_CAPITAL}`),
+      ],
+    ]);
+    // (1) red when a kept sign is passed whether or not the quote includes it (each then reads
+    //     `stitched`); (2) prints each differing row.
     expect(misses(rows)).toEqual([]);
   });
 });
