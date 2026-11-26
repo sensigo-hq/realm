@@ -6,7 +6,7 @@
 // (2) what it prints when it fails (never a key's text).
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -183,8 +183,68 @@ describe("check 7 — key list's limits words (Behaviour 6)", () => {
           'd-inv  made <when>  does not end  limits: workflows invoices, refunds',
           'e-both  made <when>  does not end  limits: tools start_run, get_run_state; workflows invoices',
           'f-ro-inv  made <when>  does not end  limits: read-only; workflows invoices',
-          'g-odd  made <when>  does not end  limits: workflows inv\\u0007',
+          // Correction 1: an id with anything but ASCII letters, digits, `.`, `_` and `-` is quoted.
+          'g-odd  made <when>  does not end  limits: workflows "inv\\u0007"',
         ],
+      });
+    },
+    BUDGET,
+  );
+});
+
+describe('correction 1 — key list never states a limit a key does not have', () => {
+  it(
+    'a workflow id that could read as two ids, a second limit or a plain id is quoted, its direction controls written out',
+    () => {
+      for (const [name, ...options] of [
+        ['h-semi', '--workflows', 'invoices; tools start_run'],
+        ['i-comma', '--workflows', 'placeholder'],
+        ['j-zw', '--workflows', 'invoices\u200b'],
+        ['k-rtl', '--workflows', 'inv\u202eoices,pay\u202eroll'],
+      ] as const) {
+        expect(realm('serve', 'key', 'add', name, ...options).status).toBe(0);
+      }
+      // `key add` splits on commas, so an id holding `, ` reaches the file only by a hand edit.
+      const path = serveKeysPath(home);
+      writeFileSync(
+        path,
+        readFileSync(path, 'utf8').replace('"placeholder"', JSON.stringify('a, b')),
+        'utf8',
+      );
+      const r = realm('serve', 'key', 'list');
+      // (1) red when the quoting is removed (each id prints bare), when the escape is the one before
+      //     this correction (U+202E prints raw), or when the bare test keeps state between calls;
+      //     (2) prints the exit and each line's limits.
+      expect({
+        status: r.status,
+        limits: r.stdout
+          .trimEnd()
+          .split('\n')
+          .map((l) => l.slice(l.indexOf('limits: '))),
+      }).toStrictEqual({
+        status: 0,
+        limits: [
+          'limits: workflows "invoices; tools start_run"',
+          'limits: workflows "a, b"',
+          'limits: workflows "invoices\u200b"',
+          'limits: workflows "inv\\u202eoices", "pay\\u202eroll"',
+        ],
+      });
+    },
+    BUDGET,
+  );
+
+  it(
+    "key add's echo of a refused name writes out U+202E",
+    () => {
+      const r = realm('serve', 'key', 'add', 'bad\u202ename');
+      // (1) red when escapedKeyName is the one before this correction (the raw character prints);
+      //     (2) prints the exit and both streams.
+      expect(r).toStrictEqual({
+        status: 1,
+        stdout: '',
+        stderr:
+          "Error: 'bad\\u202ename' is not a key name: use 1 to 64 characters from a-z, 0-9, '.', '_' and '-', starting with a letter or a digit. No key was changed.\n",
       });
     },
     BUDGET,
