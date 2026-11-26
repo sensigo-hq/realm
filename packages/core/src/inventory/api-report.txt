@@ -1397,6 +1397,7 @@ EvidenceSnapshot · type · public (beta: code_source)
       error_category?: ErrorCategory;
       agent_action?: AgentAction;
       stop_reason?: 'no_retry_policy' | 'total_timeout' | 'non_retryable' | 'attempts';
+      remembered?: RememberedStamp;
   }
 
 ExecuteChainOptions · type · public (beta: heldClaim)
@@ -2460,6 +2461,18 @@ NOT_PRICED_CAUSES · value · public
       "rate_missing"
   ];
 
+NOT_REMEMBERED_REASONS · value · public
+  const NOT_REMEMBERED_REASONS: readonly [
+      "settled_by_default",
+      "paths_unreadable",
+      "key_absent",
+      "key_null",
+      "key_empty",
+      "key_not_text",
+      "key_masked",
+      "value_too_large"
+  ];
+
 NOT_SECRET_ENV · value · internal
 NO_LEASE_FACTS · value · internal
 NO_REMEDY_CAUSES · value · internal
@@ -2509,6 +2522,16 @@ NotPricedCause · type · public
 
 NotRecordedKind · type · public
   type NotRecordedKind = Extract<RaceStopKind, 'held_elsewhere' | 'step_settled' | 'run_ended' | 'claim_removed'>;
+
+NotRemembered · type · public
+  interface NotRemembered {
+      as: string;
+      not_remembered: NotRememberedReason;
+      key_name?: string;
+  }
+
+NotRememberedReason · type · public
+  type NotRememberedReason = (typeof NOT_REMEMBERED_REASONS)[number];
 
 NotionAdapter · both · internal
 NotionAdapterConfig · type · internal
@@ -3132,6 +3155,26 @@ ReleaseStepDelta · type · public
       };
       evidence?: EvidenceSnapshot[];
   }
+
+RememberConfig · type · public
+  interface RememberConfig {
+      as: string;
+      key: Record<string, string>;
+      value?: Record<string, InputMapNode>;
+      keep_days: number;
+  }
+
+RememberedItem · type · public
+  interface RememberedItem {
+      as: string;
+      key: Record<string, string>;
+      value?: Record<string, unknown>;
+      choice?: string;
+      expires_at: string;
+  }
+
+RememberedStamp · type · public
+  type RememberedStamp = RememberedItem | NotRemembered;
 
 ReminderItem · type · internal
 ReminderOccurrence · type · internal
@@ -3818,6 +3861,7 @@ StepDefinition · type · public
       trust?: TrustLevel;
       llm_timeout_seconds?: number;
       on_model_failure?: 'fail' | 'default';
+      remember?: RememberConfig;
       timeout_seconds?: number;
       retry?: RetryConfig;
       validation_exhaustion?: {

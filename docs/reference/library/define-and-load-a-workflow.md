@@ -27,6 +27,7 @@ Where the docs teach it: [Workflow file: top-level fields](../workflow/top-level
 | [`McpServerConfig`](#mcpserverconfig) | interface | An MCP server a workflow's tool-enabled steps may call: its id and the command that starts it (`WorkflowDefinition.mcp_servers`). |
 | [`NotCheckedPath`](#notcheckedpath) | interface | An `input_map` path or a `when` condition that reads data the workflow declares no shape for (`validate --json`'s `not_checked`). |
 | [`ProtocolConfig`](#protocolconfig) | interface | A workflow's own words for the agent protocol: a quick-start paragraph that replaces the generated one, and rules added as they are written (`WorkflowDefinition.protocol`). |
+| [`RememberConfig`](#rememberconfig) | interface | What a step keeps for later runs of its workflow (`StepDefinition.remember`). |
 | [`RetryConfig`](#retryconfig) | interface | How a step is tried again after a failure: the most attempts, the backoff and its delays (`StepDefinition.retry`). |
 | [`ServiceDefinition`](#servicedefinition) | interface | A service a workflow declares under `services`: the adapter that calls it, its trust, and its rate limit (`WorkflowDefinition.services`). |
 | [`StepDefinition`](#stepdefinition) | interface | One step of a workflow, as the loaders return it under `WorkflowDefinition.steps`: what it does, how it runs, the steps it waits for, and its input and settings. |
@@ -337,6 +338,24 @@ interface ProtocolConfig {
 }
 ```
 
+### RememberConfig
+
+interface · public
+
+What a step keeps for later runs of its workflow (`StepDefinition.remember`). `as` names the
+memory; `key` names each part of its key with a path in this run (the step's own output is
+`context.resources.<this step>`); `value`, in `input_map`'s form, is what is kept (the step's output
+when absent); `keep_days` is how long, from 1 to 3650 days.
+
+```ts
+interface RememberConfig {
+    as: string;
+    key: Record<string, string>;
+    value?: Record<string, InputMapNode>;
+    keep_days: number;
+}
+```
+
 ### RetryConfig
 
 interface · public
@@ -402,6 +421,7 @@ interface StepDefinition {
     trust?: TrustLevel;
     llm_timeout_seconds?: number;
     on_model_failure?: 'fail' | 'default';
+    remember?: RememberConfig;
     timeout_seconds?: number;
     retry?: RetryConfig;
     validation_exhaustion?: {
