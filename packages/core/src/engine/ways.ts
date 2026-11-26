@@ -35,6 +35,7 @@ import {
   type Snapshot,
 } from './snapshot.js';
 import { renderTemplateWithBoundary, type StableBoundary } from './render-template.js';
+import { hidesFailureWords, noteShapedFailureMessage } from './failure-text.js';
 import type { LeaseFact, LeaseProbeReason } from '../store/lease-port.js';
 import { isLeaseFact, leaseFactOf, type LeaseFacts } from '../store/lease-facts.js';
 import { clockBasis, type Clock } from '../utils/clock.js';
@@ -1451,6 +1452,9 @@ export function stepBrief(
   const run = snapshot.record;
   const def = definition.steps[step];
   const execution = def?.execution === 'agent' ? 'agent' : 'auto';
+  // Gap 2, unit (iv-a2-i): a door's `hidden` set shows each failure message the prompt reads as its
+  // shape, before any filter; the brief is marked when one was, so the door lists the prompt.
+  let shaped = false;
   const rendered =
     def?.prompt !== undefined
       ? renderTemplateWithBoundary(
@@ -1470,12 +1474,26 @@ export function stepBrief(
           {
             time: { at: snapshot.at },
             ...(disclosure !== undefined
-              ? { disclosure: { set: disclosure, tier: tierFor(disclosure.audience) } }
+              ? {
+                  disclosure: {
+                    set: disclosure,
+                    tier: tierFor(disclosure.audience),
+                    ...(hidesFailureWords(disclosure)
+                      ? {
+                          failureMessagesShaped: {
+                            onShaped: () => {
+                              shaped = true;
+                            },
+                          },
+                        }
+                      : {}),
+                  },
+                }
               : {}),
           },
         )
       : undefined;
-  return {
+  const brief: StepBrief = {
     execution,
     description: def?.description ?? '',
     ...(rendered !== undefined ? { prompt: rendered.text, stable_prefix: rendered.stable } : {}),
@@ -1484,6 +1502,7 @@ export function stepBrief(
       : {}),
     ...(def?.handler !== undefined ? { handler: def.handler } : {}),
   };
+  return shaped ? noteShapedFailureMessage(brief) : brief;
 }
 
 /** The basis of a composition (D2 D-9): the snapshot's stamp, the enactor's kind, store and definition. */

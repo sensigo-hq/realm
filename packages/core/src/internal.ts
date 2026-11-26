@@ -1388,6 +1388,13 @@ export {
   carriesFailureWords,
   noteRealmProvider,
   isFailureWordsThrow,
+  // Gap 2, unit (iv-a2-i): a door's mark on its own copy of its set, the mark core puts on what it
+  // shaped (a brief, an opening gate), a condition's value as its shape, and a precondition's twins.
+  noteHidingFailureWords,
+  hidesFailureWords,
+  holdsShapedFailureMessage,
+  conditionValueHidingFailureText,
+  withPreconditionHidingFailureText,
 } from './engine/failure-text.js';
 export type { FailureTextMark } from './engine/failure-text.js';
 

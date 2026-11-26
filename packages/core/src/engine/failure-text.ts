@@ -13,7 +13,12 @@ import {
 } from './settlement.js';
 import { FIXED_TERMINAL_REASONS } from '../utils/disclosure-tables.js';
 import { shapeOf } from '../utils/disclosure-walk.js';
+import { WHOLE_NAMED_MARKER, type DisclosureSet } from '../utils/redaction.js';
 import { WorkflowError } from '../types/workflow-error.js';
+import { splitComparison } from './comparison-expr.js';
+import { preconditionRefusal } from './precondition.js';
+import { conditionReadsFailureMessages } from './render-template.js';
+import type { PreconditionFacts } from './pending.js';
 
 /** A failure's words as such a view shows them: their length, `‹string, N characters›`. */
 export function failureTextShape(text: string): string {
@@ -185,4 +190,113 @@ export function noteRealmProvider<T extends object>(provider: T): T {
 export function isFailureWordsThrow(thrown: unknown, provider: object): boolean {
   if (thrown instanceof WorkflowError) return false;
   return carriesFailureWords(thrown) || !REALM_PROVIDERS.has(provider);
+}
+
+// ── Copies of a failure's message, under the MCP door's `hidden` (gap 2, unit (iv-a2-i)) ────────
+// A workflow copies a step's failure message through `$settlement.<step>.message` into a step's
+// prompt, a gated step's `instructions` and the value a condition read. Under `--failure-text
+// hidden` an assistant sees such a copy as its length. The door turns it on by marking its own copy
+// of the disclosure set it hands core (never the embedder's object, never a CLI set); core's renders
+// read the mark, and mark what they shaped so the door lists it in the receipt.
+
+/** The sets a door marked: their renders show a failure message as its shape. */
+const HIDING_SETS = new WeakSet<DisclosureSet>();
+
+/** Internal: marks `set` — a door's own copy — as hiding a failure's words; returns it. */
+export function noteHidingFailureWords(set: DisclosureSet): DisclosureSet {
+  HIDING_SETS.add(set);
+  return set;
+}
+
+/** Whether `set` was marked by {@link noteHidingFailureWords}. */
+export function hidesFailureWords(set: DisclosureSet | undefined): boolean {
+  return set !== undefined && HIDING_SETS.has(set);
+}
+
+/** The objects a render put a shaped failure message into: a step's brief, an opening gate. */
+const SHAPED_COPIES = new WeakSet<object>();
+
+/** Internal to core: marks `holder` (a brief, a gate) as holding a shaped failure message; returns it. */
+export function noteShapedFailureMessage<T extends object>(holder: T): T {
+  SHAPED_COPIES.add(holder);
+  return holder;
+}
+
+/** Whether `holder` was marked by {@link noteShapedFailureMessage}. */
+export function holdsShapedFailureMessage(holder: unknown): boolean {
+  return typeof holder === 'object' && holder !== null && SHAPED_COPIES.has(holder);
+}
+
+/** Whether `condition`'s left-hand path reads a failure message ({@link conditionReadsFailureMessages}). */
+function readsFailureMessage(condition: string): boolean {
+  const split = splitComparison(condition);
+  if (split.kind === 'invalid') return false;
+  return conditionReadsFailureMessages(split.kind === 'path' ? split.path : split.lhsPath);
+}
+
+/**
+ * The value a condition read, as its shape under `hidden`, when `condition` reads it from a failure
+ * message's path, else `undefined` (shown as it is). `stored` is the value as the record keeps it
+ * (`skip_details`' or a guard's `resolved_value`: a string kept whole, an object as its JSON text).
+ * A value that is not text, and one already wholly a named marker (a message over 500 characters,
+ * `‹N characters, not kept›`), stay as they are.
+ */
+export function conditionValueHidingFailureText(
+  condition: string,
+  stored: unknown,
+): string | undefined {
+  if (typeof stored !== 'string' || WHOLE_NAMED_MARKER.test(stored)) return undefined;
+  return readsFailureMessage(condition) ? failureTextShape(stored) : undefined;
+}
+
+/** A failed precondition's value and sentence with the value as its shape. */
+export interface PreconditionHidingFailureText {
+  readonly value: string;
+  readonly refusal: string;
+}
+
+/** The shaped twins, keyed on the `precondition` facts object core built at the refusal. */
+const PRECONDITION_SHAPES = new WeakMap<object, PreconditionHidingFailureText>();
+
+/**
+ * Internal to core, at a precondition's refusal: when the precondition read a failure message's path,
+ * notes on `facts` the value as its shape — N the length of the value it read (an object's: its JSON
+ * text), never of the quoted form `facts.value` shows — and the sentence rebuilt with it. A value that
+ * is not text or an object, and one already wholly a named marker, note nothing.
+ */
+export function notePreconditionHidingFailureText(
+  facts: PreconditionFacts,
+  hint: string,
+  read: unknown,
+): void {
+  if (!readsFailureMessage(facts.expression)) return;
+  if (WHOLE_NAMED_MARKER.test(facts.value)) return;
+  let text: string;
+  if (typeof read === 'string') text = read;
+  else if (typeof read === 'object' && read !== null) text = JSON.stringify(read);
+  else return;
+  if (WHOLE_NAMED_MARKER.test(text)) return;
+  const value = failureTextShape(text);
+  PRECONDITION_SHAPES.set(facts, {
+    value,
+    refusal: preconditionRefusal(hint, facts.expression, value),
+  });
+}
+
+/**
+ * Under `hidden`, at a door: `entry` (a refused step's facts, a get_run_state entry) with its
+ * `refusal` and its `precondition.value` swapped for the shaped twins core noted, as a copy; `undefined`
+ * when core noted none (shown as it is). The sentence is core's own rebuild, never a parse of it.
+ */
+export function withPreconditionHidingFailureText<
+  T extends { readonly refusal?: string; readonly precondition?: PreconditionFacts },
+>(entry: T): T | undefined {
+  const shaped =
+    entry.precondition !== undefined ? PRECONDITION_SHAPES.get(entry.precondition) : undefined;
+  if (shaped === undefined) return undefined;
+  return {
+    ...entry,
+    refusal: shaped.refusal,
+    precondition: { ...entry.precondition!, value: shaped.value },
+  };
 }
