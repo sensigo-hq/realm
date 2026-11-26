@@ -3002,6 +3002,9 @@ Names this job reaches whose entry is on another page.
 - [`ModelText`](read-a-runs-record.md#modeltext): The text of each model call made for a step, on its evidence entry (`EvidenceSnapshot.model_text`).
 - [`NewerDefinitionFacts`](write-a-handler.md#newerdefinitionfacts): The facts of a registered workflow copy written by a later Realm: the copy's path, the definition format it states, and the latest this version reads.
 - [`NoRemedy`](run-and-drive-a-run.md#noremedy): Why an `Unavailable` entry offers no way on, with the cause's own facts (`Unavailable.no_remedy`).
+- [`NOT_REMEMBERED_REASONS`](read-a-runs-record.md#not_remembered_reasons): Why a step with `remember:` remembered nothing on its entry (`NotRemembered.not_remembered`).
+- [`NotRemembered`](read-a-runs-record.md#notremembered): A step with `remember:` that remembered nothing, and why (`EvidenceSnapshot.remembered`).
+- [`NotRememberedReason`](read-a-runs-record.md#notrememberedreason): One of the words in `NOT_REMEMBERED_REASONS`: why a step remembered nothing (`NotRemembered.not_remembered`).
 - [`OUTPUT_SOURCES`](read-a-runs-record.md#output_sources): Where a bare `auto` step's recorded output came from (`EvidenceSnapshot.output_source`).
 - [`OutputSource`](read-a-runs-record.md#outputsource): One of the words in `OUTPUT_SOURCES`: where a bare `auto` step's recorded output came from (`EvidenceSnapshot.output_source`).
 - [`PendingGate`](read-a-runs-record.md#pendinggate): The question a run waits on (`RunRecord.pending_gate`): its gate id, its step, the preview and choices shown to the person, when it opened, and its owner and time limit when set.
@@ -3016,6 +3019,9 @@ Names this job reaches whose entry is on another page.
 - [`ReclaimWay`](run-and-drive-a-run.md#reclaimway): Free a held step so it can run again: a person's act, never an agent's.
 - [`RefusedCheck`](run-and-drive-a-run.md#refusedcheck): The checks other than capability that refuse a step before its claim (`checkPreClaim`).
 - [`RegisterWay`](run-and-drive-a-run.md#registerway): Register the run's workflow again.
+- [`RememberConfig`](define-and-load-a-workflow.md#rememberconfig): What a step keeps for later runs of its workflow (`StepDefinition.remember`).
+- [`RememberedItem`](read-a-runs-record.md#remembereditem): What a step remembered for later runs (`EvidenceSnapshot.remembered`).
+- [`RememberedStamp`](read-a-runs-record.md#rememberedstamp): What a step's entry records about its `remember:` (`EvidenceSnapshot.remembered`): what it remembered, or why it remembered nothing.
 - [`REQUEST_ENDPOINTS`](read-a-runs-record.md#request_endpoints): Which kind of address a request went to: the provider SDK's default (`default`) or another one (`custom`) (`UsageRecord.endpoint`).
 - [`RequestEndpoint`](read-a-runs-record.md#requestendpoint): One of the words in `REQUEST_ENDPOINTS`: whether a request went to the provider's own default address or a custom one (`UsageRecord.endpoint`).
 - [`RespondWay`](run-and-drive-a-run.md#respondway): Answer the run's open question.

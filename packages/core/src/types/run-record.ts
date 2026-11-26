@@ -1034,6 +1034,62 @@ export const SUPPLIER_ROLES = ['agent'] as const;
 export type SupplierRole = (typeof SUPPLIER_ROLES)[number];
 
 /**
+ * Why a step with `remember:` remembered nothing on its entry (`NotRemembered.not_remembered`). In the
+ * order they are checked: it took its default answer; a path could not be read; a key part was
+ * absent, `null`, empty or only whitespace, not text or a finite number, or held a mask marker; what
+ * it would keep was over 32 KB as JSON.
+ * @public
+ */
+export const NOT_REMEMBERED_REASONS = [
+  'settled_by_default',
+  'paths_unreadable',
+  'key_absent',
+  'key_null',
+  'key_empty',
+  'key_not_text',
+  'key_masked',
+  'value_too_large',
+] as const;
+/**
+ * One of the words in `NOT_REMEMBERED_REASONS`: why a step remembered nothing
+ * (`NotRemembered.not_remembered`).
+ * @public
+ */
+export type NotRememberedReason = (typeof NOT_REMEMBERED_REASONS)[number];
+
+/**
+ * What a step remembered for later runs (`EvidenceSnapshot.remembered`). The memory's name, each key
+ * part as text, the declared value (absent: the entry's own output is the value, with no copy), a
+ * gated step's choice, and when it expires: the entry's `completed_at` plus `keep_days`.
+ * @public
+ */
+export interface RememberedItem {
+  as: string;
+  key: Record<string, string>;
+  value?: Record<string, unknown>;
+  choice?: string;
+  expires_at: string;
+}
+
+/**
+ * A step with `remember:` that remembered nothing, and why (`EvidenceSnapshot.remembered`). `key_name`
+ * names the first key part that failed, in the order the key was written.
+ * @public
+ */
+export interface NotRemembered {
+  as: string;
+  not_remembered: NotRememberedReason;
+  key_name?: string;
+}
+
+/**
+ * What a step's entry records about its `remember:` (`EvidenceSnapshot.remembered`): what it
+ * remembered, or why it remembered nothing.
+ * @public
+ */
+export type RememberedStamp = RememberedItem | NotRemembered;
+
+/**
  * Why an evidence entry names no supplier.
  * @public
  */
@@ -1347,6 +1403,14 @@ export interface EvidenceSnapshot {
    * used).
    */
   stop_reason?: 'no_retry_policy' | 'total_timeout' | 'non_retryable' | 'attempts';
+  /**
+   * Gap 3, unit 1a: on the entry a step with `remember:` wrote when it settled successfully (its last
+   * success entry; a gated step's answer entry), what it remembered for later runs, or why it
+   * remembered nothing. Written by the engine before the write, never by a store; never in
+   * `evidence_hash`. Absent on every entry of a step without `remember:`, on every other entry, and
+   * on entries written before the field. Nothing reads it back yet.
+   */
+  remembered?: RememberedStamp;
 }
 
 /** Every evidence entry status (`EvidenceSnapshot['status']`); compile-checked both ways. */

@@ -3046,6 +3046,9 @@ Names this job reaches whose entry is on another page.
 - [`ModelFailureKind`](read-a-runs-record.md#modelfailurekind): What a failed model request needs before it can succeed: one of `MODEL_FAILURE_KINDS`.
 - [`ModelText`](read-a-runs-record.md#modeltext): The text of each model call made for a step, on its evidence entry (`EvidenceSnapshot.model_text`).
 - [`NewerDefinitionFacts`](write-a-handler.md#newerdefinitionfacts): The facts of a registered workflow copy written by a later Realm: the copy's path, the definition format it states, and the latest this version reads.
+- [`NOT_REMEMBERED_REASONS`](read-a-runs-record.md#not_remembered_reasons): Why a step with `remember:` remembered nothing on its entry (`NotRemembered.not_remembered`).
+- [`NotRemembered`](read-a-runs-record.md#notremembered): A step with `remember:` that remembered nothing, and why (`EvidenceSnapshot.remembered`).
+- [`NotRememberedReason`](read-a-runs-record.md#notrememberedreason): One of the words in `NOT_REMEMBERED_REASONS`: why a step remembered nothing (`NotRemembered.not_remembered`).
 - [`OpenGateDelta`](implement-a-store.md#opengatedelta): Opens a human gate on a claimed step.
 - [`OpeningGate`](implement-a-store.md#openinggate): The gate an `open_gate` delta opens, without its instants: everything a `PendingGate` holds but `opened_at` and `expires_at`.
 - [`OutboundEntry`](implement-a-store.md#outboundentry): One row of a run's outbound ledger as a store keeps it, for store implementers only.
@@ -3073,6 +3076,9 @@ Names this job reaches whose entry is on another page.
 - [`ReconcileSummary`](implement-a-store.md#reconcilesummary): Summary returned by `JsonFileStore.reconcileKeys`.
 - [`RegistryListing`](implement-a-store.md#registrylisting): What a registrar's diagnostic listing returns (`WorkflowRegistrar.listWithDiagnostics`).
 - [`ReleaseStepDelta`](implement-a-store.md#releasestepdelta): Releases a step's claim without settling the step.
+- [`RememberConfig`](define-and-load-a-workflow.md#rememberconfig): What a step keeps for later runs of its workflow (`StepDefinition.remember`).
+- [`RememberedItem`](read-a-runs-record.md#remembereditem): What a step remembered for later runs (`EvidenceSnapshot.remembered`).
+- [`RememberedStamp`](read-a-runs-record.md#rememberedstamp): What a step's entry records about its `remember:` (`EvidenceSnapshot.remembered`): what it remembered, or why it remembered nothing.
 - [`REQUEST_ENDPOINTS`](read-a-runs-record.md#request_endpoints): Which kind of address a request went to: the provider SDK's default (`default`) or another one (`custom`) (`UsageRecord.endpoint`).
 - [`RequestEndpoint`](read-a-runs-record.md#requestendpoint): One of the words in `REQUEST_ENDPOINTS`: whether a request went to the provider's own default address or a custom one (`UsageRecord.endpoint`).
 - [`RetryConfig`](define-and-load-a-workflow.md#retryconfig): How a step is tried again after a failure: the most attempts, the backoff and its delays (`StepDefinition.retry`).

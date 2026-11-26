@@ -2,7 +2,7 @@
 
 <!-- description: Every field a step can have in workflow.yaml: which step kinds can use it, its type and default, what it does, and one example that uses them all. -->
 
-This page lists every field a step can have. There are 37, taken from the list the loader checks steps against. For each one it says which kinds of step can use it, its type and default, and what it does. One example file that uses all of them is at the end.
+This page lists every field a step can have. There are 38, taken from the list the loader checks steps against. For each one it says which kinds of step can use it, its type and default, and what it does. One example file that uses all of them is at the end.
 
 For the fields at the top of the file, see [Top-level fields](top-level-fields.md).
 
@@ -46,16 +46,18 @@ For the fields at the top of the file, see [Top-level fields](top-level-fields.m
 | `trust`                 | yes    | yes     | no      | no          |
 | `gate`                  | yes    | yes     | no      | no          |
 | `display`               | yes    | yes     | –       | –           |
+| `remember`              | yes    | yes     | no      | no          |
 | `abort_unless`          | no     | no      | yes     | no          |
 | `abort_message`         | no     | no      | yes     | no          |
 | `on_outcome`            | no     | no      | no      | yes         |
 
-Four fields have a further condition:
+Five fields have a further condition:
 
 - `tools` needs `input_schema` on the same step, and `mcp_servers` at the top of the file.
 - `tool_timeout` needs `tools` on the same step.
 - `structured_output` needs an `input_schema` or `output_schema` that the model provider can enforce.
 - `gate` needs `trust: human_confirmed` or `trust: human_reviewed` on the same step.
+- `remember` on an `auto` step needs `handler` or `uses_service` on the same step.
 
 ## What the step is
 
@@ -124,6 +126,30 @@ See [Agent-step controls](agent-step-controls.md) and [JSON Schema blocks](json-
 
 See [Gates](gates.md).
 
+## What a step remembers for later runs
+
+A step can keep something for later runs of its workflow, under a named key: for example the offer it made, by customer email.
+
+```yaml
+remember:
+  as: offers # required
+  key: { customer_email: context.resources.normalize_email.email } # required
+  value: { rung: context.resources.record_offer.rung } # optional
+  keep_days: 90 # required
+```
+
+| Field                | Type                       | Default  | What it does                                                                                      |
+| -------------------- | -------------------------- | -------- | ------------------------------------------------------------------------------------------------- |
+| `remember`           | map                        | None     | What the step keeps for later runs of its workflow.                                               |
+| `remember.as`        | name                       | Required | The memory's name.                                                                                |
+| `remember.key`       | map of names to paths      | Required | One or more named parts, each a path in this run. A part is kept as text, a number as its digits. |
+| `remember.value`     | map, in `input_map`'s form | None     | What to keep, in `input_map`'s form. Without it, the step's output is kept.                       |
+| `remember.keep_days` | whole number               | Required | How many days to keep each entry, from 1 to 3650.                                                 |
+
+`remember` goes on an agent step, or an auto step with `handler` or `uses_service`; the step's own output is `context.resources.<this step>`. A gated step remembers when its question is answered, with the choice. A step that failed, took its default answer or whose question expired remembers nothing. When a key part is missing, empty, null, masked, or not text or a number, or what it would keep is over 32 KB, the step remembers nothing: its entry says why, and the reply warns. A path that reads a step's failure message is refused, because a memory outlives the run. The step's entry records what it remembered (`remembered`), with `expires_at`: when it was written plus `keep_days`. Nothing reads it back yet.
+
+A name (`as`, and each part of `key`) is letters, digits and underscores, starts with a letter, and is at most 64 characters. See [The run record](../run-record-and-export.md) for the entry's `remembered`.
+
 ## Guards
 
 | Field           | Type                             | Default             | What it does                                        |
@@ -184,7 +210,7 @@ A `–` is accepted. Where the loader can tell that the field will do nothing, i
 
 ## A file that uses every field
 
-This file uses the 36 fields that a step itself can carry; `use_template` is shown in [Top-level fields](top-level-fields.md#templates). The file was validated, registered and run to completion.
+This file uses the 37 fields that a step itself can carry; `use_template` is shown in [Top-level fields](top-level-fields.md#templates). The file was validated, registered and run to completion.
 
 ```yaml
 id: every-step-field
@@ -292,6 +318,11 @@ steps:
     handler: publish_note
     config:
       channel: news
+    remember:
+      as: published
+      key: { note: run.params.path }
+      value: { summary: context.resources.summarise.summary }
+      keep_days: 30
 
   tidy:
     description: Remove temporary files, however the run ended.

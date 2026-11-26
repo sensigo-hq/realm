@@ -159,6 +159,7 @@ import { consumesInputMap, resolveInputMap } from './input-map.js';
 import { formatDuration, formatLagWords } from '../utils/duration.js';
 import { loadWorkflowContext } from './workflow-context-loader.js';
 import { gateChoicesOf } from '../workflow/yaml-loader.js';
+import { withRememberedStamp } from './remember-stamp.js';
 import {
   findEligibleSteps,
   findEligibleGuardSteps,
@@ -5249,12 +5250,15 @@ async function executeStepBody(
   // issue #279 (increment 1, PR-B): settles this completion atomically against FRESH state via
   // the store's own settleStep (#715 (b): the only path — the legacy fallback is deleted).
   const completeClaimToken = pendingRun.claims?.[options.command]?.token;
+  // Gap 3, unit 1a: a step with `remember:` stamps its success entry before the write, so the stamp
+  // rides the write and the reply; its warning goes only on the reply of the write that applied.
+  const remembered = withRememberedStamp(definition, options.command, allEvidence, pendingRun);
   const delta: SettleStepDelta = {
     kind: 'settle_step',
     step: options.command,
     outcome: 'complete',
     ...(completeClaimToken !== undefined ? { claimToken: completeClaimToken } : {}),
-    evidence: allEvidence,
+    evidence: remembered.entries,
   };
   let result: StoreSettlement;
   try {
@@ -5421,10 +5425,11 @@ async function executeStepBody(
       run_version: finalRun.version,
       status: 'ok',
       data: output,
-      evidence: allEvidence,
+      evidence: remembered.entries,
       warnings: mergeWarnings(
         traceWarnings,
         currentWarn,
+        remembered.warning,
         migratedSuccessWalCleanupWarning,
         migratedDefaultedStepsDurabilityWarning,
         ...reArmWarnings,
@@ -6421,6 +6426,14 @@ async function submitHumanResponseBody(
             ),
           ]
         : [];
+    // Gap 3, unit 1a: a gated step with `remember:` stamps its answer's entry, with the choice; the
+    // entry written when its gate opened is never stamped. Its warning goes only on the applied reply.
+    const remembered = withRememberedStamp(
+      definition,
+      run.pending_gate?.step_name,
+      gateResponseEvidence,
+      run,
+    );
     const delta: SettleGateDelta = {
       kind: 'settle_gate',
       gateId: options.gateId,
@@ -6439,7 +6452,7 @@ async function submitHumanResponseBody(
       ...(options.projectAnswerers !== undefined
         ? { projectAnswerers: options.projectAnswerers }
         : {}),
-      evidence: gateResponseEvidence,
+      evidence: remembered.entries,
     };
 
     let result: StoreSettlement;
@@ -6895,7 +6908,12 @@ async function submitHumanResponseBody(
             status: 'ok',
             data: { ...run.pending_gate!.preview, choice: options.choice },
             evidence: [],
-            warnings: mergeWarnings([], ...drainWarnings, defaultedStepsDurabilityWarning),
+            warnings: mergeWarnings(
+              [],
+              ...drainWarnings,
+              defaultedStepsDurabilityWarning,
+              remembered.warning,
+            ),
             errors: [],
             context_hint: migratedOrientation,
             run_phase: finalRun.run_phase,

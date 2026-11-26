@@ -13,7 +13,10 @@ import type {
   DriveFailuresField,
   EvidenceSnapshot,
   ModelAttempt,
+  NotRemembered,
   PendingGate,
+  RememberedItem,
+  RememberedStamp,
   RunRecord,
   SealedBy,
   SkipDetail,
@@ -294,6 +297,19 @@ const MODEL_ATTEMPT_TABLE = {
   then: 'fact',
 } as const satisfies Row<ModelAttempt>;
 
+/** Gap 3, unit 1a: a step's `remembered` stamp, flat over its two arms. The key's texts and the
+ *  value are values, masked as an output's are; the memory's name, the key part's name and the choice
+ *  are names the author wrote; why nothing was remembered and when it expires are facts. */
+const REMEMBERED_TABLE = {
+  as: 'fact',
+  key: 'value',
+  value: 'value',
+  choice: 'fact',
+  expires_at: 'fact',
+  not_remembered: 'fact',
+  key_name: 'fact',
+} as const satisfies Record<KeysOfUnion<RememberedStamp>, DisclosureClass>;
+
 /** One evidence snapshot: its inputs and outputs are values, its error a diagnostic copy, the gate
  *  message the question it asked. #729 PR-3 correction 4 (I-9): a digest of value content is a value
  *  (`evidence_hash` of the output, `trace_digest` of the trace) — a short value's digest would
@@ -346,6 +362,8 @@ export const EVIDENCE_TABLE = {
   answer: 'fact',
   client_prompt_requested: 'fact',
   principal: 'fact',
+  // Gap 3, unit 1a: what the step remembered for later runs, or why it remembered nothing.
+  remembered: { nested: REMEMBERED_TABLE },
 } as const satisfies Row<EvidenceSnapshot>;
 
 /** Correction 4 (I-9b, R43'): the output's digest derives from the output, the trace's from the
@@ -734,6 +752,20 @@ export const EVIDENCE_FACTS = {
   answer: 'id',
   principal: 'id',
 } as const satisfies FactProducers<typeof EVIDENCE_TABLE, EvidenceSnapshot>;
+
+/** Gap 3, unit 1a: per arm, as `CACHE_DIAGNOSTICS_FACTS`: over the union nothing would be forced. */
+export const REMEMBERED_FACTS = {
+  remembered: {
+    as: 'author_literal',
+    choice: 'author_literal',
+    expires_at: 'time',
+  } satisfies FactProducers<typeof REMEMBERED_TABLE, RememberedItem>,
+  not_remembered: {
+    as: 'author_literal',
+    not_remembered: 'enum',
+    key_name: 'author_literal',
+  } satisfies FactProducers<typeof REMEMBERED_TABLE, NotRemembered>,
+} as const;
 
 export const WHEN_FALSE_LEAF_FACTS = {
   leaf: 'author_literal',

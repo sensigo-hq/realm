@@ -48,6 +48,8 @@ import { checkParamsMap } from './params-map-check.js';
 import { isCredentialName } from '../utils/redaction.js';
 import { splitComparison, isPathShaped } from '../engine/comparison-expr.js';
 import { DEFAULT_EXECUTION_TIMEOUT_SECONDS } from '../engine/claim-liveness.js';
+import { holdsFailureMessages } from '../engine/render-template.js';
+import { rememberBlockProblems, rememberReadPaths } from './remember-block.js';
 import {
   compileCapturing,
   validateOutputSchema,
@@ -2228,6 +2230,47 @@ function parseWorkflowString(
             `Step '${stepName}': on_model_failure: 'default' requires 'validation_exhaustion.default_output' (the answer the step takes when its model request fails)`,
           ),
         );
+      }
+
+      // Gap 3, unit 1a: `remember:`. On a guard or a finalizer the minted refusal is the whole verdict
+      // (Words 1). A bare auto step is refused (Words 2): its output depends on what drives the run.
+      // On an agent step, or an auto step with a handler or a service: the block's schema (Words
+      // 3–7), `value` in input_map's form, and no path that reads a step's failure message (Words 8).
+      const checkRemember = (block: unknown): void => {
+        const at = (message: string): string => withKeyLine(stepName, 'remember', message);
+        errors.push(...rememberBlockProblems(stepName, block).map(at));
+        const value =
+          typeof block === 'object' && block !== null
+            ? (block as Record<string, unknown>)['value']
+            : undefined;
+        if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+          const formErrors: string[] = [];
+          validateInputMapNode(value, `Step '${stepName}': remember.value`, formErrors, 0);
+          errors.push(...formErrors.map(at));
+        }
+        for (const path of rememberReadPaths(block)) {
+          if (!holdsFailureMessages(path)) continue;
+          errors.push(
+            at(
+              `Step '${stepName}': 'remember' can't read a step's failure message ('${path}'): a memory outlives the run, and a failure's words can carry anything the failed request echoed back.`,
+            ),
+          );
+        }
+      };
+      if (step['remember'] !== undefined && step['execution'] === 'auto') {
+        if (step['handler'] === undefined && step['uses_service'] === undefined) {
+          errors.push(
+            withKeyLine(
+              stepName,
+              'remember',
+              `Step '${stepName}': 'remember' needs a step that makes its own output: an agent step, or an auto step with 'handler' or 'uses_service'. A bare auto step's output depends on what drives the run, so its memory would too.`,
+            ),
+          );
+        } else {
+          checkRemember(step['remember']);
+        }
+      } else if (step['remember'] !== undefined && step['execution'] === 'agent') {
+        checkRemember(step['remember']);
       }
 
       // WARN (do not reject): an idempotent auto step in a finalizer-bearing workflow gets
