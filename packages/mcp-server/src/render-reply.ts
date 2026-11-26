@@ -1534,6 +1534,12 @@ function preconditionsHidingFailureText(reply: EngineReply): string[] {
   });
 }
 
+/** Gap 2, unit (iv-a2-i): whether `text` holds one of the shaped values swapped into its reply, so
+ *  its path is listed in the receipt. */
+export function holdsShapedValue(text: string | undefined, swapped: readonly string[]): boolean {
+  return text !== undefined && swapped.some((value) => text.includes(value));
+}
+
 /** `entry` with its precondition's shaped twins, when core noted them; else `entry` itself. */
 function swappedEntry(entry: Unavailable): Unavailable {
   if (entry.code !== 'refused_before_claim') return entry;
@@ -1563,8 +1569,7 @@ function withCopiesShaped(
   reply: EngineReply,
   swapped: readonly string[],
 ): McpEnvelope {
-  const holds = (text: string | undefined): boolean =>
-    text !== undefined && swapped.some((value) => text.includes(value));
+  const holds = (text: string | undefined): boolean => holdsShapedValue(text, swapped);
   const paths = [
     ...(holdsShapedFailureMessage(reply.gate) && envelope.gate?.agent_hint !== undefined
       ? ['gate.agent_hint']
@@ -1744,8 +1749,11 @@ export function renderWaysOf(
   pace: Pace;
   person?: string;
   next_sentence: string;
+  /** Gap 2, unit (iv-a2-i), correction 1: the shaped values of the refused steps' preconditions
+   *  swapped in under `hidden` ({@link holdsShapedValue} tells a caller which text holds one). */
+  swapped: readonly string[];
 } {
-  const reply = {
+  const built = {
     ...composed,
     command: 'get_run_state',
     run_id: '',
@@ -1758,6 +1766,10 @@ export function renderWaysOf(
     errors: [],
     context_hint: '',
   } as EngineReply;
+  // Gap 2, unit (iv-a2-i), correction 1: under `hidden`, the one swap `renderReply` makes, before
+  // narrowing, so the sentence of what comes next says core's shaped twins too.
+  const swapped = host.failureText === 'hidden' ? preconditionsHidingFailureText(built) : [];
+  const reply = swapped.length > 0 ? withSwappedPreconditions(built) : built;
   const narrowed = narrowReply(reply, host);
   const progress = agentProgressWays(narrowed);
   // #715 (b) (03 §C; Amendment 12b): the pace at the composition's reading (`basis.as_of`); its
@@ -1786,6 +1798,7 @@ export function renderWaysOf(
     pace,
     ...(person !== undefined ? { person } : {}),
     next_sentence: nextSentence(narrowed, false),
+    swapped,
   };
 }
 

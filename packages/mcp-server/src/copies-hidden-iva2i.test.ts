@@ -136,6 +136,17 @@ const D = {
       auto({ preconditions: [`$settlement.classify.message != "${MODEL_MSG}"`] }),
     ),
   }),
+  batchHint: def('iva2i-batch-hint', {
+    boom: BOOM,
+    report: onFailure('boom', auto({ preconditions: ['$settlement.boom.message == "timeout"'] })),
+  }),
+  batchKind: def('iva2i-batch-kind', {
+    classify: CLASSIFY,
+    report: onFailure(
+      'classify',
+      auto({ preconditions: ['$settlement.classify.failure_kind == "x"'] }),
+    ),
+  }),
   marker: def('iva2i-marker', {
     long: { ...BOOM, handler: 'long' },
     preLong: onFailure('long', auto({ preconditions: ['$settlement.long.message == "x"'] })),
@@ -551,6 +562,52 @@ describe('gap 2 (iv-a2-i), check 8 — start_run_batch', () => {
       deduped: true,
       first: `plain: ${shape(MSG.length)}`,
       receipt: { shaped: ['started[0].next_actions[0].prompt'], failure_text: 'withheld' },
+    });
+  });
+});
+
+describe("gap 2 (iv-a2-i), correction 1 — start_run_batch's hand-back hint for a run its key matched", () => {
+  /** The batch's one entry for an item matching `runId` by its key, with the run's id kept apart. */
+  const matched = async (d: WorkflowDefinition, failureText: 'shown' | 'hidden') => {
+    const w = await world();
+    const runId = await w.failed(d, 'k-c1', false);
+    const batch = await (
+      await w.connect(failureText)
+    )('start_run_batch', {
+      workflow_id: d.id,
+      items: [{ params: {}, idempotency_key: 'k-c1' }],
+    });
+    const entry = (batch['started'] as Array<{ context_hint: string }>)[0]!;
+    return { hint: entry.context_hint.split(runId).join('<run>'), receipt: receiptOf(batch) };
+  };
+  const hint = (step: string, expression: string, value: string): string =>
+    `Matched existing run '<run>' (idempotent) in phase 'running'; no new run created. '${step}' cannot run (precondition): Precondition failed for step '${step}'. Precondition failed: '${expression}'. Resolved value: ${value}. Correct the workflow and register it again, then call advance_run; or end the run with abandon_run.`;
+  const MSG_TIMEOUT = '$settlement.boom.message == "timeout"';
+
+  it("under hidden: the refused step's precondition in the hint as core's shaped twin, the expression kept; the path listed", async () => {
+    // (a) red when renderWaysOf composes from the unswapped facts (the words show, the path is
+    //     absent), or when the batch does not add the path (the hint shaped, the path absent); (b)
+    //     prints the hint and the receipt.
+    expect(await matched(D.batchHint, 'hidden')).toEqual({
+      hint: hint('report', MSG_TIMEOUT, shape(MSG.length)),
+      receipt: { shaped: ['started[0].context_hint'], failure_text: 'withheld' },
+    });
+  });
+
+  it('under shown: the hint as today, the words', async () => {
+    // (a) red when a `shown` server's hint or receipt changes; (b) prints them.
+    expect(await matched(D.batchHint, 'shown')).toEqual({
+      hint: hint('report', MSG_TIMEOUT, `"${MSG}"`),
+      receipt: { shaped: [], failure_text: undefined },
+    });
+  });
+
+  it('a precondition on failure_kind: as today, no shape and no path', async () => {
+    // (a) red when the swap is applied on any `$settlement.` path (the sibling shows a shape); (b)
+    //     prints the hint and the receipt.
+    expect(await matched(D.batchKind, 'hidden')).toEqual({
+      hint: hint('report', '$settlement.classify.failure_kind == "x"', '"transient"'),
+      receipt: { shaped: [], failure_text: undefined },
     });
   });
 });
