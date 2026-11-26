@@ -1540,7 +1540,7 @@ describe('#845 1b-i check 4: B3, a blank line inside a sentence', () => {
     expect(misses(rows)).toEqual([]);
   });
 
-  it('the conjunct controls stay `stitched`: a list mark with a capital item after such a blank line, skipped onto and quoted with its mark; an opening mark before a lowercase word', () => {
+  it('the conjunct controls: a list mark with a capital item after such a blank line, skipped onto and quoted with its mark, and an opening mark before a capital word stay `stitched`; an opening mark before a lowercase word is refused with `cause` (#845 1b-i-n)', () => {
     const A = 'The Tenant covenants with the Landlord as set out below';
     const rows: Row[] = [
       [
@@ -1568,16 +1568,21 @@ describe('#845 1b-i check 4: B3, a blank line inside a sentence', () => {
         'stitched',
       ],
       [
+        // #845 1b-i-n re-pin (main: `stitched`): after such a blank line, the first word past the
+        // opening mark must begin with a capital letter; refused only by rule 1, so with `cause`
         'an opening mark before a lowercase word',
-        lq(
-          `${A} … \u{201c}the Premises\u{201d} means the whole of the Building`,
-          `${A} in this clause\n\n\u{201c}the Premises\u{201d} means the whole of the Building.`,
-        ).state,
-        'stitched',
+        ((c) => `${c.state}${c.cause === undefined ? '' : `+${c.cause}`}`)(
+          lq(
+            `${A} … \u{201c}the Premises\u{201d} means the whole of the Building`,
+            `${A} in this clause\n\n\u{201c}the Premises\u{201d} means the whole of the Building.`,
+          ),
+        ),
+        'not_found+blank_line_join',
       ],
     ];
-    // (1) red when every list mark is refused after such a blank line, or the opening-mark allowance
-    //     is removed; (2) prints each differing row.
+    // (1) red when every list mark is refused after such a blank line, the opening-mark allowance
+    //     is removed, or an opening mark alone admits a lowercase word again; (2) prints each
+    //     differing row.
     expect(misses(rows)).toEqual([]);
   });
 });
@@ -1851,6 +1856,809 @@ describe('#845 1b-i check 9: walk M8 — a part found in two places that fit equ
     //     returns, or without fewer cut-short ends (as many), or with a part under the floor, takes a
     //     held-back candidate (R4), or runs on a budget of its own (the last row); (2) prints each
     //     differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------
+// #845 1b-i-n (`prompts/fix-845-1b-i-narrow.md`): after a blank line inside a sentence, the next
+// piece's first word, past opening marks and one clause number or list mark, begins with a capital
+// letter; there the `.` of the line's short first word ends a sentence only before a capital.
+
+const N_NOEND =
+  'The Landlord shall insure the Building against fire for its full reinstatement cost and the Tenant shall';
+const N_Q = 'The Landlord shall insure the Building against fire \u{2026} ';
+const N_PREV =
+  'The Landlord shall insure the Building against fire for its full reinstatement cost.';
+/** Under a line that ends mid-sentence, then a blank line. */
+const nMid = (line: string): string => `${N_NOEND}\n\n${line} to the roof.`;
+/** Under a heading that ends nothing (`4. RENT`), then a blank line. */
+const nHead = (line: string, indent = ''): string =>
+  `${N_PREV}\n\n4. RENT\n\n${indent}${line} on the usual quarter days.`;
+const N_NR = 'not be responsible for structural repairs';
+const N_SUB = `(subject to clause 5) ${N_NR}`;
+const N_KEEP = 'keep the Premises in good and substantial repair';
+const N_TT = 'The Tenant shall pay the insurance rent';
+const N_LANDLORD = 'The Landlord shall keep the structure in good repair';
+/** A quote's read: its state; on `not_found`, `+cause[join_at]` or `+nearest`. */
+const nRead = (quote: string, source: string): string => {
+  const c = lq(quote, source);
+  if (c.state !== 'not_found') return c.state;
+  if (c.cause !== undefined) return `not_found+${c.cause}${JSON.stringify(c.join_at)}`;
+  return c.nearest === undefined ? 'not_found' : 'not_found+nearest';
+};
+/** A refused row's want: `cause`, its join where the first piece after the `…` begins: right after
+ *  the `…`, or after a `“` before the first letter or digit (a double quotation mark is a break too,
+ *  so the piece between them is empty). */
+const nCause = (quote: string): string => {
+  const at = quote.indexOf('\u{2026}') + 1;
+  const word = at + quote.slice(at).search(/[\p{L}\p{N}]/u);
+  const mark = quote.indexOf('\u{201c}', at);
+  return `not_found+blank_line_join[${mark >= 0 && mark < word ? mark + 1 : at}]`;
+};
+type NCase = readonly [member: string, quote: string, source: string];
+const nRefused = (cases: readonly NCase[]): Row[] =>
+  cases.map(([member, quote, source]) => [member, nRead(quote, source), nCause(quote)]);
+const nStitched = (cases: readonly NCase[]): Row[] =>
+  cases.map(([member, quote, source]) => [member, nRead(quote, source), 'stitched']);
+
+describe('#845 1b-i-n check 1: after a blank line inside a sentence, a piece whose first word does not begin with a capital letter is refused with `cause`', () => {
+  it('read 1, the document’s opening mark: rows 1 to 4, and row 5’s `(a) “not…` with its label', () => {
+    const rows = nRefused([
+      ['row 1: `(subject…` with the `(`', N_Q + N_SUB, nMid(N_SUB)],
+      [
+        'row 2: `“not…` with the mark',
+        `${N_Q}\u{201c}${N_NR}\u{201d}`,
+        nMid(`\u{201c}${N_NR}\u{201d}`),
+      ],
+      ['row 2: `“not…` without the mark', N_Q + N_NR, nMid(`\u{201c}${N_NR}\u{201d}`)],
+      [
+        'row 3: `“the Landlord…` quoted from `the`',
+        `${N_Q}the Landlord shall keep the structure in good repair`,
+        nMid('\u{201c}the Landlord shall keep the structure in good repair'),
+      ],
+      ...(['(b)', '(a)', '(ii)'] as const).map((l): NCase => [
+        `row 4: \`${l} keep…\` with its label`,
+        `${N_Q}${l} ${N_KEEP}`,
+        nMid(`${l} ${N_KEEP}`),
+      ]),
+      [
+        'row 5: `(a) “not…` with its label',
+        `${N_Q}(a) \u{201c}${N_NR}`,
+        nMid(`(a) \u{201c}${N_NR}`),
+      ],
+    ]);
+    // (1) red when an opening mark alone is enough again (ce898697's clause); (2) prints each
+    //     differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it('read 2: row 5’s `6.2 “not…` and `(a) “not…` with the label skipped', () => {
+    const rows = nRefused([
+      ['row 5: `6.2 “not…`, label skipped', N_Q + N_NR, nMid(`6.2 \u{201c}${N_NR}`)],
+      ['row 5: `(a) “not…`, label skipped', N_Q + N_NR, nMid(`(a) \u{201c}${N_NR}`)],
+    ]);
+    // (1) red when read 2 reads as at ce898697 (an opening mark after the label is enough); (2)
+    //     prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it('read 3: rows 6 and 7, a list mark before an opening mark and a lowercase word', () => {
+    const rows = nRefused([
+      ['row 6: `- “not…`, the mark kept', `${N_Q}- \u{201c}${N_NR}`, nMid(`- \u{201c}${N_NR}`)],
+      ['row 6: `- “not…`, the mark dropped', N_Q + N_NR, nMid(`- \u{201c}${N_NR}`)],
+      [
+        'row 7: `• (subject…` with the bullet',
+        `${N_Q}\u{2022} ${N_SUB}`,
+        nMid(`\u{2022} ${N_SUB}`),
+      ],
+    ]);
+    // (1) red when read 3 reads as at ce898697; (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it('the numbered route: row 5’s `6.2 “not…` with its label', () => {
+    const rows = nRefused([
+      [
+        'row 5: `6.2 “not…` with its label',
+        `${N_Q}6.2 \u{201c}${N_NR}`,
+        nMid(`6.2 \u{201c}${N_NR}`),
+      ],
+    ]);
+    // (1) red when the numbered route reads as at ce898697 (a clause number before an opening mark
+    //     is enough); (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it('the `.` of the line’s first word: row 8, the label skipped, also on an indented line', () => {
+    const rows = nRefused([
+      ['row 8: `2. “not…`', N_Q + N_NR, nMid(`2. \u{201c}${N_NR}`)],
+      ['row 8: `b. (subject…`', N_Q + N_SUB, nMid(`b. ${N_SUB}`)],
+      ['row 8: `IV. (subject…`', N_Q + N_SUB, nMid(`IV. ${N_SUB}`)],
+      ['row 8: `12. (subject…`', N_Q + N_SUB, nMid(`12. ${N_SUB}`)],
+      ['row 8: `  b. (subject…`, indented', N_Q + N_SUB, nMid(`  b. ${N_SUB}`)],
+    ]);
+    // (1) red when rule 3 is left out (every row), or read without "past its indentation" (the
+    //     indented row); (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it('row 9, the stated tightenings: `(B) keep…`, `[b] The…`, two labels, `(a) 30 days…`, `(a) £48,000…`', () => {
+    const rows = nRefused([
+      ['row 9: `(B) keep…`', `${N_Q}(B) ${N_KEEP}`, nMid(`(B) ${N_KEEP}`)],
+      ['row 9: `[b] The…`', `${N_Q}[b] ${N_TT}`, nHead(`[b] ${N_TT}`)],
+      ['row 9: `6.1 (a) The…`, two labels', `${N_Q}6.1 (a) ${N_TT}`, nHead(`6.1 (a) ${N_TT}`)],
+      ['row 9: `- (a) The…`, two labels', `${N_Q}- (a) ${N_TT}`, nHead(`- (a) ${N_TT}`)],
+      [
+        'row 9: `(a) 30 days…`',
+        `${N_Q}(a) 30 days after the date of the invoice`,
+        `${N_PREV}\n\nPayment terms\n\n(a) 30 days after the date of the invoice.`,
+      ],
+      [
+        'row 9: `(a) £48,000…`',
+        `${N_Q}(a) \u{a3}48,000 per annum payable quarterly`,
+        `${N_PREV}\n\nSCHEDULE 3 Rent\n\n(a) \u{a3}48,000 per annum payable quarterly.`,
+      ],
+    ]);
+    // (1) red when an opening mark alone is enough again (`(B)`, `[b]`, `(a) 30`, `(a) £`), the
+    //     numbered route reads as at ce898697 (`6.1 (a)`), read 3 does (`- (a)`), or a second label
+    //     is passed (both two-label rows); (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it('row 10: `+ Keep…` and `= The…` with the sign, refused as at ce898697', () => {
+    const rows = nRefused([
+      [
+        'row 10: `+ Keep…` with the sign',
+        `${N_Q}+ Keep the Premises in good and substantial repair`,
+        nMid('+ Keep the Premises in good and substantial repair'),
+      ],
+      ['row 10: `= The…` with the sign', `${N_Q}= ${N_TT}`, nHead(`= ${N_TT}`)],
+    ]);
+    // GROUNDING for the routes (both read the same at ce898697). (1) `+ Keep…` is red when a list
+    //     mark the canonical form keeps is passed as a label though the quote includes it
+    //     (correction 1: it is passed only when the quote skips it); (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+});
+
+describe('#845 1b-i-n check 2: after a blank line inside a sentence, a first word that begins with a capital letter, past opening marks and one label, stays `stitched`', () => {
+  it('rows 11 to 13: every opening mark passed (`(The…`, `- “The…`, `2. “The…`, `“Rent” means…`)', () => {
+    const rows = nStitched([
+      ['row 13: `(The Landlord…`', `${N_Q}(${N_LANDLORD}`, nMid(`(${N_LANDLORD}`)],
+      ['row 13: `- “The…`', `${N_Q}- \u{201c}${N_LANDLORD}`, nMid(`- \u{201c}${N_LANDLORD}`)],
+      ['row 13: `2. “The…`', `${N_Q}2. \u{201c}${N_LANDLORD}`, nMid(`2. \u{201c}${N_LANDLORD}`)],
+      [
+        'row 13: `“Rent” means…`',
+        `${N_Q}\u{201c}Rent\u{201d} means the yearly rent reserved by this Lease`,
+        nMid('\u{201c}Rent\u{201d} means the yearly rent reserved by this Lease'),
+      ],
+    ]);
+    // `“The…` alone is the 1b-i conjunct control above. (1) red when every opening mark is refused
+    //     at such a line start; (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it('row 11: a lettered label read from the line’s start, its `(` part of it (`(a) The…`, `(ii) The…`, `(b) To keep…`)', () => {
+    const rows = nStitched(
+      (['(a)', '(ii)'] as const)
+        .flatMap((l): NCase[] => [
+          [`row 11: \`${l} The…\` under a heading`, `${N_Q}${l} ${N_TT}`, nHead(`${l} ${N_TT}`)],
+          [
+            `row 11: \`${l} The…\` under a line ending mid-sentence`,
+            `${N_Q}${l} ${N_TT}`,
+            nMid(`${l} ${N_TT}`),
+          ],
+        ])
+        .concat([
+          [
+            'row 11: `(b) To keep…` under a heading',
+            `${N_Q}(b) To ${N_KEEP}`,
+            nHead(`(b) To ${N_KEEP}`),
+          ],
+          [
+            'row 11: `(b) To keep…` under a line ending mid-sentence',
+            `${N_Q}(b) To ${N_KEEP}`,
+            nMid(`(b) To ${N_KEEP}`),
+          ],
+        ]),
+    );
+    // (1) red when the rule is read from inside the label (rev 2's reading, where `a)`, `ii)`, `b)`
+    //     are no clause numbers); (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it('rows 11 to 13: one clause number or list mark passed (`(1) The…`, `(i) The…`, `2. Keep…`, `6.1 The…`, `- Keep…`)', () => {
+    const rows = nStitched([
+      ['row 11: `(1) The…` under a heading', `${N_Q}(1) ${N_TT}`, nHead(`(1) ${N_TT}`)],
+      [
+        'row 11: `(1) The…` under a line ending mid-sentence',
+        `${N_Q}(1) ${N_TT}`,
+        nMid(`(1) ${N_TT}`),
+      ],
+      ['row 11: `(i) The…` under a heading', `${N_Q}(i) ${N_TT}`, nHead(`(i) ${N_TT}`)],
+      [
+        'row 13: `2. Keep…`',
+        `${N_Q}2. Keep the Premises in good and substantial repair`,
+        nMid('2. Keep the Premises in good and substantial repair'),
+      ],
+      ['row 13: `6.1 The…`', `${N_Q}6.1 ${N_TT}`, nMid(`6.1 ${N_TT}`)],
+      [
+        'row 13: `- Keep…`',
+        `${N_Q}- Keep the Premises in good and substantial repair`,
+        nMid('- Keep the Premises in good and substantial repair'),
+      ],
+    ]);
+    // (1) red when no label is passed (the first word read at the line's first letter or digit,
+    //     845-V-02's literal reading); (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it('row 13: a capital word that is no label stays a word (`A) keep…`, `IV. Keep…`)', () => {
+    const rows = nStitched([
+      ['row 13: `A) keep…`', `${N_Q}A) ${N_KEEP}`, nMid(`A) ${N_KEEP}`)],
+      [
+        'row 13: `IV. Keep…`',
+        `${N_Q}IV. Keep the Premises in good and substantial repair`,
+        nMid('IV. Keep the Premises in good and substantial repair'),
+      ],
+    ]);
+    // (1) red when `A)` or `IV.` is read as a label (handlers.md: `a)`, `A)` and `A.` are no clause
+    //     numbers), so the lowercase word after it decides; (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it('row 12: an indented line (two spaces, a tab, U+FEFF) under a heading', () => {
+    const lines = [
+      `(1) ${N_TT}`,
+      `(a) ${N_TT}`,
+      `(i) ${N_TT}`,
+      `(ii) ${N_TT}`,
+      `6.1 ${N_TT}`,
+      '\u{201c}Rent\u{201d} means the yearly rent reserved by this Lease',
+      `- ${N_TT}`,
+      N_TT,
+    ];
+    const rows = nStitched(
+      (
+        [
+          ['two spaces', '  '],
+          ['a tab', '\t'],
+          ['U+FEFF', '\u{feff}'],
+        ] as const
+      ).flatMap(([name, indent]) =>
+        lines.map((line): NCase => [
+          `row 12: \`${line.slice(0, 12)}…\`, ${name}`,
+          N_Q + line,
+          nHead(line, indent),
+        ]),
+      ),
+    );
+    // (1) red when the blanks before the label or mark are not passed; (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it('row 12: a blank between marks (`«` + no-break space + `Le Preneur »`, `“ The Landlord…`)', () => {
+    const rows = nStitched([
+      [
+        'row 12: `«` + no-break space + `Le Preneur » désigne…`',
+        'The Landlord shall insure the Building against fire \u{2026} \u{ab} Le Preneur \u{bb} d\u{e9}signe la soci\u{e9}t\u{e9}',
+        `${N_PREV}\n\n4. RENT\n\n\u{ab}\u{a0}Le Preneur\u{a0}\u{bb} d\u{e9}signe la soci\u{e9}t\u{e9}.`,
+      ],
+      ['row 12: `“ The Landlord…`', `${N_Q}\u{201c} ${N_LANDLORD}`, nMid(`\u{201c} ${N_LANDLORD}`)],
+    ]);
+    // (1) red when the blanks between marks are not passed; (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it('row 14: `b. “The…` with the label skipped, its `.` a sentence end before a capital past the mark', () => {
+    const rows = nStitched([
+      ['row 14: `b. “The…`, label skipped', N_Q + N_LANDLORD, nMid(`b. \u{201c}${N_LANDLORD}`)],
+    ]);
+    // (1) red when rule 3 reads the capital without passing opening marks; (2) prints the row.
+    expect(misses(rows)).toEqual([]);
+  });
+});
+
+describe('#845 1b-i-n check 3: a skip that also passes a label (row 15 and handlers.md :434)', () => {
+  it('straight onto the lowercase word: `nearest`, no `cause`; with an opening mark between: refused with `cause`', () => {
+    const R = 'The Tenant shall pay the rent on the usual quarter days';
+    const doc = (line: string) => `${R}\n\n${line} at all times.`;
+    const quote = (tail: string) => `The Tenant shall pay the rent \u{2026} ${tail}`;
+    const rows: Row[] = [
+      ...(['(b)', '2.', 'b.', 'IV.'] as const).map((l): Row => [
+        `row 15: \`${l} keep…\`, label skipped`,
+        nRead(
+          quote('keep the Premises in good repair'),
+          doc(`${l} keep the Premises in good repair`),
+        ),
+        'not_found+nearest',
+      ]),
+      [
+        ':434: `2. “not be…`, label skipped',
+        nRead(
+          quote('not be responsible for repairs'),
+          doc('2. \u{201c}not be responsible for repairs'),
+        ),
+        nCause(quote('not be responsible for repairs')),
+      ],
+      [
+        ':434: `b. (subject to clause 5) not…`, label skipped',
+        nRead(
+          quote('(subject to clause 5) not be responsible for repairs'),
+          doc('b. (subject to clause 5) not be responsible for repairs'),
+        ),
+        nCause(quote('(subject to clause 5) not be responsible for repairs')),
+      ],
+    ];
+    // (1) red when rule 3 is left out (`b. (subject…` reads `stitched`), or read 2 reads as at
+    //     ce898697 (`2. “not…` reads `stitched`); (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+});
+
+describe('#845 1b-i-n check 4: unchanged after a full stop', () => {
+  const END =
+    'The Landlord shall insure the Building against fire for its full reinstatement cost. The Tenant shall';
+  it('after `.` and one line break, the refused pieces read as at ce898697 (`stitched`)', () => {
+    const rows = nStitched([
+      ['`(subject…`', N_Q + N_SUB, `${END} pay.\n${N_SUB} to the roof.`],
+      ['`(b) keep…` with its label', `${N_Q}(b) ${N_KEEP}`, `${END} pay.\n(b) ${N_KEEP}.`],
+      ['`2. “not…`, label skipped', N_Q + N_NR, `${END} pay.\n2. \u{201c}${N_NR}.`],
+      ['`“not…`', N_Q + N_NR, `${END} pay.\n\u{201c}${N_NR}.`],
+      ['`b. (subject…`, label skipped', N_Q + N_SUB, `${END} pay.\nb. ${N_SUB}.`],
+    ]);
+    // (1) red when rules 1 to 3 apply at every line start; (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it('GROUNDING: after `. ` in mid-line, the same pieces pass by the full-stop test, at no line start', () => {
+    const rows = nStitched([
+      ['`(subject…`', N_Q + N_SUB, `${END} pay. ${N_SUB} to the roof.`],
+      ['`“not…`', N_Q + N_NR, `${END} pay. \u{201c}${N_NR}.`],
+    ]);
+    // GROUNDING: nothing in this unit can turn these red. (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------
+// #845 1b-i-n correction 1 (`prompts/fix-845-1b-i-n-correction-1.md`): a list mark the canonical form
+// keeps (`+`, `>`, `|` …), with a blank after it, at a blank line start: passed as the line's one list
+// mark when the quote skips it, as `-` is; the first word when the quote includes it.
+
+const N_KEEP_CAPITAL = 'Keep the Premises in good and substantial repair';
+const N_LANDLORD_LOWER = 'the Landlord shall keep the structure in good repair';
+
+describe('#845 1b-i-n correction 1: a kept-sign list mark after a blank line inside a sentence', () => {
+  it('C1-a: skipped onto a capital item, a kept-sign list mark (`>`, `+`, `|`, `∙`, `⦾`, `⦿`) stays `stitched`; skipped onto a lowercase one, `> the Landlord…` is refused with `cause`', () => {
+    const rows = [
+      ...nStitched([
+        ['`> The Landlord…`, mark skipped', N_Q + N_LANDLORD, nMid(`> ${N_LANDLORD}`)],
+        ['`+ Keep…`, mark skipped', N_Q + N_KEEP_CAPITAL, nMid(`+ ${N_KEEP_CAPITAL}`)],
+        ['`| Keep…`, mark skipped', N_Q + N_KEEP_CAPITAL, nMid(`| ${N_KEEP_CAPITAL}`)],
+        // the other kept-sign list marks, one pin each: U+2219, U+29BE, U+29BF
+        ['`∙ Keep…`, mark skipped', N_Q + N_KEEP_CAPITAL, nMid(`\u{2219} ${N_KEEP_CAPITAL}`)],
+        ['`⦾ Keep…`, mark skipped', N_Q + N_KEEP_CAPITAL, nMid(`\u{29be} ${N_KEEP_CAPITAL}`)],
+        ['`⦿ Keep…`, mark skipped', N_Q + N_KEEP_CAPITAL, nMid(`\u{29bf} ${N_KEEP_CAPITAL}`)],
+      ]),
+      ...nRefused([
+        ['`> the Landlord…`, mark skipped', N_Q + N_LANDLORD_LOWER, nMid(`> ${N_LANDLORD_LOWER}`)],
+      ]),
+    ];
+    // (1) red when a kept sign is never passed, as at 408a0073 (the six capital items then read
+    //     `not_found` with `cause`); (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it('C1-b: quoted with the sign, an item after a kept-sign list mark (`>`, `+`, `|`, `∙`, `⦾`, `⦿`) is refused with `cause`, as at 408a0073', () => {
+    const rows = nRefused([
+      ['`> The Landlord…` with the sign', `${N_Q}> ${N_LANDLORD}`, nMid(`> ${N_LANDLORD}`)],
+      ['`+ Keep…` with the sign', `${N_Q}+ ${N_KEEP_CAPITAL}`, nMid(`+ ${N_KEEP_CAPITAL}`)],
+      ['`| Keep…` with the sign', `${N_Q}| ${N_KEEP_CAPITAL}`, nMid(`| ${N_KEEP_CAPITAL}`)],
+      [
+        '`∙ Keep…` with the sign',
+        `${N_Q}\u{2219} ${N_KEEP_CAPITAL}`,
+        nMid(`\u{2219} ${N_KEEP_CAPITAL}`),
+      ],
+      [
+        '`⦾ Keep…` with the sign',
+        `${N_Q}\u{29be} ${N_KEEP_CAPITAL}`,
+        nMid(`\u{29be} ${N_KEEP_CAPITAL}`),
+      ],
+      [
+        '`⦿ Keep…` with the sign',
+        `${N_Q}\u{29bf} ${N_KEEP_CAPITAL}`,
+        nMid(`\u{29bf} ${N_KEEP_CAPITAL}`),
+      ],
+    ]);
+    // (1) red when a kept sign is passed whether or not the quote includes it (each then reads
+    //     `stitched`); (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------
+// #845 1b-ii-a (`prompts/fix-845-1b-ii-a-word-edges.md`): a contraction ending in `'t` or `'nt` (R-F)
+// and a word hyphenated across a line (S1/F1) are no word edges. Every input is written as code points.
+
+/** A quote's read: its state, `+cause` when it carries one; with `parts`, its parts' offsets. */
+const iiRead = (quote: string, source: string, parts = false): string => {
+  releaseQuoteCache();
+  const r = locateQuote(quote, source);
+  const cause = r.cause === undefined ? '' : `+${r.cause}`;
+  return parts
+    ? `${r.state}${cause} ${r.parts.map((p) => `${p.start}-${p.end}`).join(',')}`
+    : r.state + cause;
+};
+type IICase = readonly [member: string, quote: string, source: string, want: string];
+const iiRows = (cases: readonly IICase[], parts = false): Row[] =>
+  cases.map(([m, q, s, want]) => [m, iiRead(q, s, parts), want]);
+/** R-F's marks: `'` `’` `‘` `´` `` ` `` `′` `＇`. */
+const RF_MARKS = [0x27, 0x2019, 0x2018, 0xb4, 0x60, 0x2032, 0xff07];
+const RF_SRC = (mark: number): string => `The Landlord can${ch(mark)}t refuse consent.`;
+
+describe("#845 1b-ii-a check 1: R-F, a contraction ending in `'t` or `'nt` makes no word edge", () => {
+  it('one per mark, at the end edge (`The Landlord can`) and at the start edge (`t refuse consent.`)', () => {
+    const rows = iiRows(
+      RF_MARKS.flatMap((m): IICase[] => [
+        [`${hex(m)} end edge`, 'The Landlord can', RF_SRC(m), 'not_found'],
+        [`${hex(m)} start edge`, 't refuse consent.', RF_SRC(m), 'not_found'],
+      ]),
+    );
+    // (1) red when the rule is removed (every row reads `exact`, or `reformatted` for U+2032), when
+    //     one mark is left out of the class (its two rows), or when the start edge is left out (the
+    //     start-edge rows); (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it('the spacing accents R-D3 reads as apostrophes: U+00B4 and U+00A8, at both edges', () => {
+    const rows = iiRows(
+      [0xb4, 0xa8].flatMap((m): IICase[] => [
+        [`${hex(m)} end edge`, 'The Landlord can', RF_SRC(m), 'not_found'],
+        [`${hex(m)} start edge`, 't refuse consent.', RF_SRC(m), 'not_found'],
+      ]),
+    );
+    // (1) red when the spacing accents are left out of the class (U+00B4 is one of them, so it
+    //     leaves too); (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it("`nt` in any case: `did` in `did'nt`, `DID` in `DID'NT`, `NT PAY` and `nt make` at the start edge", () => {
+    const rows = iiRows([
+      [
+        "`did` in `did'nt`",
+        'The Tenant did',
+        `The Tenant did${ch(0x27)}nt pay the rent.`,
+        'not_found',
+      ],
+      ["`DID` in `DID'NT`", 'THE TENANT DID', `THE TENANT DID${ch(0x27)}NT PAY.`, 'not_found'],
+      ["`NT PAY` in `DID'NT PAY`", 'NT PAY', `THE TENANT DID${ch(0x27)}NT PAY.`, 'not_found'],
+      [
+        "`nt make` in `did'nt make`",
+        'nt make structural alterations.',
+        `The Tenant did${ch(0x27)}nt make structural alterations.`,
+        'not_found',
+      ],
+    ]);
+    // (1) red when `nt` is read in lower case only (`DID'NT`, `NT PAY`); (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it('the mark carried by the quote: `CAN´` in `CAN´T`, `´T REFUSE` in `CAN´T REFUSE`, `the Tenant´` in `the Tenant´s`', () => {
+    const src = `THE LANDLORD CAN${ch(0xb4)}T REFUSE CONSENT.`;
+    const rows = iiRows([
+      ['`CAN´`', `THE LANDLORD CAN${ch(0xb4)}`, src, 'not_found'],
+      ['`´T REFUSE`', `${ch(0xb4)}T REFUSE CONSENT.`, src, 'not_found'],
+      ['`the Tenant´`', `the Tenant${ch(0xb4)}`, `the Tenant${ch(0xb4)}s covenants`, 'not_found'],
+    ]);
+    // (1) red when the carried mark is read only for `'` and `’`, as on b3ae158a (each then reads
+    //     `exact`); (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it("the re-check's R-F rows (items3 7–26, extra2 119) read their wants", () => {
+    const lord = 'The Landlord can';
+    const rows = iiRows([
+      [
+        "7 `CAN'T`",
+        'THE LANDLORD CAN',
+        `THE LANDLORD CAN${ch(0x27)}T REFUSE CONSENT.`,
+        'not_found',
+      ],
+      [
+        '8 `CAN’T`',
+        'THE LANDLORD CAN',
+        `THE LANDLORD CAN${ch(0x2019)}T REFUSE CONSENT.`,
+        'not_found',
+      ],
+      [
+        "9 `Can'T`",
+        'The Landlord Can',
+        `The Landlord Can${ch(0x27)}T refuse consent.`,
+        'not_found',
+      ],
+      [
+        "10 `WON'T`",
+        'THE LANDLORD WON',
+        `THE LANDLORD WON${ch(0x27)}T REFUSE CONSENT.`,
+        'not_found',
+      ],
+      ...[0xb4, 0x60, 0x2018, 0x2032, 0xff07, 0x2bc].map((m, i): IICase => [
+        `${11 + i} ${hex(m)}`,
+        lord,
+        RF_SRC(m),
+        'not_found',
+      ]),
+      ["17 `can' t`", lord, `The Landlord can${ch(0x27)} t refuse consent.`, 'exact'],
+      ["18 `can 't`", lord, `The Landlord can ${ch(0x27)}t refuse consent.`, 'exact'],
+      ["19 `did'nt`", 'The Tenant did', `The Tenant did${ch(0x27)}nt pay the rent.`, 'not_found'],
+      [
+        '20 `t make`',
+        't make structural alterations.',
+        `The Tenant won${ch(0x27)}t make structural alterations.`,
+        'not_found',
+      ],
+      [
+        '21 `nt make`',
+        'nt make structural alterations.',
+        `The Tenant did${ch(0x27)}nt make structural alterations.`,
+        'not_found',
+      ],
+      ["22 `can't`", lord, `The Landlord can${ch(0x27)}t refuse consent.`, 'not_found'],
+      [
+        '23 stitched `can´t`',
+        `The Landlord of the Building can ${ch(0x2026)} The Tenant shall pay the rent monthly.`,
+        `The Landlord of the Building can${ch(0xb4)}t insure it. The Tenant shall pay the rent monthly.`,
+        'not_found',
+      ],
+      ["24 `THE TENANT'S`", 'THE TENANT', `THE TENANT${ch(0x27)}S COVENANTS`, 'exact'],
+      [
+        "25 `the Landlord's`",
+        'the Landlord',
+        `subject to the Landlord${ch(0x27)}s consent`,
+        'exact',
+      ],
+      ["26 `Tenants' t…`", 'the Tenants', `the Tenants${ch(0x27)} terms apply`, 'exact'],
+      [
+        'extra2 119 `CAN´T`',
+        'THE LANDLORD CAN',
+        `THE LANDLORD CAN${ch(0xb4)}T REFUSE CONSENT.`,
+        'not_found',
+      ],
+    ]);
+    // (1) red when the rule is removed (rows 7–15, 19–21, 23 and 119); (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+});
+
+describe("#845 1b-ii-a check 2: R-F's controls stay as on b3ae158a", () => {
+  it('F1: `The Tenant shall pay the rent.` from `‘The Tenant shall pay the rent.’` stays `exact`', () => {
+    const quote = 'The Tenant shall pay the rent.';
+    // (a) red when both start-edge conditions are dropped (no letter after `t`; a letter before the
+    //     mark), so a `t` after any mark is a contraction's; (b) prints the state.
+    expect(iiRead(quote, `${ch(0x2018)}${quote}${ch(0x2019)} is clause 4.`)).toBe('exact');
+  });
+
+  it('the end edge: `the Landlord` before `’The Tenant` (a space dropped after a closing mark) stays `exact`', () => {
+    // (a) red when the no-letter-or-digit-after condition is dropped at the end edge; (b) prints it.
+    expect(iiRead('the Landlord', `${ch(0x2018)}the Landlord${ch(0x2019)}The Tenant`)).toBe(
+      'exact',
+    );
+  });
+
+  it("a quote ending with the mark before a letter stays `not_found`: `THE TENANT'` in `THE TENANT'S`, `the Landlord’` in `the Landlord’s`", () => {
+    const rows = iiRows([
+      ["`THE TENANT'`", `THE TENANT${ch(0x27)}`, `THE TENANT${ch(0x27)}S COVENANTS`, 'not_found'],
+      [
+        '`the Landlord’`',
+        `subject to the Landlord${ch(0x2019)}`,
+        `subject to the Landlord${ch(0x2019)}s consent`,
+        'not_found',
+      ],
+    ]);
+    // (1) red when :894's rule is dropped (the carried mark at the end, before any letter); (2)
+    //     prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it("the possessive: `THE TENANT` in `THE TENANT'S` stays `exact`", () => {
+    // (a) red when any letter after the mark is taken as a contraction's; (b) prints the state.
+    expect(iiRead('THE TENANT', `THE TENANT${ch(0x27)}S COVENANTS`)).toBe('exact');
+  });
+
+  it("the OCR spellings: `can` in `can' t` and in `can 't` stay `exact`", () => {
+    const rows = iiRows([
+      ["`can' t`", 'can', `The Landlord can${ch(0x27)} t refuse consent.`, 'exact'],
+      ["`can 't`", 'can', `The Landlord can ${ch(0x27)}t refuse consent.`, 'exact'],
+    ]);
+    // (1) red when the rule is applied with a space beside the apostrophe; (2) prints each row.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it("a name: `Toole` in `O'Toole` stays `exact`", () => {
+    // (a) red when both start-edge conditions are dropped, as F1's; (b) prints the state.
+    expect(iiRead('Toole shall pay', `Mr O${ch(0x27)}Toole shall pay.`)).toBe('exact');
+  });
+});
+
+describe("#845 1b-ii-a check 3: R-F's canonical half, the prime at the start edge", () => {
+  it('`T REFUSE CONSENT.` over `The Landlord can′t refuse consent.` reads `not_found` (`reformatted` on b3ae158a)', () => {
+    // (a) red when the canonical half's start edge is left out (the prime, the one mark the
+    //     canonical form keeps, then read `reformatted`); (b) prints the state.
+    expect(iiRead('T REFUSE CONSENT.', RF_SRC(0x2032))).toBe('not_found');
+  });
+});
+
+const UNPAID = (hyphen: string, lineBreak = '\n'): string =>
+  `If any Rent is un${hyphen}${lineBreak}paid twenty-one (21) days after becoming payable.`;
+const PAID = 'paid twenty-one (21) days after becoming payable';
+const AGREES = 'The Tenant agrees to pay interest.';
+const MID = ' The Landlord may then charge a fee. ';
+
+describe('#845 1b-ii-a check 4: S1/F1, a hyphen at a line break makes no word edge', () => {
+  it('the literal layer: `-`, U+2010, U+2011, U+00AD, CR LF, blanks and an invisible character on each side (items3 51–55)', () => {
+    const rows = iiRows([
+      ...['-', ch(0x2010), ch(0x2011), ch(0xad)].map((h): IICase => [
+        `${hex(h.codePointAt(0)!)} start edge`,
+        PAID,
+        UNPAID(h),
+        'not_found',
+      ]),
+      ['CR LF start edge', PAID, UNPAID('-', '\r\n'), 'not_found'],
+      ['blanks and U+200B', PAID, `If any Rent is un- \n ${ch(0x200b)}${PAID}.`, 'not_found'],
+      ['51 U+00AD start edge', PAID, UNPAID(ch(0xad)), 'not_found'],
+      [
+        '52 U+00AD end edge',
+        'The Landlord can',
+        `The Landlord can${ch(0xad)}\nnot refuse consent.`,
+        'not_found',
+      ],
+      ['53 `-` start edge', PAID, UNPAID('-'), 'not_found'],
+      [
+        '54 `-` end edge',
+        'The Landlord can',
+        'The Landlord can-\nnot refuse consent.',
+        'not_found',
+      ],
+      [
+        '55 CR LF end edge',
+        'The Landlord can',
+        'The Landlord can-\r\nnot refuse consent.',
+        'not_found',
+      ],
+      [
+        '56 `well-`⏎`known`, never joined',
+        'a well-known firm',
+        'a well-\nknown firm of surveyors',
+        'not_found',
+      ],
+    ]);
+    // (1) red when the test is left out of the literal match (each row but 56 reads `exact`); (2)
+    //     prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it('the whole canonical match: an upper-cased quote over the same shapes', () => {
+    const rows = iiRows([
+      ['`-` start edge', PAID.toUpperCase(), UNPAID('-'), 'not_found'],
+      ['U+00AD start edge', PAID.toUpperCase(), UNPAID(ch(0xad)), 'not_found'],
+      ['`-` end edge', 'THE LANDLORD CAN', 'The Landlord can-\nnot refuse consent.', 'not_found'],
+    ]);
+    // (1) red when the test is left out of the canonical match (each reads `reformatted`); (2) prints
+    //     each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it('the count: M1, `paid` in `The rent is paid. If any rent remains un-`⏎`paid for a week.`, has one occurrence', () => {
+    releaseQuoteCache();
+    const r = locateQuote('paid', 'The rent is paid. If any rent remains un-\npaid for a week.');
+    // (a) red when the test is left out of the count (2, as on b3ae158a); (b) prints state and count.
+    expect(`${r.state} ${r.occurrences}`).toBe('exact 1');
+  });
+
+  it("a part's end after `extend`: T4 and GR-10's one-piece shape, each ending at `un`, read `not_found`", () => {
+    const rows = iiRows([
+      [
+        'T4, two pieces',
+        `The rent is due; if any Rent shall at any time remain un ${ch(0x2026)} ${AGREES}`,
+        `The rent is due; if any Rent shall at any time remain un-\npaid for twenty-one days.${MID}${AGREES}`,
+        'not_found',
+      ],
+      [
+        'GR-10, one piece',
+        `If any Rent shall at any time remain un ${ch(0x2026)} ${AGREES}`,
+        `If any Rent shall at any time remain un-\npaid for twenty-one days. ${AGREES}`,
+        'not_found',
+      ],
+    ]);
+    // (1) red when the test is left out of a part's end after `extend` (T4 `stitched` 0-56,120-154);
+    //     (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it("a part's start: T1, `paid for twenty-one days. … The Tenant agrees…` after `un-`⏎, reads `not_found`", () => {
+    const quote = `paid for twenty-one days. ${ch(0x2026)} ${AGREES}`;
+    // (a) red when the test is left out of a part's start (`stitched` 41-66,103-137); (b) prints it.
+    expect(
+      iiRead(
+        quote,
+        `If any Rent shall at any time remain un-\npaid for twenty-one days.${MID}${AGREES}`,
+      ),
+    ).toBe('not_found');
+  });
+
+  it('the quote ending with the hyphen: I2 `remain un-` and its U+00AD form read `not_found`', () => {
+    const rows = iiRows([
+      [
+        'I2 `-`',
+        'If any Rent shall remain un-',
+        'If any Rent shall remain un-\npaid for twenty-one days.',
+        'not_found',
+      ],
+      [
+        'I3 U+00AD',
+        `If any Rent shall remain un${ch(0xad)}`,
+        `If any Rent shall remain un${ch(0xad)}\npaid for twenty-one days.`,
+        'not_found',
+      ],
+    ]);
+    // (1) red when the hyphen-ended quote is not covered (each `exact`); (2) prints each row.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it('the letter before the hyphen: extra2 124, `monthly in advance` after `payable -`⏎, stays `exact`', () => {
+    // (a) red when the letter before the hyphen is not required; (b) prints the state.
+    expect(iiRead('monthly in advance', 'The rent is payable -\nmonthly in advance.')).toBe(
+      'exact',
+    );
+  });
+});
+
+describe("#845 1b-ii-a check 5: B1, a quote that keeps the document's hyphenated line break and skips stays `stitched`", () => {
+  it('`…remain un-`⏎`paid for twenty-one days. … The Tenant agrees…`, with `-`, U+00AD and CR LF', () => {
+    const quote = (h: string, lb = '\n'): string =>
+      `If any Rent shall at any time remain un${h}${lb}paid for twenty-one days. ${ch(0x2026)} ${AGREES}`;
+    const source = (h: string, lb = '\n'): string =>
+      `If any Rent shall at any time remain un${h}${lb}paid for twenty-one days.${MID}${AGREES}`;
+    const rows = iiRows(
+      [
+        ['`-` LF', quote('-'), source('-'), 'stitched 0-66,103-137'],
+        ['U+00AD LF', quote(ch(0xad)), source(ch(0xad)), 'stitched 0-66,103-137'],
+        ['`-` CR LF', quote('-', '\r\n'), source('-', '\r\n'), 'stitched 0-67,104-138'],
+      ],
+      true,
+    );
+    // (1) red when S1/F1 is tested at every piece edge (the join inside the part then refuses it);
+    //     (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+});
+
+describe('#845 1b-ii-a check 6: a candidate R-F or S1/F1 refuses is neither accepted nor held back', () => {
+  it('N2b (`CAN′T`) and R1 (`…remain un-`⏎`paid…`), each across a blank line, read `not_found` with no `cause`; R2 keeps it', () => {
+    const rows = iiRows([
+      [
+        'N2b',
+        `The Tenant shall pay the rent ${ch(0x2026)} and the Landlord CAN`,
+        `The Tenant shall pay the rent quarterly\n\nand the Landlord CAN${ch(0x2032)}T enter.`,
+        'not_found',
+      ],
+      [
+        'R1',
+        `The Tenant shall pay the rent ${ch(0x2026)} and the whole of the Rent shall remain un`,
+        'The Tenant shall pay the rent quarterly\n\nand the whole of the Rent shall remain un-\npaid for a week.',
+        'not_found',
+      ],
+      [
+        'R2, a whole word',
+        `The Tenant shall pay the rent ${ch(0x2026)} and the whole of the Rent shall remain`,
+        'The Tenant shall pay the rent quarterly\n\nand the whole of the Rent shall remain un-\npaid for a week.',
+        'not_found+blank_line_join',
+      ],
+    ]);
+    // (1) red when R-F's canonical half is left out (N2b reads `not_found+blank_line_join`), or S1/F1
+    //     is left out of the stitched placement (R1 the same); (2) prints each differing row.
     expect(misses(rows)).toEqual([]);
   });
 });

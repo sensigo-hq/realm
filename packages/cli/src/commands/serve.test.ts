@@ -167,6 +167,9 @@ describe('realm serve — HTTP protocol', () => {
     expect(res.status).toBe(200);
     // StreamableHTTP responds with an SSE stream. Read chunks until we see a
     // data line rather than buffering the full body — the stream may stay open.
+    // CP-2: the line is whole only once its newline has arrived (or the stream
+    // has ended). tools/list carries get_run_state's outputSchema, so its one
+    // data line (~80,000 characters) spans more than one chunk.
     const reader = res.body!.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
@@ -174,7 +177,9 @@ describe('realm serve — HTTP protocol', () => {
     for (;;) {
       const { done, value } = await reader.read();
       if (value) buffer += decoder.decode(value, { stream: !done });
-      dataLine = buffer.split(/\r?\n/).find((line) => line.startsWith('data: '));
+      const lines = buffer.split(/\r?\n/);
+      const at = lines.findIndex((line) => line.startsWith('data: '));
+      if (at !== -1 && (at < lines.length - 1 || done)) dataLine = lines[at];
       if (dataLine !== undefined || done) break;
     }
     reader.releaseLock();

@@ -53,11 +53,12 @@ describe('gap 2 (iv-a1), check 9 — the words', () => {
   });
 
   it('run-state-and-health.md and loader-diagnostics.md', () => {
-    // A statement of what this unit does not shape (unit (iv-a2) does): the copy's words reach the
-    // assistant, as the drive's check 1 shows them in the question and the prompt.
+    // Unit (iv-a2-i) replaced this unit's sentence (what it did not shape) with what `hidden` now
+    // shapes: executed by mcp-server's copies-hidden-iva2i.test.ts; the question's words by its
+    // checks 3 and 5.
     claim(
       'docs/reference/mcp/run-state-and-health.md',
-      "A copy a workflow makes of a failure's message, through `$settlement.<step>.message` in a prompt, an approval question, `instructions` or a condition (a condition that turns out false keeps the value it read in `skip_details`), still shows its words to an assistant under `hidden`.",
+      'An approval question that reads the message still shows its words to an assistant under `hidden`.',
     );
     // Executed by validate's note cells (file mode, --json `notes`, --strict passes).
     claim(

@@ -36,6 +36,7 @@ import {
   setForSubject,
   SAFE_TOOL_CONSTANT_RUNLESS,
   FAILURE_TEXT_SHAPED,
+  holdsShapedValue,
 } from '../render-reply.js';
 import { toolMeta } from '../tool-annotations.js';
 import { ArgsNumbersRefusal, argsNumbersEnvelope, checkArgsNumbers } from './args-numbers.js';
@@ -317,6 +318,11 @@ export async function handleStartRunBatch(
     );
     const shapedReason = hideFailureText ? terminalReasonHidingFailureText(run) : undefined;
     if (shapedReason !== undefined) shapedPaths.push(`started[${started.length}].terminal_reason`);
+    const contextHint = `${handBackHint({ run, current: handedBack, definition, deduped })}${run.terminal_state ? '' : rendered.next_sentence}`;
+    // Gap 2, unit (iv-a2-i), correction 1: a refused step's shaped precondition in the hint, listed.
+    if (holdsShapedValue(contextHint, rendered.swapped)) {
+      shapedPaths.push(`started[${started.length}].context_hint`);
+    }
     started.push({
       run_id: run.id,
       ...(item.idempotency_key !== undefined ? { idempotency_key: item.idempotency_key } : {}),
@@ -331,7 +337,7 @@ export async function handleStartRunBatch(
         : {}),
       warnings,
       next_actions: rendered.next_actions,
-      context_hint: `${handBackHint({ run, current: handedBack, definition, deduped })}${run.terminal_state ? '' : rendered.next_sentence}`,
+      context_hint: contextHint,
     });
   }
   if (dedupHits > 0) {

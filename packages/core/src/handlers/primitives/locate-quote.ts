@@ -844,7 +844,66 @@ function wordEdgesHold(hay: string, at: number, needle: string): boolean {
   ) {
     return false;
   }
-  return true;
+  return contractionEdgesHold(hay, at, needle);
+}
+
+/** #845 (R-F): the marks a contraction ending in `'t` or `'nt` is written with — `'` `’` `‘` `` ` ``
+ *  `′` `＇`, and the spacing accents R-D3 reads as apostrophes (`isSpacingAccent`), `´` U+00B4 among
+ *  them. The canonical form drops every one of them but the prime `′` (U+2032). */
+const CONTRACTION_MARKS: ReadonlySet<string> = new Set(["'", '’', '‘', '`', '′', '＇']);
+const isContractionMark = (c: string | undefined): boolean =>
+  c !== undefined && (CONTRACTION_MARKS.has(c) || isSpacingAccent(c));
+const isTee = (c: string | undefined): boolean => c === 't' || c === 'T';
+
+/** #845 (R-F): whether `s` has a contraction's ending at `at` — `t`/`T`, or `n`/`N` then `t`/`T`
+ *  (in any case) — with no letter or digit after it. */
+function contractionEndingAt(s: string, at: number): boolean {
+  const c = cpAt(s, at);
+  if (isTee(c)) return !isAlnum(cpAt(s, at + 1));
+  return (c === 'n' || c === 'N') && isTee(cpAt(s, at + 1)) && !isAlnum(cpAt(s, at + 2));
+}
+
+/** #845 (R-F): a match at `at` cuts no contraction ending in `'t` or `'nt`. Its end is no edge when
+ *  its last character is a letter and `hay` goes on with one contraction mark and that ending
+ *  (`CAN` in `CAN'T`, `did` in `did'nt`); its start is none when it opens with that ending and
+ *  `hay` has one mark right before it and a letter before that (`t make` in `won't make`). A match
+ *  that carries the mark is refused too: one that ends with a mark right after a letter, where
+ *  `hay` goes on with a letter (`THE TENANT'` in `THE TENANT'S`, `CAN´` in `CAN´T`), and one that
+ *  opens with a mark and the ending right after a letter (`´T REFUSE` in `CAN´T REFUSE`).
+ *  Possessives (`'S`), other contractions (`you'll`), names (`O'Toole`) and a mark then a letter
+ *  (`‘The…`) keep their edge, and so does a space beside the mark (`can' t`). */
+function contractionEdgesHold(hay: string, at: number, needle: string): boolean {
+  const end = at + needle.length;
+  const last = cpBefore(needle, needle.length);
+  const after = cpAt(hay, end);
+  if (
+    isLetter(cpBefore(needle, pastMarks(needle, needle.length))) &&
+    isContractionMark(after) &&
+    contractionEndingAt(hay, end + after!.length)
+  ) {
+    return false;
+  }
+  if (
+    isContractionMark(last) &&
+    isLetter(cpBefore(needle, pastMarks(needle, needle.length - last!.length))) &&
+    isLetter(after)
+  ) {
+    return false;
+  }
+  const before = cpBefore(hay, at);
+  if (
+    contractionEndingAt(needle, 0) &&
+    isContractionMark(before) &&
+    isLetter(cpBefore(hay, pastMarks(hay, at - before!.length)))
+  ) {
+    return false;
+  }
+  const open = cpAt(needle, 0);
+  return !(
+    isContractionMark(open) &&
+    contractionEndingAt(needle, open!.length) &&
+    isLetter(cpBefore(hay, pastMarks(hay, at)))
+  );
 }
 
 /** The first occurrence at or after `fromIndex` whose number edges hold — read from `edgeHay` and
@@ -877,24 +936,17 @@ function findWithEdges(
 }
 
 /** The literal layer's edges (N1–N6, and 02 B): the number and word edges of the match at `at`,
- *  read in the literal view, so past every `\p{Cf}` character; and a word the source goes on with
- *  as a contraction is the same word — a quote ending with a letter before `'t` or `’t` and then no
- *  letter or digit (`The Tenant can` in `can't`), or ending with a letter and `'` or `’` before a
- *  letter (`The Tenant can'` in `can't`), ends inside it. */
-function literalEdgesHold(view: LiteralView, at: number, end: number): boolean {
+ *  read in the literal view, so past every `\p{Cf}` character (a contraction is one word there too,
+ *  #845 R-F: `contractionEdgesHold`); and, read in the source text itself, no edge inside a word a
+ *  hyphen breaks across a line (#845 S1/F1: `lineBreakHyphenEdgesHold`). */
+function literalEdgesHold(view: LiteralView, source: string, at: number, end: number): boolean {
   const from = view.at[at]!;
   const to = view.at[end]!;
   const needle = view.raw.slice(from, to);
   if (needle === '') return false;
   if (!numberEdgesHold(view.mapped, from, view.mapped.slice(from, to))) return false;
   if (!wordEdgesHold(view.raw, from, needle)) return false;
-  const last = needle[needle.length - 1];
-  const [a1, a2, a3] = [view.raw[to], view.raw[to + 1], view.raw[to + 2]];
-  if (isLetter(last) && (a1 === "'" || a1 === '’') && a2 === 't' && !isAlnum(a3)) return false;
-  if ((last === "'" || last === '’') && isLetter(needle[needle.length - 2]) && isLetter(a1)) {
-    return false;
-  }
-  return true;
+  return lineBreakHyphenEdgesHold(source, at, end);
 }
 
 /** The first literal occurrence of `quote` whose edges hold (`literalEdgesHold`), or -1. 02 C: the
@@ -906,16 +958,75 @@ function findLiteral(budget: Budget, source: string, quote: string, view: Litera
   const trail = quote.length - quote.trimEnd().length;
   if (lead + trail >= quote.length) return -1;
   let at = budget.indexOf(source, quote, 0);
-  while (at >= 0 && !literalEdgesHold(view, at + lead, at + quote.length - trail)) {
+  while (at >= 0 && !literalEdgesHold(view, source, at + lead, at + quote.length - trail)) {
     at = budget.indexOf(source, quote, at + 1);
   }
   return at;
 }
 
-/** Non-overlapping occurrences whose number and word edges hold (N6), and whose optional marks hold
- *  (§4: the quote's own). */
-function countWithEdges(budget: Budget, source: Bare, needle: string, marks: Marks): number {
-  const accept = (at: number): boolean => marksHold(source, at, marks);
+/** #845 (S1/F1): where the letter after a word's line-end hyphen at `h` starts, or -1 — a letter
+ *  (past its marks), then directly a word hyphen (`isWordHyphen`) or U+00AD at `h`, then, past
+ *  blanks and invisible characters, one line break (CR LF as one), then, past blanks and invisible
+ *  characters, a letter. Read in the source text itself, where U+00AD is the hyphen. A hyphen after
+ *  anything but a letter (`payable -`), or before a blank line, breaks no word. */
+function lineBreakHyphenAt(source: string, h: number): number {
+  const c = cpAt(source, h);
+  if (!(isWordHyphen(c) || c === '­')) return -1;
+  if (!isLetter(cpBefore(source, pastMarks(source, h)))) return -1;
+  let k = h + c!.length;
+  for (let d = cpAt(source, k); isBlank(d) || isInvisible(d); d = cpAt(source, k)) k += d!.length;
+  const lineBreak = cpAt(source, k);
+  if (!isLineBreak(lineBreak)) return -1;
+  k += lineBreak === '\r' && source[k + 1] === '\n' ? 2 : 1;
+  for (let d = cpAt(source, k); isBlank(d) || isInvisible(d); d = cpAt(source, k)) k += d!.length;
+  return isLetter(cpAt(source, k)) ? k : -1;
+}
+
+/** #845 (S1/F1): whether `p` of the source falls inside a word a hyphen breaks across a line, so it
+ *  is no word edge: right before the hyphen, right after it, or at the letter after the line break
+ *  (`paid` after `un-` ending a line). */
+function insideLineBreakHyphen(source: string, p: number): boolean {
+  if (lineBreakHyphenAt(source, p) >= 0) return true;
+  const before = cpBefore(source, p);
+  if (before !== undefined && lineBreakHyphenAt(source, p - before.length) >= 0) return true;
+  // back to the hyphen: past blanks and invisible characters (never U+00AD, the hyphen itself), one
+  // line break, and blanks and invisible characters again
+  let k = p;
+  const back = (): void => {
+    let d = cpBefore(source, k);
+    while (d !== '­' && (isBlank(d) || isInvisible(d))) {
+      k -= d!.length;
+      d = cpBefore(source, k);
+    }
+  };
+  back();
+  const lineBreak = cpBefore(source, k);
+  if (!isLineBreak(lineBreak)) return false;
+  k -= lineBreak === '\n' && source[k - 2] === '\r' ? 2 : 1;
+  back();
+  const hyphen = cpBefore(source, k);
+  return hyphen !== undefined && lineBreakHyphenAt(source, k - hyphen.length) >= 0;
+}
+
+/** #845 (S1/F1): a match from `start` to `end` of the source (raw offsets) starts and ends at a
+ *  word edge as far as a line-end hyphen goes: neither end falls inside a word it breaks. */
+function lineBreakHyphenEdgesHold(source: string, start: number, end: number): boolean {
+  return !insideLineBreakHyphen(source, start) && !insideLineBreakHyphen(source, end);
+}
+
+/** Non-overlapping occurrences whose number and word edges hold (N6), whose optional marks hold
+ *  (§4: the quote's own), and (#845 S1/F1) neither of whose ends falls inside a word a hyphen breaks
+ *  across a line of `raw`, the source text. */
+function countWithEdges(
+  budget: Budget,
+  source: Bare,
+  raw: string,
+  needle: string,
+  marks: Marks,
+): number {
+  const accept = (at: number): boolean =>
+    marksHold(source, at, marks) &&
+    lineBreakHyphenEdgesHold(raw, source.from[at]!, source.to[at + needle.length - 1]!);
   const hay = source.text;
   let count = 0;
   for (let at = findWithEdges(budget, hay, needle, 0, hay, needle, true, accept); at >= 0;) {
@@ -1275,6 +1386,105 @@ function listMarkBack(source: string, at: number): number {
   return isListMark(mark.c) ? mark.at : -1;
 }
 
+/** #845 (1b-i-n): a sign the canonical form keeps (`+`, `>`, `|`, `=`, `£`, `%` …; never a dash,
+ *  which it writes as `-` and drops): a piece may start on one, so it begins the first word. */
+const isKeptSign = (c: string | undefined): boolean => !isDash(c) && isNumberSymbol(c);
+
+/** #845 (1b-i-n): where the label at `at` ends, or -1. A clause number as read 2 reads one: `(` with
+ *  1–4 letters or digits and `)` (`(a)`, `(iv)`), or digits joined by `.` or closed by `.` or `)`
+ *  with a blank after them (`6.2`, `12.`, never bare digits); or a list mark with a blank after it
+ *  (a run of `#` too; #845, M8r). A list mark that is also a kept sign (`+`, `>`, `|` …) is a label
+ *  only when it ends by `start`, where the part begins: the quote skipped it (correction 1). */
+function headLabelEnd(source: string, at: number, start: number): number {
+  const first = stepOn(source, at);
+  if (first.c === '(') {
+    let n = 0;
+    let p = stepOn(source, first.at);
+    while (n < 5 && (isLetter(p.c) || isDigit(p.c))) {
+      n++;
+      p = stepOn(source, p.at);
+    }
+    return n >= 1 && n <= 4 && p.c === ')' ? p.at : -1;
+  }
+  if (isDigit(first.c)) {
+    let j = first.at;
+    let dotted = false;
+    for (;;) {
+      for (let p = stepOn(source, j); isDigit(p.c); p = stepOn(source, j)) j = p.at;
+      const dot = stepOn(source, j);
+      if (dot.c !== '.' || !isDigit(stepOn(source, dot.at).c)) break;
+      j = dot.at;
+      dotted = true;
+    }
+    const close = stepOn(source, j);
+    const closed = close.c === '.' || close.c === ')';
+    if (closed) j = close.at;
+    return (dotted || closed) && isBlank(stepOn(source, j).c) ? j : -1;
+  }
+  if (first.c === '#' || (isListMark(first.c) && (!isKeptSign(first.c) || first.at <= start))) {
+    let j = first.at;
+    if (first.c === '#')
+      for (let p = stepOn(source, j); p.c === '#'; p = stepOn(source, j)) j = p.at;
+    return isBlank(stepOn(source, j).c) ? j : -1;
+  }
+  return -1;
+}
+
+/** #845 (1b-i-n): at a `blank` line start, whether the line's first word begins with a capital
+ *  letter (`isCapital`, past invisible characters). From `from`, where the line begins, the walk
+ *  passes blanks and invisible characters anywhere, opening marks, and at most one label
+ *  (`headLabelEnd`). A `(` that opens a clause number is part of it, never an opening mark; a kept
+ *  sign (`isKeptSign`) begins the first word, unless it is a list mark the quote skipped (the part
+ *  begins at `start`, after it). A second label, or a first word that begins with a lowercase
+ *  letter, a digit, a kept sign or an uncased letter, does not hold. */
+function blankHeadHolds(source: string, from: number, start: number): boolean {
+  let labels = 0;
+  let at = from;
+  for (;;) {
+    const p = stepOn(source, at);
+    if (isBlank(p.c)) {
+      at = p.at;
+      continue;
+    }
+    const label = headLabelEnd(source, at, start);
+    if (label >= 0) {
+      labels++;
+      at = label;
+      continue;
+    }
+    if (isOpeningMark(p.c)) {
+      at = p.at;
+      continue;
+    }
+    return labels <= 1 && isCapital(p.c);
+  }
+}
+
+/** #845 (1b-i-n): whether the `.` at `dot` closes the first word of a line past its indentation,
+ *  that word being a clause number (`2`, `12`, `6.2`) or 1–4 letters (`b`, `IV`), at a `blank` line
+ *  start: there it ends a sentence only before a capital letter, past blanks and opening marks. */
+function stopsBlankLineWord(source: string, dot: number): boolean {
+  let start = dot;
+  let letters = 0;
+  let digits = false;
+  for (let p = stepBack(source, start); ; p = stepBack(source, start)) {
+    if (isLetter(p.c)) letters++;
+    else if (isDigit(p.c)) digits = true;
+    else if (!(p.c === '.' && digits && isDigit(stepBack(source, p.at).c))) break;
+    start = p.at;
+  }
+  if (letters > 0 ? digits || letters > 4 : !digits) return false;
+  const before = stepBack(source, blanksBack(source, start));
+  return isLineBreak(before.c) && lineStart(source, before.at, true) === 'blank';
+}
+
+/** From `at` on, past blanks and opening marks, whether a capital letter follows. */
+function capitalPastMarks(source: string, at: number): boolean {
+  let p = stepOn(source, at);
+  while (isBlank(p.c) || isOpeningMark(p.c)) p = stepOn(source, p.at);
+  return isCapital(p.c);
+}
+
 /** How a line counts as a line start, by its kind (`lineStart`). */
 type LineStart = 'free' | 'sentence' | 'blank';
 
@@ -1323,9 +1533,9 @@ function lineEnding(source: string, p: Step): 'clause' | 'sentence' | undefined 
  *  #845 (B3): when the line before is blank (it holds only blanks and invisible characters), the walk
  *  passes every blank line to the last line holding anything else. After a line that ends a sentence,
  *  a clause or a table row, or at the text's start, the blank line changes nothing (`free`); after a
- *  line that ends none of those, it is `blank`: the next piece begins as a sentence does after a full
- *  stop, and a clause number or a list mark counts only before such a beginning. With `strict` false
- *  — rule 1 left out, for a held-back candidate (Q-C) — a blank line counts `free`. */
+ *  line that ends none of those, it is `blank`: the line's first word, past opening marks and one
+ *  clause number or list mark, begins with a capital letter (#845 1b-i-n, `blankHeadHolds`). With
+ *  `strict` false — rule 1 left out, for a held-back candidate (Q-C) — a blank line counts `free`. */
 function lineStart(source: string, lineBreak: number, strict: boolean): LineStart | undefined {
   // #845 (R-C2, R-A2): read back by code point, past invisible characters
   let p = stepBack(source, lineBreak);
@@ -1352,14 +1562,17 @@ function countedLineStart(source: string, at: number, strict: boolean): LineStar
  *  `;`; a `:` not between two digits; a line break that counts; a `.` `!` `?` that ends a sentence
  *  (L1's test for `.`) only when `opening` (the part, or its opening mark, begins with a capital
  *  letter or an opening mark). At a line break that counts only because the line before ends a
- *  sentence, or (#845, B3) after a blank line under a line that ends nothing, the same capital
- *  condition holds, or `numbered` (the part opens with a clause number and a capital). */
+ *  sentence, the same capital condition holds, or `numbered` (the part opens with a clause number
+ *  and a capital). After a blank line under a line that ends nothing (#845, B3), the line's first
+ *  word decides (#845 1b-i-n, `blankHeadHolds`, the part beginning at `start`); there the `.` that
+ *  closes a short first word ends a sentence only before a capital letter (`stopsBlankLineWord`). */
 function acceptedBefore(
   source: string,
   at: number,
   opening: boolean,
   numbered: boolean,
   strict: boolean,
+  start: number,
 ): boolean {
   // #845 (R-C2, R-A2): read back by code point, past invisible characters
   let p = stepBack(source, blanksBack(source, at));
@@ -1368,13 +1581,22 @@ function acceptedBefore(
   if (c === undefined) return true;
   if (isLineBreak(c)) {
     const kind = lineStart(source, p.at, strict);
+    // #845 (1b-i-n): after a blank line inside a sentence, the line's first word decides
+    if (kind === 'blank') return blankHeadHolds(source, p.at + c.length, start);
     return kind === 'free' || (kind !== undefined && (opening || numbered));
   }
   if (c === ';') return true;
   if (c === ':') {
     return !(isNum(stepBack(source, p.at).c) && isNum(stepOn(source, p.at + c.length).c));
   }
-  if (c === '.') return opening && !endsAbbreviation(source, p.at);
+  if (c === '.') {
+    return (
+      opening &&
+      !endsAbbreviation(source, p.at) &&
+      // #845 (1b-i-n, rule 3): the `.` of a blank line's short first word, only before a capital
+      (!strict || !stopsBlankLineWord(source, p.at) || capitalPastMarks(source, p.at + c.length))
+    );
+  }
   if (c === '!' || c === '?') return opening;
   return false;
 }
@@ -1390,8 +1612,9 @@ function acceptedBefore(
  *    spaces, sitting at a line start that counts — and the part, or its opening mark, begins with a
  *    capital letter or an opening mark (never `4.5 per cent`).
  * 3. A list mark, then spaces — at least one blank (#845, M8r) — then an optional opening mark and
- *    spaces, right before the part, sitting at a line start that counts — after a blank line under a
- *    line that ends nothing (#845, B3), only before a capital letter or an opening mark.
+ *    spaces, right before the part, sitting at a line start that counts.
+ * After a blank line under a line that ends nothing (#845, B3), every read holds only when the line's
+ * first word, past opening marks and one label, begins with a capital letter (#845 1b-i-n).
  * `strict` false leaves rule 1 (B3) out: the test of a held-back candidate (Q-C).
  */
 function partStartHolds(source: string, start: number, strict: boolean): boolean {
@@ -1404,19 +1627,35 @@ function partStartHolds(source: string, start: number, strict: boolean): boolean
   const openingMark = stepBack(source, first);
   const beforeMark = isOpeningMark(openingMark.c) ? blanksBack(source, openingMark.at) : -1;
   // Read 1.
-  if (acceptedBefore(source, first, opening, numbered, strict)) return true;
-  if (beforeMark >= 0 && acceptedBefore(source, beforeMark, true, numbered, strict)) return true;
+  if (acceptedBefore(source, first, opening, numbered, strict, start)) return true;
+  if (beforeMark >= 0 && acceptedBefore(source, beforeMark, true, numbered, strict, start)) {
+    return true;
+  }
   // Reads 2 and 3, the label ending right before the part, or before its opening mark.
   for (const end of beforeMark >= 0 ? [first, beforeMark] : [first]) {
     const after = end === first ? own : openingMark.c;
-    if (isSentenceOpening(after)) {
-      const label = clauseNumberBack(source, end);
-      if (label >= 0 && countedLineStart(source, label, strict) !== undefined) return true;
+    // #845 (1b-i-n): at a `blank` line start, the line's first word decides (`blankHeadHolds`)
+    const label = clauseNumberBack(source, end);
+    if (label >= 0) {
+      const kind = countedLineStart(source, label, strict);
+      if (
+        kind === 'blank'
+          ? blankHeadHolds(source, blanksBack(source, label), start)
+          : kind !== undefined && isSentenceOpening(after)
+      ) {
+        return true;
+      }
     }
     const mark = listMarkBack(source, end);
     if (mark >= 0 && blankAfterMark(source, mark, end === first ? start : openingMark.at)) {
       const kind = countedLineStart(source, mark, strict);
-      if (kind !== undefined && (kind !== 'blank' || isSentenceOpening(after))) return true;
+      if (
+        kind === 'blank'
+          ? blankHeadHolds(source, blanksBack(source, mark), start)
+          : kind !== undefined
+      ) {
+        return true;
+      }
     }
   }
   return false;
@@ -1443,10 +1682,14 @@ interface Placement {
  *  search for its piece early; it is used only when its piece has no accepted candidate. The same
  *  searches find both kinds. #845 (walk M8): with `uncut`, among accepted candidates that join as
  *  many pieces, one that is not cut short wins, and only such a one ends the search early.
- *  `undefined` when a piece is found nowhere it may be. */
+ *  #845 (S1/F1): a candidate whose part, as `extend` joins it, starts or ends inside a word a hyphen
+ *  breaks across a line of `raw` (the source text) is no candidate of either kind; the join between
+ *  two pieces of one part is never read for it (a quote that keeps the document's `un-`⏎`paid`
+ *  joins it). `undefined` when a piece is found nowhere it may be. */
 function placeParts(
   budget: Budget,
   source: Bare,
+  raw: string,
   segments: readonly Segment[],
   inOrder: boolean,
   startHolds: (at: number) => StartHold,
@@ -1456,6 +1699,8 @@ function placeParts(
   const hay = source.text;
   const parts: Part[] = [];
   const joins: number[] = [];
+  const edgesHold = (part: Part): boolean =>
+    lineBreakHyphenEdgesHold(raw, source.from[part.at]!, source.to[part.end - 1]!);
   let after = 0;
   for (let k = 0; k < segments.length;) {
     const piece = segments[k]!.canonical.text;
@@ -1470,17 +1715,19 @@ function placeParts(
         const hold = k === 0 ? 'accepted' : startHolds(at);
         if (hold === 'accepted') {
           const part = extend(budget, source, segments, k, at);
-          if (
-            best === undefined ||
-            part.last > best.last ||
-            (uncut !== undefined && part.last === best.last && uncut(part) && !uncut(best))
-          ) {
-            best = part;
+          if (edgesHold(part)) {
+            if (
+              best === undefined ||
+              part.last > best.last ||
+              (uncut !== undefined && part.last === best.last && uncut(part) && !uncut(best))
+            ) {
+              best = part;
+            }
+            if (part.last === segments.length - 1 && (uncut === undefined || uncut(best))) break;
           }
-          if (part.last === segments.length - 1 && (uncut === undefined || uncut(best))) break;
         } else if (hold === 'held' && heldBack) {
           const part = extend(budget, source, segments, k, at);
-          if (held === undefined || part.last > held.last) held = part;
+          if (edgesHold(part) && (held === undefined || part.last > held.last)) held = part;
         }
       }
       at = budget.indexOf(hay, piece, at + 1);
@@ -1733,7 +1980,7 @@ function ladder(
     // The whole quote occurs at least once (the literal match), whatever the canonical count says.
     const occurrences = Math.max(
       1,
-      countWithEdges(budget, canonical, canonicalQuote, quoteCanonical.marks),
+      countWithEdges(budget, canonical, source, canonicalQuote, quoteCanonical.marks),
     );
     const end = literal + quote.length;
     // N7: the source has the quote's own closing `.` `!` `?`, so L2's test reads the character after.
@@ -1756,7 +2003,14 @@ function ladder(
     canonical.text,
     canonicalQuote,
     true,
-    (at) => marksHold(canonical, at, quoteCanonical.marks),
+    // #845 (S1/F1): neither end inside a word a hyphen breaks across a line
+    (at) =>
+      marksHold(canonical, at, quoteCanonical.marks) &&
+      lineBreakHyphenEdgesHold(
+        source,
+        canonical.from[at]!,
+        canonical.to[at + canonicalQuote.length - 1]!,
+      ),
   );
   if (whole >= 0) {
     const span = trimmed(
@@ -1777,7 +2031,7 @@ function ladder(
     return {
       state: 'reformatted',
       parts: [span],
-      occurrences: countWithEdges(budget, canonical, canonicalQuote, quoteCanonical.marks),
+      occurrences: countWithEdges(budget, canonical, source, canonicalQuote, quoteCanonical.marks),
       ...cutShort(cut),
     };
   }
@@ -1791,14 +2045,14 @@ function ladder(
     const long = (ps: readonly Part[]): boolean => ps.every((p) => p.end - p.at >= minPartChars);
     // #845 (Q-C): only the in-order placement takes held-back candidates. When it completes by one,
     // every part long enough, rule 1 alone refused the quote: say why and where, and stop there.
-    const inOrder = placeParts(budget, canonical, segments, true, startHolds, true);
+    const inOrder = placeParts(budget, canonical, source, segments, true, startHolds, true);
     if (inOrder !== undefined && inOrder.joins.length > 0 && long(inOrder.parts)) {
       return { ...notFound, cause: 'blank_line_join', join_at: inOrder.joins };
     }
     const parts =
       inOrder !== undefined && inOrder.joins.length === 0 && long(inOrder.parts)
         ? inOrder.parts
-        : placeParts(budget, canonical, segments, false, startHolds, false)?.parts;
+        : placeParts(budget, canonical, source, segments, false, startHolds, false)?.parts;
     if (parts !== undefined && long(parts)) {
       /** L2: the source offsets where a part's sentence-ending pieces stop short. */
       const cutOf = (p: Part): number[] => {
@@ -1821,6 +2075,7 @@ function ladder(
           const second = placeParts(
             budget,
             canonical,
+            source,
             segments,
             true,
             startHolds,
