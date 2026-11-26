@@ -23,7 +23,12 @@
 // text. Whether `| default` fills a missing value is the renderer's own filter code's answer: the
 // placeholder's filters run in order on a missing value (`applyFilter`, `'stored'`), as
 // `renderTemplate` and `display` run them, never a rule about filter names.
-import { TEMPLATE_PLACEHOLDER, applyFilter, placeholderParts } from '../engine/render-template.js';
+import {
+  TEMPLATE_PLACEHOLDER,
+  applyFilter,
+  holdsFailureMessages,
+  placeholderParts,
+} from '../engine/render-template.js';
 import { isGateTrust } from '../types/workflow-definition.js';
 import { capText } from '../utils/redaction.js';
 import { resolveSeverity, type LoaderWarning, type WarningCode } from './diagnostics.js';
@@ -245,6 +250,23 @@ export function judgeTemplateLeaf(
     };
     if (judgement.stepCause !== undefined) mayBeMissing(judgement.stepCause);
   }
+  // Gap 2, unit (iv-a1), Words 5: a failure message put into a prompt or instructions, unless the
+  // loader refuses the placeholder.
+  if (
+    (leaf.field === 'prompt' || leaf.field === 'instructions') &&
+    holdsFailureMessages(leaf.path) &&
+    (finding === undefined || resolveSeverity(finding.code) !== 'error')
+  ) {
+    findings.note = {
+      step: leaf.step,
+      placement: leaf.field,
+      reads: leaf.path,
+      message:
+        `Step '${capText(leaf.step)}' puts a failure message (\`${capText(leaf.path)}\`) into its ` +
+        `${leaf.field}: the text is the failure's own (a provider's, a handler's, an adapter's or ` +
+        `Realm's own), so it can carry anything the failed request echoed back.`,
+    };
+  }
   if (finding === undefined) return findings;
 
   // The field's key line, else the step's: the loader's two-rung cite (#420).
@@ -324,7 +346,7 @@ function neverReason(cause: NeverCause, field: TemplateField): Reason {
       return {
         text:
           `'$settlement.${capText(cause.step)}' holds only 'failed', 'settled_by_default', ` +
-          `'validation_rejections' and 'failure_kind'`,
+          `'validation_rejections', 'failure_kind' and 'message'`,
         ...dym,
       };
     case 'no_param':
@@ -366,6 +388,7 @@ function absentWords(cause: Exclude<AbsentCause, { rule: 'runs_after' }>): {
     case 'list_position':
     case 'default_only':
     case 'model_failure_only':
+    case 'failure_only':
       return { why: absentWhy(cause), fix: `${DEFAULT_FIX}.` };
     case 'undeclared_field':
       return {

@@ -37,7 +37,7 @@ import {
 } from './diagnostics.js';
 import { createSourcePositionCollector, type SourcePositionMap } from './source-positions.js';
 import { resolveTemplates } from './template-resolver.js';
-import { checkInputMapPaths, type NotCheckedPath } from './input-map-paths.js';
+import { checkInputMapPaths, type LoaderNote, type NotCheckedPath } from './input-map-paths.js';
 import type { WhenLeaf } from './when-paths.js';
 import { checkProvidedNames, type DeclaredNames } from './name-check.js';
 import { checkTemplates } from './template-check.js';
@@ -863,7 +863,12 @@ function loadWorkflowFromFileCore(
   filePath: string,
   registry?: ExtensionRegistry,
   declared?: DeclaredNames,
-): { definition: WorkflowDefinition; warnings: LoaderWarning[]; notChecked: NotCheckedPath[] } {
+): {
+  definition: WorkflowDefinition;
+  warnings: LoaderWarning[];
+  notChecked: NotCheckedPath[];
+  notes: LoaderNote[];
+} {
   let content: string;
   try {
     content = readFileSync(filePath, 'utf8');
@@ -876,9 +881,8 @@ function loadWorkflowFromFileCore(
       retryable: false,
     });
   }
-  const { definition, warnings, notChecked } = parseWorkflowString(content, registry, declared, {
-    allowExtensions: true,
-  });
+  const parsed = parseWorkflowString(content, registry, declared, { allowExtensions: true });
+  const { definition, warnings, notChecked, notes } = parsed;
   // issue #424 — CHOKEPOINT 2. Everything past the parse can throw with `warnings` already
   // populated (a missing agent_profile, a bad workflow_context source), and those warnings used
   // to unwind with the stack: `register` on a file with a typo AND a missing profile printed the
@@ -934,7 +938,7 @@ function loadWorkflowFromFileCore(
     throw err;
   }
 
-  return { definition, warnings, notChecked };
+  return { definition, warnings, notChecked, notes };
 }
 
 /**
@@ -960,7 +964,8 @@ export function loadWorkflowFromFile(
  * Opt-in for callers that want to surface warnings
  * themselves (validate/register/watch/`--strict`) instead of the default console.warn behavior.
  * `notChecked` (fix 1, unit 1) lists the `input_map` paths into data the workflow declares no
- * shape for, which `validate` reports.
+ * shape for, which `validate` reports; `notes` (gap 2, unit (iv-a1)) the placeholders that put a
+ * step's failure message into a prompt or a gated step's instructions, which `validate` prints.
  * @public
  */
 export function loadWorkflowFromFileWithDiagnostics(
@@ -968,7 +973,12 @@ export function loadWorkflowFromFileWithDiagnostics(
   registry?: ExtensionRegistry,
   /** Fix 1, piece 4: the names the project's realm.yaml declares, counted as provided. */
   declared?: DeclaredNames,
-): { definition: WorkflowDefinition; warnings: LoaderWarning[]; notChecked: NotCheckedPath[] } {
+): {
+  definition: WorkflowDefinition;
+  warnings: LoaderWarning[];
+  notChecked: NotCheckedPath[];
+  notes: LoaderNote[];
+} {
   return loadWorkflowFromFileCore(filePath, registry, declared);
 }
 
@@ -1004,7 +1014,12 @@ export function loadWorkflowFromStringWithDiagnostics(
   registry?: ExtensionRegistry,
   /** Fix 1, piece 4: the names the project's realm.yaml declares, counted as provided. */
   declared?: DeclaredNames,
-): { definition: WorkflowDefinition; warnings: LoaderWarning[]; notChecked: NotCheckedPath[] } {
+): {
+  definition: WorkflowDefinition;
+  warnings: LoaderWarning[];
+  notChecked: NotCheckedPath[];
+  notes: LoaderNote[];
+} {
   return parseWorkflowString(content, registry, declared, { allowExtensions: false });
 }
 
@@ -1226,7 +1241,12 @@ function parseWorkflowString(
   registry: ExtensionRegistry | undefined,
   declared: DeclaredNames | undefined,
   opts: { allowExtensions: boolean },
-): { definition: WorkflowDefinition; warnings: LoaderWarning[]; notChecked: NotCheckedPath[] } {
+): {
+  definition: WorkflowDefinition;
+  warnings: LoaderWarning[];
+  notChecked: NotCheckedPath[];
+  notes: LoaderNote[];
+} {
   // Step 1: Parse YAML
   //
   // issue #392: the position collector rides THIS parse via js-yaml's own listener — there is no
@@ -3985,7 +4005,12 @@ function parseWorkflowString(
     // Step 4: Stamp schema version and return typed result
     const definition = doc as unknown as WorkflowDefinition;
     definition.schema_version = CURRENT_WORKFLOW_SCHEMA_VERSION;
-    return { definition, warnings, notChecked: inputMapPaths.notChecked };
+    return {
+      definition,
+      warnings,
+      notChecked: inputMapPaths.notChecked,
+      notes: inputMapPaths.notes,
+    };
   } catch (err) {
     if (err instanceof WorkflowError) attachLoaderWarnings(err, warnings);
     throw err;

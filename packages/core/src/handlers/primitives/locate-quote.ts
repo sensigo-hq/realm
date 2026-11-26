@@ -1275,6 +1275,105 @@ function listMarkBack(source: string, at: number): number {
   return isListMark(mark.c) ? mark.at : -1;
 }
 
+/** #845 (1b-i-n): a sign the canonical form keeps (`+`, `>`, `|`, `=`, `£`, `%` …; never a dash,
+ *  which it writes as `-` and drops): a piece may start on one, so it begins the first word. */
+const isKeptSign = (c: string | undefined): boolean => !isDash(c) && isNumberSymbol(c);
+
+/** #845 (1b-i-n): where the label at `at` ends, or -1. A clause number as read 2 reads one: `(` with
+ *  1–4 letters or digits and `)` (`(a)`, `(iv)`), or digits joined by `.` or closed by `.` or `)`
+ *  with a blank after them (`6.2`, `12.`, never bare digits); or a list mark with a blank after it
+ *  (a run of `#` too; #845, M8r). A list mark that is also a kept sign (`+`, `>`, `|` …) is a label
+ *  only when it ends by `start`, where the part begins: the quote skipped it (correction 1). */
+function headLabelEnd(source: string, at: number, start: number): number {
+  const first = stepOn(source, at);
+  if (first.c === '(') {
+    let n = 0;
+    let p = stepOn(source, first.at);
+    while (n < 5 && (isLetter(p.c) || isDigit(p.c))) {
+      n++;
+      p = stepOn(source, p.at);
+    }
+    return n >= 1 && n <= 4 && p.c === ')' ? p.at : -1;
+  }
+  if (isDigit(first.c)) {
+    let j = first.at;
+    let dotted = false;
+    for (;;) {
+      for (let p = stepOn(source, j); isDigit(p.c); p = stepOn(source, j)) j = p.at;
+      const dot = stepOn(source, j);
+      if (dot.c !== '.' || !isDigit(stepOn(source, dot.at).c)) break;
+      j = dot.at;
+      dotted = true;
+    }
+    const close = stepOn(source, j);
+    const closed = close.c === '.' || close.c === ')';
+    if (closed) j = close.at;
+    return (dotted || closed) && isBlank(stepOn(source, j).c) ? j : -1;
+  }
+  if (first.c === '#' || (isListMark(first.c) && (!isKeptSign(first.c) || first.at <= start))) {
+    let j = first.at;
+    if (first.c === '#')
+      for (let p = stepOn(source, j); p.c === '#'; p = stepOn(source, j)) j = p.at;
+    return isBlank(stepOn(source, j).c) ? j : -1;
+  }
+  return -1;
+}
+
+/** #845 (1b-i-n): at a `blank` line start, whether the line's first word begins with a capital
+ *  letter (`isCapital`, past invisible characters). From `from`, where the line begins, the walk
+ *  passes blanks and invisible characters anywhere, opening marks, and at most one label
+ *  (`headLabelEnd`). A `(` that opens a clause number is part of it, never an opening mark; a kept
+ *  sign (`isKeptSign`) begins the first word, unless it is a list mark the quote skipped (the part
+ *  begins at `start`, after it). A second label, or a first word that begins with a lowercase
+ *  letter, a digit, a kept sign or an uncased letter, does not hold. */
+function blankHeadHolds(source: string, from: number, start: number): boolean {
+  let labels = 0;
+  let at = from;
+  for (;;) {
+    const p = stepOn(source, at);
+    if (isBlank(p.c)) {
+      at = p.at;
+      continue;
+    }
+    const label = headLabelEnd(source, at, start);
+    if (label >= 0) {
+      labels++;
+      at = label;
+      continue;
+    }
+    if (isOpeningMark(p.c)) {
+      at = p.at;
+      continue;
+    }
+    return labels <= 1 && isCapital(p.c);
+  }
+}
+
+/** #845 (1b-i-n): whether the `.` at `dot` closes the first word of a line past its indentation,
+ *  that word being a clause number (`2`, `12`, `6.2`) or 1–4 letters (`b`, `IV`), at a `blank` line
+ *  start: there it ends a sentence only before a capital letter, past blanks and opening marks. */
+function stopsBlankLineWord(source: string, dot: number): boolean {
+  let start = dot;
+  let letters = 0;
+  let digits = false;
+  for (let p = stepBack(source, start); ; p = stepBack(source, start)) {
+    if (isLetter(p.c)) letters++;
+    else if (isDigit(p.c)) digits = true;
+    else if (!(p.c === '.' && digits && isDigit(stepBack(source, p.at).c))) break;
+    start = p.at;
+  }
+  if (letters > 0 ? digits || letters > 4 : !digits) return false;
+  const before = stepBack(source, blanksBack(source, start));
+  return isLineBreak(before.c) && lineStart(source, before.at, true) === 'blank';
+}
+
+/** From `at` on, past blanks and opening marks, whether a capital letter follows. */
+function capitalPastMarks(source: string, at: number): boolean {
+  let p = stepOn(source, at);
+  while (isBlank(p.c) || isOpeningMark(p.c)) p = stepOn(source, p.at);
+  return isCapital(p.c);
+}
+
 /** How a line counts as a line start, by its kind (`lineStart`). */
 type LineStart = 'free' | 'sentence' | 'blank';
 
@@ -1323,9 +1422,9 @@ function lineEnding(source: string, p: Step): 'clause' | 'sentence' | undefined 
  *  #845 (B3): when the line before is blank (it holds only blanks and invisible characters), the walk
  *  passes every blank line to the last line holding anything else. After a line that ends a sentence,
  *  a clause or a table row, or at the text's start, the blank line changes nothing (`free`); after a
- *  line that ends none of those, it is `blank`: the next piece begins as a sentence does after a full
- *  stop, and a clause number or a list mark counts only before such a beginning. With `strict` false
- *  — rule 1 left out, for a held-back candidate (Q-C) — a blank line counts `free`. */
+ *  line that ends none of those, it is `blank`: the line's first word, past opening marks and one
+ *  clause number or list mark, begins with a capital letter (#845 1b-i-n, `blankHeadHolds`). With
+ *  `strict` false — rule 1 left out, for a held-back candidate (Q-C) — a blank line counts `free`. */
 function lineStart(source: string, lineBreak: number, strict: boolean): LineStart | undefined {
   // #845 (R-C2, R-A2): read back by code point, past invisible characters
   let p = stepBack(source, lineBreak);
@@ -1352,14 +1451,17 @@ function countedLineStart(source: string, at: number, strict: boolean): LineStar
  *  `;`; a `:` not between two digits; a line break that counts; a `.` `!` `?` that ends a sentence
  *  (L1's test for `.`) only when `opening` (the part, or its opening mark, begins with a capital
  *  letter or an opening mark). At a line break that counts only because the line before ends a
- *  sentence, or (#845, B3) after a blank line under a line that ends nothing, the same capital
- *  condition holds, or `numbered` (the part opens with a clause number and a capital). */
+ *  sentence, the same capital condition holds, or `numbered` (the part opens with a clause number
+ *  and a capital). After a blank line under a line that ends nothing (#845, B3), the line's first
+ *  word decides (#845 1b-i-n, `blankHeadHolds`, the part beginning at `start`); there the `.` that
+ *  closes a short first word ends a sentence only before a capital letter (`stopsBlankLineWord`). */
 function acceptedBefore(
   source: string,
   at: number,
   opening: boolean,
   numbered: boolean,
   strict: boolean,
+  start: number,
 ): boolean {
   // #845 (R-C2, R-A2): read back by code point, past invisible characters
   let p = stepBack(source, blanksBack(source, at));
@@ -1368,13 +1470,22 @@ function acceptedBefore(
   if (c === undefined) return true;
   if (isLineBreak(c)) {
     const kind = lineStart(source, p.at, strict);
+    // #845 (1b-i-n): after a blank line inside a sentence, the line's first word decides
+    if (kind === 'blank') return blankHeadHolds(source, p.at + c.length, start);
     return kind === 'free' || (kind !== undefined && (opening || numbered));
   }
   if (c === ';') return true;
   if (c === ':') {
     return !(isNum(stepBack(source, p.at).c) && isNum(stepOn(source, p.at + c.length).c));
   }
-  if (c === '.') return opening && !endsAbbreviation(source, p.at);
+  if (c === '.') {
+    return (
+      opening &&
+      !endsAbbreviation(source, p.at) &&
+      // #845 (1b-i-n, rule 3): the `.` of a blank line's short first word, only before a capital
+      (!strict || !stopsBlankLineWord(source, p.at) || capitalPastMarks(source, p.at + c.length))
+    );
+  }
   if (c === '!' || c === '?') return opening;
   return false;
 }
@@ -1390,8 +1501,9 @@ function acceptedBefore(
  *    spaces, sitting at a line start that counts — and the part, or its opening mark, begins with a
  *    capital letter or an opening mark (never `4.5 per cent`).
  * 3. A list mark, then spaces — at least one blank (#845, M8r) — then an optional opening mark and
- *    spaces, right before the part, sitting at a line start that counts — after a blank line under a
- *    line that ends nothing (#845, B3), only before a capital letter or an opening mark.
+ *    spaces, right before the part, sitting at a line start that counts.
+ * After a blank line under a line that ends nothing (#845, B3), every read holds only when the line's
+ * first word, past opening marks and one label, begins with a capital letter (#845 1b-i-n).
  * `strict` false leaves rule 1 (B3) out: the test of a held-back candidate (Q-C).
  */
 function partStartHolds(source: string, start: number, strict: boolean): boolean {
@@ -1404,19 +1516,35 @@ function partStartHolds(source: string, start: number, strict: boolean): boolean
   const openingMark = stepBack(source, first);
   const beforeMark = isOpeningMark(openingMark.c) ? blanksBack(source, openingMark.at) : -1;
   // Read 1.
-  if (acceptedBefore(source, first, opening, numbered, strict)) return true;
-  if (beforeMark >= 0 && acceptedBefore(source, beforeMark, true, numbered, strict)) return true;
+  if (acceptedBefore(source, first, opening, numbered, strict, start)) return true;
+  if (beforeMark >= 0 && acceptedBefore(source, beforeMark, true, numbered, strict, start)) {
+    return true;
+  }
   // Reads 2 and 3, the label ending right before the part, or before its opening mark.
   for (const end of beforeMark >= 0 ? [first, beforeMark] : [first]) {
     const after = end === first ? own : openingMark.c;
-    if (isSentenceOpening(after)) {
-      const label = clauseNumberBack(source, end);
-      if (label >= 0 && countedLineStart(source, label, strict) !== undefined) return true;
+    // #845 (1b-i-n): at a `blank` line start, the line's first word decides (`blankHeadHolds`)
+    const label = clauseNumberBack(source, end);
+    if (label >= 0) {
+      const kind = countedLineStart(source, label, strict);
+      if (
+        kind === 'blank'
+          ? blankHeadHolds(source, blanksBack(source, label), start)
+          : kind !== undefined && isSentenceOpening(after)
+      ) {
+        return true;
+      }
     }
     const mark = listMarkBack(source, end);
     if (mark >= 0 && blankAfterMark(source, mark, end === first ? start : openingMark.at)) {
       const kind = countedLineStart(source, mark, strict);
-      if (kind !== undefined && (kind !== 'blank' || isSentenceOpening(after))) return true;
+      if (
+        kind === 'blank'
+          ? blankHeadHolds(source, blanksBack(source, mark), start)
+          : kind !== undefined
+      ) {
+        return true;
+      }
     }
   }
   return false;
