@@ -1029,6 +1029,7 @@ Names this job reaches whose entry is on another page.
 
 - [`AbandonWay`](run-and-drive-a-run.md#abandonway): End the run.
 - [`AdvanceWay`](run-and-drive-a-run.md#advanceway): Have the engine carry out what it owes: a due expiry first, then steps.
+- [`CodeSource`](run-and-drive-a-run.md#codesource): Where a registry entry's code came from: Realm's built-in, the built-in adapter catalog, a project's module, or the hosting program.
 - [`Cond`](run-and-drive-a-run.md#cond): A condition a way is offered with: a way offered with a condition is admitted only when the condition is met (`Base.conditions`).
 - [`DEFINITION_ABSENCES`](embed-the-mcp-server.md#definition_absences): How a `definition_absent` code arose: one per arm of `getWorkflowForRun`.
 - [`DefinitionAbsence`](embed-the-mcp-server.md#definitionabsence): Why a run's workflow definition could not be had: never registered, an agent's copy gone, unreadable, not a valid workflow, an older or a later format, or not read.
@@ -1044,6 +1045,7 @@ Names this job reaches whose entry is on another page.
 - [`NoRemedy`](run-and-drive-a-run.md#noremedy): Why an `Unavailable` entry offers no way on, with the cause's own facts (`Unavailable.no_remedy`).
 - [`PreconditionFacts`](run-and-drive-a-run.md#preconditionfacts): A failed precondition: its expression and the value read, escaped and bounded (`PreClaimRefused.precondition`).
 - [`PresentWay`](run-and-drive-a-run.md#presentway): Show the open question again, as a form in the agent's own call: the MCP door's `present_question`.
+- [`ProjectSource`](run-and-drive-a-run.md#projectsource): Where a project's module came from: how it was declared, and the hashes of its file and its folder, or a typed absence when they could not be read.
 - [`ReclaimWay`](run-and-drive-a-run.md#reclaimway): Free a held step so it can run again: a person's act, never an agent's.
 - [`RefusedCheck`](run-and-drive-a-run.md#refusedcheck): The checks other than capability that refuse a step before its claim (`checkPreClaim`).
 - [`RegisterWay`](run-and-drive-a-run.md#registerway): Register the run's workflow again.

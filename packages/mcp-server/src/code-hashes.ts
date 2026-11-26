@@ -1,6 +1,8 @@
 // code-hashes.ts — #828 unit 1 (PR A): the one home of the project code's hashes, published as the
 // subpath `@sensigo/realm-mcp/code-hashes` (off the package root for its import graph, as `./home`
-// is; its names are untagged, so internal). It holds the dir_tree_v1 sweep, moved here from the CLI's
+// is; its names are untagged, so internal: #828 unit 2b's `projectSourceOf`, for a host, is a wrapper of
+// `statedProjectSource` in `project-source.ts`, on the main entry). It holds the dir_tree_v1 sweep,
+// moved here from the CLI's
 // `extension-identity.ts` with its rules unchanged, and the per-process map of the hashes a program
 // took just before it first imported the code.
 //
@@ -27,13 +29,18 @@
 //   lockfile read first. A failed import never drops it, even when its folder's sweep lists the file.
 //
 // This module loads no code: no dynamic import, no module-require creation. It imports only `node:`
-// modules and `@sensigo/realm` (types, and `realmHomePath`, realm's one asker for the home folder). A
-// structural test in the CLI holds it to that.
+// modules and `@sensigo/realm` (types, `realmHomePath`, realm's one asker for the home folder, and
+// `WorkflowError` for `projectSourceOf`'s refusal). A structural test in the CLI holds it to that.
 import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
-import { dirname, join, relative, sep } from 'node:path';
-import { realmHomePath } from '@sensigo/realm';
-import type { ExtensionIdentityLockfile, ExtensionIdentitySignals } from '@sensigo/realm';
+import { dirname, join, relative, resolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { realmHomePath, WorkflowError } from '@sensigo/realm';
+import type {
+  ExtensionIdentityLockfile,
+  ExtensionIdentitySignals,
+  ProjectSource,
+} from '@sensigo/realm';
 
 /** The one sweep-rule version this module can compute. Comparison ALWAYS recomputes under
  *  the RECORDED rule string — a future rules change must add a new version, never mutate v1. */
@@ -325,6 +332,8 @@ interface Kept {
   readonly lockfileChoices: Map<string, string[] | undefined>;
   /** #828 PR B: each lockfile file's read, once, by its real path. Never dropped by a failure. */
   readonly lockfiles: Map<string, LockfileRead>;
+  /** #828 unit 2b: `projectSourceOf`'s result for each real path, kept from its first call. */
+  readonly stated: Map<string, ProjectSource>;
 }
 
 const kept: Kept = {
@@ -334,6 +343,7 @@ const kept: Kept = {
   signals: new Map(),
   lockfileChoices: new Map(),
   lockfiles: new Map(),
+  stated: new Map(),
 };
 
 /** Test-only: forgets every kept hash, as a new process would start with none. */
@@ -344,6 +354,72 @@ export function clearCodeHashes(): void {
   kept.signals.clear();
   kept.lockfileChoices.clear();
   kept.lockfiles.clear();
+  kept.stated.clear();
+}
+
+/**
+ * #828 unit 2b: `projectSourceOf`'s work (project-source.ts, which documents it), here because it reads
+ * and keeps the per-process map: the module's real path, its own file's hash and its folder's tree,
+ * taken at the first call for that real path (reusing what a load already took) and kept.
+ */
+export function statedProjectSource(module: string | URL): ProjectSource {
+  const fail = (path: string, what: string): WorkflowError =>
+    new WorkflowError(`projectSourceOf: ${path} ${what}.`, {
+      code: 'RESOURCE_FETCH_FAILED',
+      category: 'RESOURCE',
+      agentAction: 'report_to_user',
+      retryable: false,
+      details: { path },
+    });
+  let path: string;
+  // A URL string: a scheme of two letters or more (a Windows drive letter has one).
+  if (module instanceof URL || /^[a-z][a-z\d+.-]+:/i.test(module)) {
+    let url: URL | undefined;
+    try {
+      url = module instanceof URL ? module : new URL(module);
+    } catch {
+      url = undefined;
+    }
+    const text = module instanceof URL ? module.href : module;
+    if (url?.protocol !== 'file:') throw fail(text, 'is not a file: URL');
+    try {
+      path = fileURLToPath(url);
+    } catch {
+      throw fail(text, 'cannot be read');
+    }
+  } else path = resolve(module);
+  let real: string;
+  try {
+    real = realpathSync(path);
+  } catch (err) {
+    throw fail(
+      path,
+      (err as { code?: unknown }).code === 'ENOENT' ? 'is missing' : 'cannot be read',
+    );
+  }
+  const held = kept.stated.get(real);
+  if (held !== undefined) return held;
+  let folder: boolean;
+  try {
+    folder = statSync(real).isDirectory();
+  } catch {
+    throw fail(path, 'cannot be read');
+  }
+  if (folder) throw fail(path, 'is a folder');
+  const own = kept.files.get(real) ?? hashFile(real);
+  if (own === undefined) throw fail(path, 'cannot be read');
+  const root = dirname(real);
+  const sweep =
+    kept.folders.get(root) ?? sweepFolder(root, (p) => kept.files.get(p) ?? hashFile(p));
+  const source: ProjectSource = Object.freeze({
+    source: 'project',
+    declared: real,
+    via: 'host_stated',
+    entry_hash: own.sha256,
+    folder_tree_hash: joinSweeps([sweep]).tree_hash,
+  });
+  kept.stated.set(real, source);
+  return source;
 }
 
 /**

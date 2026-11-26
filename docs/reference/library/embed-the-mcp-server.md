@@ -13,6 +13,7 @@ Where the docs teach it: [Core library: serve MCP from your own program](../core
 | [`createRealmMcpServer`](#createrealmmcpserver) | function | Creates and configures the Realm MCP server with its workflow tools. |
 | [`createRealmMcpServerOnHome`](#createrealmmcpserveronhome) | function | Opens the Realm home and builds the MCP server over its store. |
 | [`loadPriceSource`](#loadpricesource) | function | Loads a host's prices: the economics file at `economicsPath` (when given) and the installed price list. |
+| [`projectSourceOf`](#projectsourceof) | function | Where a module the host loads itself came from, for `ExtensionRegistry.register`'s `source`. |
 | [`JsonTraceBufferStore`](#jsontracebufferstore) | class | File-based TraceBufferStore that persists WAL entries to JSONL files on disk. |
 | [`Basis`](#basis) | interface | What a reply's ways were judged on: the record's stamp, the enactor's kind, whether the store persists claims, and the definition. |
 | [`DisclosureSet`](#disclosureset) | interface | A compiled set: opaque to callers; built once per (entries, options). |
@@ -116,6 +117,25 @@ function loadPriceSource(opts?: {
     economicsPath?: string;
     importList?: () => Promise<unknown>;
 }): Promise<PriceSource>;
+```
+
+### projectSourceOf
+
+function · beta: may change in a minor release until it settles · from `@sensigo/realm-mcp`
+
+Where a module the host loads itself came from, for `ExtensionRegistry.register`'s `source`. It is
+a `project` source stated by the host (`via: 'host_stated'`): its `declared` is the module's real
+path, with the sha256 of its file and the dir_tree_v1 hash of its folder.
+
+`@remarks` Synchronous. `module` is a path (a relative one resolves against the working directory), a `URL`
+or a `file:` URL string; a symlink is followed to the real file. The hashes are taken at the
+first call for that real path, from what this process already holds when a load read them, and
+kept: later calls return the first result. Call it right after importing the module. A missing
+file, a folder, an unreadable file or a URL that is not a `file:` one throws a `WorkflowError`
+with the code `RESOURCE_FETCH_FAILED`, naming the path.
+
+```ts
+function projectSourceOf(module: string | URL): ProjectSource;
 ```
 
 ## Classes
@@ -994,6 +1014,7 @@ Names this job reaches whose entry is on another page.
 - [`ClaimDeadlineAbsent`](implement-a-store.md#claimdeadlineabsent): Why a claim has no time limit, written on the claim when it is taken (`ClaimRecord.deadline_absent`).
 - [`ClaimRecord`](read-a-runs-record.md#claimrecord): A step's claim, as the run keeps it while the step is being run: its deadline, its token and the program that holds it (`RunRecord.claims`).
 - [`Clock`](implement-a-store.md#clock): The clock a run store reads the time from: `now()` and `at()`.
+- [`CodeSource`](run-and-drive-a-run.md#codesource): Where a registry entry's code came from: Realm's built-in, the built-in adapter catalog, a project's module, or the hosting program.
 - [`Cond`](run-and-drive-a-run.md#cond): A condition a way is offered with: a way offered with a condition is admitted only when the condition is met (`Base.conditions`).
 - [`COND_TAGS`](write-a-handler.md#cond_tags): Who discharges a condition outside Realm: `client`, the MCP client's own approval prompt.
 - [`CondTag`](write-a-handler.md#condtag): Who discharges a condition outside Realm; `client` is the MCP client's own approval prompt (`Cond`'s `client_prompt` member).
@@ -1082,6 +1103,7 @@ Names this job reaches whose entry is on another page.
 - [`Processor`](write-a-handler.md#processor): A program's step that changes content, registered under its `id` and run in order by `runPipeline`.
 - [`ProcessorInput`](write-a-handler.md#processorinput): The text and metadata a processor is given (`Processor.process`).
 - [`ProcessorOutput`](write-a-handler.md#processoroutput): The text and metadata a processor returns; the next processor in the pipeline is given it.
+- [`ProjectSource`](run-and-drive-a-run.md#projectsource): Where a project's module came from: how it was declared, and the hashes of its file and its folder, or a typed absence when they could not be read.
 - [`ProtocolConfig`](define-and-load-a-workflow.md#protocolconfig): A workflow's own words for the agent protocol: a quick-start paragraph that replaces the generated one, and rules added as they are written (`WorkflowDefinition.protocol`).
 - [`PurgedItem`](implement-a-store.md#purgeditem): A deleted run's tombstone, as a scan with `include_purged` gives it.
 - [`RateLimitConfig`](write-a-handler.md#ratelimitconfig): How fast Realm calls a service: requests per second, the burst it allows, and how long it waits after a 429 (`ServiceDefinition.rate_limit`).

@@ -79,6 +79,7 @@
       "entryPoints": [
         "AbandonWay",
         "AdvanceWay",
+        "CodeSource",
         "Cond",
         "EngineReply",
         "ExtensionRegistry",
@@ -93,6 +94,7 @@
         "Party",
         "PreconditionFacts",
         "PresentWay",
+        "ProjectSource",
         "RUN_STATUSES",
         "ReclaimWay",
         "RefusedCheck",
@@ -240,7 +242,8 @@
         "DECLARED_STATES",
         "DECLARED_CAUSES",
         "ENVIRONMENT_STATES",
-        "PRICE_SOURCE_CLASSES"
+        "PRICE_SOURCE_CLASSES",
+        "projectSourceOf"
       ]
     },
     {
