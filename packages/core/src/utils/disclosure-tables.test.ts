@@ -562,3 +562,122 @@ describe('U3 — the usage fields with closed words are chosen by value', () => 
     });
   });
 });
+
+// #828 unit 2c (check 6): an attempt's `code_source` is facts on every audience. Each cell plants
+// the texts it reads as DECLARED members of the walk's set, so a `fact` row shows them whole and any
+// other class (or an unclassified key, walked as a value) hides them. Every value is fake.
+describe('#828 unit 2c — the class rows of code_source', () => {
+  const AUDIENCES: DisclosureAudience[] = ['agent', 'broadcast', 'log', 'private', 'file'];
+  const walk = (record: RunRecord, members: string[], audience: DisclosureAudience) =>
+    discloseRecord(
+      record,
+      compileDisclosure(
+        members.map((value, i) => ({ value, source: `declared:CS${i}` as const })),
+        { declared: 'resolved', audience, environment: 'swept' },
+      ).set,
+      audience,
+    ).record as unknown as {
+      evidence: Array<{
+        code_source: Record<string, unknown> & { from?: Record<string, unknown> };
+      }>;
+      extension_identity: Array<{ modules: Array<{ declared: string }> }>;
+    };
+
+  it("a canary in from.declared prints exactly as the identity's modules[].declared, on every audience", () => {
+    const CANARY = './FAKE-DECLARED-CS2C-0001/check-quotes.js';
+    const record = {
+      evidence: [
+        {
+          step_id: 's',
+          code_source: {
+            kind: 'handler',
+            name: 'check_quotes',
+            from: {
+              source: 'project',
+              declared: CANARY,
+              via: 'extensions_file',
+              entry_hash: 'a'.repeat(64),
+              folder_tree_hash: 'b'.repeat(64),
+            },
+            replaces_built_in: true,
+          },
+        },
+      ],
+      extension_identity: [
+        { captured_at: '2026-11-26T00:00:00.000Z', modules: [{ declared: CANARY }] },
+      ],
+    } as unknown as RunRecord;
+    // (1) red with `from.declared` classed `value` (it is hidden while the identity's shows); (2)
+    //     prints, per audience, both texts.
+    expect(
+      AUDIENCES.map((audience) => {
+        const shown = walk(record, [CANARY], audience);
+        return [
+          audience,
+          shown.evidence[0]!.code_source.from!['declared'],
+          shown.extension_identity[0]!.modules[0]!.declared,
+        ];
+      }),
+    ).toEqual(AUDIENCES.map((audience) => [audience, CANARY, CANARY]));
+  });
+
+  it('each form of code_source and of its from prints with its hash or its absence, on every audience', () => {
+    const hex = (c: string): string => c.repeat(64);
+    const forms = [
+      {
+        kind: 'handler',
+        name: 'h',
+        from: { source: 'host_registered', code_text_sha256: hex('c') },
+      },
+      {
+        kind: 'handler',
+        name: 'h',
+        from: { source: 'host_registered', absent: 'code_text_unavailable' },
+      },
+      {
+        kind: 'handler',
+        name: 'h',
+        from: {
+          source: 'project',
+          declared: './m.js',
+          via: 'manifest',
+          entry_hash: hex('d'),
+          folder_tree_hash: hex('e'),
+        },
+      },
+      {
+        kind: 'handler',
+        name: 'h',
+        from: {
+          source: 'project',
+          declared: './m.js',
+          via: 'manifest',
+          absent: 'hashes_unavailable',
+        },
+      },
+      { absent: 'not_registered', kind: 'adapter', name: 'a', service: 'svc' },
+      { absent: 'not_looked_up', kind: 'adapter', service: 'svc' },
+    ];
+    const record = {
+      evidence: forms.map((code_source) => ({ step_id: 's', code_source })),
+    } as unknown as RunRecord;
+    const members = [
+      hex('c'),
+      'code_text_unavailable',
+      hex('d'),
+      hex('e'),
+      'hashes_unavailable',
+      'not_registered',
+      'not_looked_up',
+    ];
+    // (1) red when either `from` function, or code_source's, always returns its first form's table
+    //     (the other form's `absent` is unclassified, walked as a value and hidden); (2) prints, per
+    //     audience, the six shown sources.
+    expect(
+      AUDIENCES.map((audience) => [
+        audience,
+        walk(record, members, audience).evidence.map((e) => e.code_source),
+      ]),
+    ).toEqual(AUDIENCES.map((audience) => [audience, forms]));
+  });
+});

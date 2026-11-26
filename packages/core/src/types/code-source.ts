@@ -1,4 +1,5 @@
-// code-source.ts — where a registered handler's, adapter's or processor's code came from (#828 unit 2b).
+// code-source.ts — where a registered handler's, adapter's or processor's code came from (#828 unit 2b),
+// and which code a step's attempt chose (unit 2c).
 //
 // Every `ExtensionRegistry` entry carries one. Realm reads the built-in and host sources itself: its
 // own built-ins are `built_in`, and a host's object registered with no stated source is
@@ -57,3 +58,39 @@ export type CodeSource =
   | ProjectSource
   | { readonly source: 'host_registered'; readonly code_text_sha256: string }
   | { readonly source: 'host_registered'; readonly absent: 'code_text_unavailable' };
+
+/**
+ * Which code Realm chose for one attempt of a step that runs a handler or an adapter, as its evidence
+ * entry records it (`EvidenceSnapshot.code_source`).
+ *
+ * @remarks
+ * The first form is the code chosen at the attempt's lookup: its `kind` and `name`, the adapter
+ * step's `service`, where the code came from (`from`), Realm's `realm_version` when the code was
+ * Realm's own (`built_in`, or `catalog`) and replaced no built-in, and `replaces_built_in: true`
+ * when code other than that built-in was chosen under a built-in's name (never `false`). The other
+ * two say why no code was chosen: `not_registered` (the lookup found nothing under that name) and
+ * `not_looked_up` (the attempt failed before any code was chosen: an adapter step whose service is
+ * not declared, or whose service names no adapter). `name` is left out when it is not known.
+ * @beta
+ */
+export type StepCodeSource =
+  | {
+      readonly kind: 'handler' | 'adapter';
+      readonly name: string;
+      readonly service?: string;
+      readonly from: CodeSource;
+      readonly realm_version?: string;
+      readonly replaces_built_in?: true;
+    }
+  | {
+      readonly absent: 'not_registered';
+      readonly kind: 'handler' | 'adapter';
+      readonly name: string;
+      readonly service?: string;
+    }
+  | {
+      readonly absent: 'not_looked_up';
+      readonly kind: 'handler' | 'adapter';
+      readonly name?: string;
+      readonly service?: string;
+    };
