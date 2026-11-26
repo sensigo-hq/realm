@@ -293,6 +293,12 @@ CACHE_AUTO_PRICE_CAUSES · value · public
       "rate_missing"
   ];
 
+CACHE_AUTO_PRICE_EXCLUSIONS · value · public
+  const CACHE_AUTO_PRICE_EXCLUSIONS: readonly [
+      "short",
+      "long"
+  ];
+
 CACHE_AUTO_RATES · value · public
   const CACHE_AUTO_RATES: readonly [
       "cache_read",
@@ -586,8 +592,8 @@ CallbackClaimedItem · type · beta
       readonly first_attempt_at: string;
   };
 
-CallbackEnded · type · beta
-  interface CallbackEnded {
+CallbackExpiredItem · type · beta
+  interface CallbackExpiredItem {
       readonly run_id: string;
       readonly workflow_id: string;
       readonly host: string;
@@ -773,7 +779,7 @@ CallbackStore · type · beta
       countPending(): Promise<number>;
       countWaiting(): Promise<number>;
       due(limit: number): Promise<CallbackItem[]>;
-      endOverdue(limit: number): Promise<CallbackEnded[]>;
+      expireOverdue(limit: number): Promise<CallbackExpiredItem[]>;
       claim(runId: string, request: CallbackClaimRequest): Promise<CallbackClaimResult>;
       freezeBody(runId: string, token: string, body: string): Promise<CallbackFreezeResult>;
       mark(runId: string, token: string, result: CallbackMarkRequest): Promise<CallbackMarkResult>;
@@ -2263,6 +2269,14 @@ LoadBearingRunRecordField · type · public
 LoadErrorCode · type · public
   type LoadErrorCode = ErrorCode | 'uncoded';
 
+LoaderNote · type · public
+  interface LoaderNote {
+      step: string;
+      placement: 'prompt' | 'instructions';
+      reads: string;
+      message: string;
+  }
+
 LoaderWarning · type · public
   interface LoaderWarning {
       code: WarningCode;
@@ -2873,6 +2887,8 @@ QuoteCheck · type · public
       readonly nearest?: QuoteSpan;
       readonly cut_short?: true;
       readonly cut_short_at?: readonly number[];
+      readonly cause?: 'blank_line_join';
+      readonly join_at?: readonly number[];
   }
 
 QuoteSpan · type · public
@@ -3744,7 +3760,7 @@ StepDefinition · type · public
       preconditions?: string[];
       trust?: TrustLevel;
       llm_timeout_seconds?: number;
-      on_model_failure?: 'fail';
+      on_model_failure?: 'fail' | 'default';
       timeout_seconds?: number;
       retry?: RetryConfig;
       validation_exhaustion?: {
@@ -4724,6 +4740,7 @@ compileDisclosure · value · internal
 compileSchema · value · internal
 composeCostView · value · internal
 composeDriveFailureCosts · value · internal
+composeFailureOfEntry · value · internal
 composeFailures · value · internal
 composeGateClaimSentence · value · internal
 composeNextActionsStatusWord · value · internal
@@ -4843,7 +4860,6 @@ dueExpiryWords · value · internal
 dueReminderWork · value · internal
 durationWords · value · internal
 emptyDisclosureSet · value · internal
-endOverdueCallbacks · value · internal
 endedByLine · value · internal
 endedRunWayOutOf · value · internal
 endedRunWaysSentence · value · internal
@@ -4867,6 +4883,7 @@ executeEngineStep · value · public
 executeStep · value · public
   function executeStep(store: RunStore, definition: WorkflowDefinition, options: ExecuteStepOptions): Promise<EngineReply>;
 
+expireOverdueCallbacks · value · internal
 expiryCarriedOutLine · value · internal
 expiryReceiptLine · value · internal
 expiryReceiptOf · value · internal
@@ -4941,6 +4958,7 @@ isFenceRunReader · value · internal
 isFinalReminder · value · internal
 isGateTrust · value · internal
 isIdleForCleanup · value · internal
+isModelFailureDefault · value · internal
 isPastDeadline · value · internal
 isRaceStop · value · internal
 isRetryableArtifactErrno · value · internal
@@ -4993,6 +5011,7 @@ loadWorkflowFromFileWithDiagnostics · value · public
       definition: WorkflowDefinition;
       warnings: LoaderWarning[];
       notChecked: NotCheckedPath[];
+      notes: LoaderNote[];
   };
 
 loadWorkflowFromString · value · public
@@ -5003,6 +5022,7 @@ loadWorkflowFromStringWithDiagnostics · value · public
       definition: WorkflowDefinition;
       warnings: LoaderWarning[];
       notChecked: NotCheckedPath[];
+      notes: LoaderNote[];
   };
 
 locateQuote · value · public

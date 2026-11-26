@@ -1,7 +1,7 @@
 // delivery-pass-c3d.test.ts — callback C3d-A (R1.3): the sweep at the start of each delivery pass. A
-// callback that is due 3 days or more after its run ended is ended `failed` with `expired` before any
+// callback that is due 3 days or more after its run ended is expired, `failed` with `expired`, before any
 // try, whoever could have sent it: a workflow this `realm listen` does not mount, a key it cannot
-// read, or one it could send. One line per ended row (`never sent` for a row never tried, `stopped
+// read, or one it could send. One line per expired row (`never sent` for a row never tried, `stopped
 // at attempt <n>` for one tried), at most 10, then one count line. The in-memory store on a settable
 // clock with real loopback receivers; the last cell is a real SQLite home and the BUILT
 // `realm run inspect`.
@@ -150,10 +150,10 @@ const stoppedAt = (host: string, n: number) =>
   `warn callbacks: ${W} → ${host}: stopped at attempt ${n}: not delivered within its time limit`;
 
 describe(
-  'callback C3d-A — the sweep ends what is overdue, before any try',
+  'callback C3d-A — the sweep expires what is overdue, before any try',
   { timeout: 60_000 },
   () => {
-    it('4 days after the run ended: an unmounted workflow’s row, a row whose key cannot be read and a row this process could send are all ended expired, nothing sent, one never-sent line each', async () => {
+    it('4 days after the run ended: an unmounted workflow’s row, a row whose key cannot be read and a row this process could send are all expired, nothing sent, one never-sent line each', async () => {
       const w = await world();
       const r = await receiver();
       await w.callbacks.keys.make(W, r.host, KEY);
@@ -184,7 +184,7 @@ describe(
       });
     });
 
-    it('the same rows 2 days after the run ended: nothing ends; the sendable one is sent, the others wait as before', async () => {
+    it('the same rows 2 days after the run ended: nothing expires; the sendable one is sent, the others wait as before', async () => {
       const w = await world();
       const r = await receiver();
       await w.callbacks.keys.make(W, r.host, KEY);
@@ -193,7 +193,7 @@ describe(
       const noKey = await w.run(NOKEY.url, NOKEY.host);
       await w.clock.advance(2 * DAY);
       await w.pass(r.lists)(live);
-      // (1) red when the sweep ends a row before its 3 days; (2) prints each row, the POSTs and the lines.
+      // (1) red when the sweep expires a row before its 3 days; (2) prints each row, the POSTs and the lines.
       expect({
         rows: {
           sendable: await w.row(sendable),
@@ -217,7 +217,7 @@ describe(
       });
     });
 
-    it('a row tried once whose retry wait is over ends "stopped at attempt 1"; a row waiting for its retry past the 3 days is left until that wait ends, its attempts kept', async () => {
+    it('a row tried once whose retry wait is over expires "stopped at attempt 1"; a row waiting for its retry past the 3 days is left until that wait ends, its attempts kept', async () => {
       const w = await world();
       // The first POST answers 503; the second 503 with "come back in an hour".
       const r = await receiver((n) =>
@@ -233,7 +233,7 @@ describe(
       await w.clock.advance(3 * DAY - 10 * MIN);
       const lines = (): string[] => w.said().filter((l) => /stopped at|never sent/.test(l));
       // 10 min before late's 3 days: early's retry wait (minutes) is long over and its 3 days are past,
-      // so the sweep ends it; late is not overdue yet, so it is tried and told to wait an hour.
+      // so the sweep expires it; late is not overdue yet, so it is tried and told to wait an hour.
       await w.pass(r.lists)(live);
       const first = {
         early: await w.row(early),
@@ -247,7 +247,7 @@ describe(
       const before = { late: await w.row(late), lines: lines().length, posts: r.posts.length };
       await w.clock.set(new Date(lateNext));
       await w.pass(r.lists)(live);
-      // (1) red when the sweep ends a row whose retry wait is not over (late ended at its 3 days,
+      // (1) red when the sweep expires a row whose retry wait is not over (late expired at its 3 days,
       //     before its next try), the line counts the claim's own +1 ("attempt 2"), or a retried row's
       //     attempts are not kept; (2) prints the rows, the lines and the POSTs at each pass.
       expect({
@@ -272,7 +272,7 @@ describe(
       });
     });
 
-    it('25 rows ended in one sweep: 10 lines and "and 15 more callbacks"; 11: 10 lines and "and 1 more callback"', async () => {
+    it('25 rows expired in one sweep: 10 lines and "and 15 more callbacks"; 11: 10 lines and "and 1 more callback"', async () => {
       const sweep = async (n: number): Promise<string[]> => {
         const w = await world();
         for (let i = 0; i < n; i++) await w.run(OTHER.url, OTHER.host, 'other');
@@ -282,7 +282,7 @@ describe(
       };
       const many = await sweep(25);
       const eleven = await sweep(11);
-      // (1) red when every ended row gets a line, the count line is missing or counts the named rows
+      // (1) red when every expired row gets a line, the count line is missing or counts the named rows
       //     too, or says "callbacks" for one; (2) prints the lines.
       expect({ many, eleven }).toEqual({
         many: [
@@ -296,14 +296,14 @@ describe(
       });
     });
 
-    it('the sweep comes before the listing: a row it ended is not listed', async () => {
+    it('the sweep comes before the listing: a row it expired is not listed', async () => {
       const w = await world();
       const r = await receiver();
       await w.callbacks.keys.make(W, r.host, KEY);
       const old = await w.run(r.url, r.host);
       await w.clock.advance(4 * DAY);
       const fresh = await w.run(r.url, r.host);
-      const ended = vi.spyOn(w.callbacks, 'endOverdue');
+      const expired = vi.spyOn(w.callbacks, 'expireOverdue');
       const due = vi.spyOn(w.callbacks, 'due');
       await w.pass(r.lists)(live);
       const listed = await Promise.all(
@@ -312,7 +312,7 @@ describe(
       // (1) red when the listing comes first (the overdue row is listed, claimed and ended by the claim
       //     path) or the sweep is not called; (2) prints the call order, the listings and the POSTs.
       expect({
-        sweepFirst: ended.mock.invocationCallOrder[0]! < due.mock.invocationCallOrder[0]!,
+        sweepFirst: expired.mock.invocationCallOrder[0]! < due.mock.invocationCallOrder[0]!,
         listed: listed.map((items) => items.map((i) => i.run_id)),
         posts: r.posts,
         old: await w.row(old),
@@ -329,7 +329,7 @@ describe(
       const r = await receiver();
       await w.callbacks.keys.make(W, r.host, KEY);
       const id = await w.run(r.url, r.host);
-      vi.spyOn(w.callbacks, 'endOverdue').mockRejectedValue(new Error('disk gone'));
+      vi.spyOn(w.callbacks, 'expireOverdue').mockRejectedValue(new Error('disk gone'));
       const runner = makePollRunner(w.pass(r.lists), 'callbacks', w.logger);
       await runner.wake();
       await runner.stop();
@@ -351,7 +351,7 @@ describe(
 );
 
 describe('callback C3d-A — on a real SQLite home', { timeout: 120_000 }, () => {
-  it('a finished run whose key was deleted, 4 days on: the pass ends it; inspect prints "Callback: expired", the read address says failed and expired, countWaiting no longer counts it; a row whose finished_at is 4 days back ends too; a run made 4 days ago that ended 2 days ago, and one still running, are left', async () => {
+  it('a finished run whose key was deleted, 4 days on: the pass expires it; inspect prints "Callback: expired", the read address says failed and expired, countWaiting no longer counts it; a row whose finished_at is 4 days back expires too; a run made 4 days ago that ended 2 days ago, and one still running, are left', async () => {
     const clock = settableClock(C0);
     const h = await makeTempHome({
       clock,
@@ -425,9 +425,9 @@ describe('callback C3d-A — on a real SQLite home', { timeout: 120_000 }, () =>
       encoding: 'utf8',
       timeout: 60_000,
     });
-    // (1) red when the anchor is read from `created_at` (the run that ended 2 days ago is ended) or
+    // (1) red when the anchor is read from `created_at` (the run that ended 2 days ago is expired) or
     //     only from the run (the hand-set row is left), the `terminal_state` join is dropped (the
-    //     running run's row is ended), or the pass does not sweep; (2) prints the counts, the lines,
+    //     running run's row is expired), or the pass does not sweep; (2) prints the counts, the lines,
     //     the rows left, the read address's callbacks and the inspect line.
     expect({
       waiting: [waitingBefore, waitingAfter],

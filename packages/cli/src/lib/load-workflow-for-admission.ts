@@ -6,6 +6,7 @@ import {
   loadWorkflowFromFileWithDiagnostics,
   type WorkflowDefinition,
   type LoaderWarning,
+  type LoaderNote,
   type NotCheckedPath,
 } from '@sensigo/realm';
 import {
@@ -152,6 +153,9 @@ export async function loadWorkflowForAdmission(
   /** Fix 1, unit 1: the loader's `input_map` paths into data the workflow declares no shape for —
    *  validate lists them; register and watch do not read them. */
   notChecked: NotCheckedPath[];
+  /** Gap 2, unit (iv-a1): the loader's notes (a failure message a prompt or instructions puts into
+   *  its text) — validate prints them; register and watch do not read them. */
+  notes: LoaderNote[];
   /** Issue #600 caching PR 5: the runner's economics file (`runner.cache.economics`) the load
    *  resolved, when `realm.yaml` names one — validate, register and watch read the cache floor from it. */
   cacheEconomicsPath?: string;
@@ -160,6 +164,7 @@ export async function loadWorkflowForAdmission(
     definition,
     warnings: pass1Warnings,
     notChecked,
+    notes,
   } = loadWorkflowFromFileWithDiagnostics(filePath);
   let loaded: LoadedProjectExtensions;
   try {
@@ -195,6 +200,7 @@ export async function loadWorkflowForAdmission(
     ],
     manifest: loaded.manifest,
     notChecked,
+    notes,
     ...(loaded.cacheEconomicsPath !== undefined
       ? { cacheEconomicsPath: loaded.cacheEconomicsPath }
       : {}),

@@ -319,7 +319,7 @@ export interface EngineReply {
    * SURVIVES the MCP tool wrapper's strip (`execute-step.ts`/`submit-human-response.ts` only strip
    * `data`+`evidence`, every other top-level field passes through — the #197 partition-fields
    * precedent). Absent (never `false`) on every other envelope, INCLUDING the `confirm_required`
-   * gate-open envelope for a `human_confirmed` step at exhaustion (the step is not yet settled
+   * gate-open envelope for a `human_confirmed` step at its default (the step is not yet settled
    * there — see the gate's own `warnings` for the disclosure) and `submitHumanResponse`'s envelope
    * (a separate function with no access to the settling snapshot; see `defaulted_steps` below for
    * that surface's disclosure instead).

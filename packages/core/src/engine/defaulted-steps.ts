@@ -33,3 +33,19 @@ export function deriveDefaultedSteps(evidence: RunRecord['evidence']): string[] 
   }
   return steps;
 }
+
+/**
+ * Gap 2, unit (iii): whether an evidence entry is the default answer of a step with
+ * `on_model_failure: default` — `settled_by_default: true` together with a `failure_kind`, which
+ * only that settle writes (#220's default never carries `failure_kind`). The answer, not a model
+ * call: the failed request's cost, texts, tries and trace are on the error entry before it, so the
+ * readers that would call an agent entry with no usage "not measured" pass this one over. Total over
+ * any value.
+ */
+export function isModelFailureDefault(entry: unknown): boolean {
+  if (typeof entry !== 'object' || entry === null) return false;
+  const diagnostics = (entry as { diagnostics?: unknown }).diagnostics;
+  if (typeof diagnostics !== 'object' || diagnostics === null) return false;
+  const diag = diagnostics as Record<string, unknown>;
+  return diag['settled_by_default'] === true && diag['failure_kind'] !== undefined;
+}

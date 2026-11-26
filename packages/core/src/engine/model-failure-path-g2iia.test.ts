@@ -764,11 +764,13 @@ describe('gap 2, unit (ii-a) — $settlement.<step>.failure_kind (check 7)', () 
     await advanceRun(store, d, { runId, registry });
     const { record: run } = await store.get(runId);
     expect(run.failed_steps).toEqual(['work']);
-    // (a) red when the field is written on every failed step; (b) prints the entry.
+    // (a) red when the field is written on every failed step; (b) prints the entry. Gap 2, unit
+    // (iv-a1): the failed step's message is there; its kind is not.
     expect(buildSettlementNamespace(run)['work']).toEqual({
       settled_by_default: false,
       validation_rejections: 0,
       failed: true,
+      message: "Handler 'h_boom' threw: boom",
     });
   });
 });

@@ -56,7 +56,7 @@ import {
   type PendingGate,
   type CallbackClaimRequest,
   type CallbackClaimResult,
-  type CallbackEnded,
+  type CallbackExpiredItem,
   type CallbackFreezeResult,
   type CallbackItem,
   type CallbackMarkRequest,
@@ -70,7 +70,7 @@ import {
   claimCallback,
   countWaitingCallbacks,
   dueCallbacks,
-  endOverdueCallbacks,
+  expireOverdueCallbacks,
   freezeCallbackBody,
   markCallback,
   type CallbackKeyDecision,
@@ -436,17 +436,17 @@ export class InMemoryCallbackStore implements CallbackStore {
     return dueCallbacks([...this.rows.values()], finished, at, limit);
   }
 
-  async endOverdue(limit: number): Promise<CallbackEnded[]> {
+  async expireOverdue(limit: number): Promise<CallbackExpiredItem[]> {
     checkCallbackRequest({ kind: 'due', limit });
     const at = takeRawReading(this.clock);
-    const { ended, writes } = endOverdueCallbacks(
+    const { expired, writes } = expireOverdueCallbacks(
       [...this.rows.values()],
       (id) => this.runOf(id),
       at,
       limit,
     );
     for (const row of writes) this.rows.set(row.run_id, row);
-    return ended;
+    return expired;
   }
 
   async claim(runId: string, request: CallbackClaimRequest): Promise<CallbackClaimResult> {

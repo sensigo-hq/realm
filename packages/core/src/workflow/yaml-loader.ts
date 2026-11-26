@@ -37,7 +37,7 @@ import {
 } from './diagnostics.js';
 import { createSourcePositionCollector, type SourcePositionMap } from './source-positions.js';
 import { resolveTemplates } from './template-resolver.js';
-import { checkInputMapPaths, type NotCheckedPath } from './input-map-paths.js';
+import { checkInputMapPaths, type LoaderNote, type NotCheckedPath } from './input-map-paths.js';
 import type { WhenLeaf } from './when-paths.js';
 import { checkProvidedNames, type DeclaredNames } from './name-check.js';
 import { checkTemplates } from './template-check.js';
@@ -863,7 +863,12 @@ function loadWorkflowFromFileCore(
   filePath: string,
   registry?: ExtensionRegistry,
   declared?: DeclaredNames,
-): { definition: WorkflowDefinition; warnings: LoaderWarning[]; notChecked: NotCheckedPath[] } {
+): {
+  definition: WorkflowDefinition;
+  warnings: LoaderWarning[];
+  notChecked: NotCheckedPath[];
+  notes: LoaderNote[];
+} {
   let content: string;
   try {
     content = readFileSync(filePath, 'utf8');
@@ -876,9 +881,8 @@ function loadWorkflowFromFileCore(
       retryable: false,
     });
   }
-  const { definition, warnings, notChecked } = parseWorkflowString(content, registry, declared, {
-    allowExtensions: true,
-  });
+  const parsed = parseWorkflowString(content, registry, declared, { allowExtensions: true });
+  const { definition, warnings, notChecked, notes } = parsed;
   // issue #424 — CHOKEPOINT 2. Everything past the parse can throw with `warnings` already
   // populated (a missing agent_profile, a bad workflow_context source), and those warnings used
   // to unwind with the stack: `register` on a file with a typo AND a missing profile printed the
@@ -934,7 +938,7 @@ function loadWorkflowFromFileCore(
     throw err;
   }
 
-  return { definition, warnings, notChecked };
+  return { definition, warnings, notChecked, notes };
 }
 
 /**
@@ -960,7 +964,8 @@ export function loadWorkflowFromFile(
  * Opt-in for callers that want to surface warnings
  * themselves (validate/register/watch/`--strict`) instead of the default console.warn behavior.
  * `notChecked` (fix 1, unit 1) lists the `input_map` paths into data the workflow declares no
- * shape for, which `validate` reports.
+ * shape for, which `validate` reports; `notes` (gap 2, unit (iv-a1)) the placeholders that put a
+ * step's failure message into a prompt or a gated step's instructions, which `validate` prints.
  * @public
  */
 export function loadWorkflowFromFileWithDiagnostics(
@@ -968,7 +973,12 @@ export function loadWorkflowFromFileWithDiagnostics(
   registry?: ExtensionRegistry,
   /** Fix 1, piece 4: the names the project's realm.yaml declares, counted as provided. */
   declared?: DeclaredNames,
-): { definition: WorkflowDefinition; warnings: LoaderWarning[]; notChecked: NotCheckedPath[] } {
+): {
+  definition: WorkflowDefinition;
+  warnings: LoaderWarning[];
+  notChecked: NotCheckedPath[];
+  notes: LoaderNote[];
+} {
   return loadWorkflowFromFileCore(filePath, registry, declared);
 }
 
@@ -1004,7 +1014,12 @@ export function loadWorkflowFromStringWithDiagnostics(
   registry?: ExtensionRegistry,
   /** Fix 1, piece 4: the names the project's realm.yaml declares, counted as provided. */
   declared?: DeclaredNames,
-): { definition: WorkflowDefinition; warnings: LoaderWarning[]; notChecked: NotCheckedPath[] } {
+): {
+  definition: WorkflowDefinition;
+  warnings: LoaderWarning[];
+  notChecked: NotCheckedPath[];
+  notes: LoaderNote[];
+} {
   return parseWorkflowString(content, registry, declared, { allowExtensions: false });
 }
 
@@ -1226,7 +1241,12 @@ function parseWorkflowString(
   registry: ExtensionRegistry | undefined,
   declared: DeclaredNames | undefined,
   opts: { allowExtensions: boolean },
-): { definition: WorkflowDefinition; warnings: LoaderWarning[]; notChecked: NotCheckedPath[] } {
+): {
+  definition: WorkflowDefinition;
+  warnings: LoaderWarning[];
+  notChecked: NotCheckedPath[];
+  notes: LoaderNote[];
+} {
   // Step 1: Parse YAML
   //
   // issue #392: the position collector rides THIS parse via js-yaml's own listener — there is no
@@ -2174,24 +2194,38 @@ function parseWorkflowString(
         );
       }
 
-      // Gap 2, unit (ii-b2): on_model_failure's one value is 'fail'; 'default' (Words 8) comes later.
-      // As structured_output's value check: only on an agent step (a wrong-kind step gets only the
+      // Gap 2, units (ii-b2) and (iii): on_model_failure takes 'fail' or 'default'. As
+      // structured_output's value check: only on an agent step (a wrong-kind step gets only the
       // minted refusal, never the value noise).
       const onModelFailure = step['on_model_failure'];
+      const keyDefault = onModelFailure === 'default' && step['execution'] === 'agent';
       if (
         onModelFailure !== undefined &&
         step['execution'] === 'agent' &&
-        onModelFailure !== 'fail'
+        onModelFailure !== 'fail' &&
+        onModelFailure !== 'default'
       ) {
         errors.push(
           withStepLine(
             stepName,
-            onModelFailure === 'default'
-              ? `Step '${stepName}': on_model_failure: 'default' is not available yet: only 'fail' is. ` +
-                  "With 'fail', a failed model request fails the step; without the key, the drive " +
-                  "stops and the run stays open. Write 'fail', or remove the key. 'default' (complete " +
-                  'the step with its default answer) comes in a later version.'
-              : `Step '${stepName}': 'on_model_failure' must be the literal string 'fail' (got ${JSON.stringify(onModelFailure)})`,
+            `Step '${stepName}': 'on_model_failure' must be 'fail' or 'default' (got ${JSON.stringify(onModelFailure)})`,
+          ),
+        );
+      }
+      // Gap 2, unit (iii): 'default' needs the answer, with or without a validation_exhaustion block
+      // (a block that is not an object gets its own refusal below, and only that one).
+      const exhaustionDeclared = step['validation_exhaustion'];
+      if (
+        keyDefault &&
+        (exhaustionDeclared === undefined ||
+          (typeof exhaustionDeclared === 'object' &&
+            exhaustionDeclared !== null &&
+            !('default_output' in exhaustionDeclared)))
+      ) {
+        errors.push(
+          withStepLine(
+            stepName,
+            `Step '${stepName}': on_model_failure: 'default' requires 'validation_exhaustion.default_output' (the answer the step takes when its model request fails)`,
           ),
         );
       }
@@ -2280,7 +2314,8 @@ function parseWorkflowString(
       // own `output_schema` (REFUSE — B5, an unvalidatable default) against which `default_output` is
       // then AJV-proven AT LOAD TIME (REFUSE — B10, reusing the runtime validator so load-time and
       // runtime verdicts can never diverge); `default_output` present without `mode: 'default'` WARNS
-      // as dead config (never rejects — it's simply inert); an unknown sub-key WARNS.
+      // as dead config (never rejects — it's simply inert); an unknown sub-key WARNS. Gap 2, unit
+      // (iii): `on_model_failure: 'default'` reads `default_output` too, so it triggers the same checks.
       // #517 re-gate: kind half minted above; else-semantics preserved by the explicit conjunct.
       if (step['validation_exhaustion'] !== undefined && step['execution'] === 'agent') {
         if (
@@ -2335,15 +2370,20 @@ function parseWorkflowString(
           }
 
           const hasDefaultOutput = 'default_output' in exhaustionBlock;
-          if (modeValue === 'default') {
+          // Gap 2, unit (iii): the default answer is read under either trigger, so it is checked
+          // under either (a missing one is the key's refusal above when the key is set).
+          if (modeValue === 'default' || keyDefault) {
             if (!hasDefaultOutput) {
-              errors.push(
-                withStepLine(
-                  stepName,
-                  `Step '${stepName}': 'validation_exhaustion.mode: default' requires ` +
-                    `'default_output' (nothing to substitute on exhaustion)`,
-                ),
-              );
+              // With the key set, its refusal above is the one refusal.
+              if (!keyDefault) {
+                errors.push(
+                  withStepLine(
+                    stepName,
+                    `Step '${stepName}': 'validation_exhaustion.mode: default' requires ` +
+                      `'default_output' (nothing to substitute on exhaustion)`,
+                  ),
+                );
+              }
             } else if (refusedSchemaKeys.has('output_schema')) {
               // #586: the output_schema was already refused as a schema on its own line — the
               // B10 proof below would only restate the same compile failure in a worse voice.
@@ -2397,8 +2437,9 @@ function parseWorkflowString(
               }
             }
           } else if (hasDefaultOutput) {
-            // default_output present without mode: 'default' (mode: 'fail' or absent) — inert, not
-            // an error: WARN as dead config rather than silently ignoring it.
+            // default_output present with neither trigger (mode 'fail' or absent, and no
+            // on_model_failure: default) — inert, not an error: WARN as dead config rather than
+            // silently ignoring it.
             warnings.push({
               code: 'DEAD_VALIDATION_EXHAUSTION_CONFIG',
               severity: resolveSeverity('DEAD_VALIDATION_EXHAUSTION_CONFIG'),
@@ -2406,7 +2447,7 @@ function parseWorkflowString(
               step: stepName,
               message:
                 `Step '${stepName}': 'validation_exhaustion.default_output' is ignored without ` +
-                `'mode: default' — set 'validation_exhaustion.mode: default' to enable it, or ` +
+                `'mode: default' or 'on_model_failure: default' — set one of them to use it, or ` +
                 `remove 'default_output'.`,
             });
           }
@@ -3964,7 +4005,12 @@ function parseWorkflowString(
     // Step 4: Stamp schema version and return typed result
     const definition = doc as unknown as WorkflowDefinition;
     definition.schema_version = CURRENT_WORKFLOW_SCHEMA_VERSION;
-    return { definition, warnings, notChecked: inputMapPaths.notChecked };
+    return {
+      definition,
+      warnings,
+      notChecked: inputMapPaths.notChecked,
+      notes: inputMapPaths.notes,
+    };
   } catch (err) {
     if (err instanceof WorkflowError) attachLoaderWarnings(err, warnings);
     throw err;

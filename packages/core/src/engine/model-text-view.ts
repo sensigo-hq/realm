@@ -8,6 +8,7 @@
 // hashing; reads no clock.
 import { createHash } from 'node:crypto';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
+import { isModelFailureDefault } from './defaulted-steps.js';
 
 /** What a stored text carries beside its size, in the order a reader is told it. */
 export type ModelTextMark =
@@ -425,7 +426,8 @@ function viewOf(read: Extract<Read, { kind: 'texts' }>, usage: unknown): ModelTe
  * a marker; with no `model_text`, `none_on_record` when the entry records a model call
  * (`diagnostics.cache` or `tool_calls`, whatever the step's kind), `no_model_call` for an agent
  * step's entry that records none (the composer's `not_measured_by_realm` rule: an agent step by its
- * definition, else by its `agent_profile`), and `undefined` (nothing) for any other entry.
+ * definition, else by its `agent_profile`), and `undefined` (nothing) for any other entry, the default
+ * answer of a step with `on_model_failure: default` included (gap 2, unit (iii)).
  * @internal
  */
 export function evidenceModelTextView(
@@ -437,6 +439,9 @@ export function evidenceModelTextView(
   const cache = isPlain(diagnostics) ? diagnostics['cache'] : undefined;
   if (entry['model_text'] === undefined) {
     if (isPlain(cache) || entry['tool_calls'] !== undefined) return { kind: 'none_on_record' };
+    // Gap 2, unit (iii): a default answer after a failed model request — its texts are the error
+    // entry's, before it.
+    if (isModelFailureDefault(entry)) return undefined;
     const stepId = entry['step_id'];
     const byDefinition =
       typeof stepId === 'string' && definition?.steps[stepId] !== undefined

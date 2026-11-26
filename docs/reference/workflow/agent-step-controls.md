@@ -21,11 +21,11 @@ All of them are allowed on `agent` steps only. "`realm agent` drives the step" m
 
 Every answer that Realm refuses against a step's `input_schema` or `output_schema` is counted. When the count reaches a limit, the step is ended.
 
-| Key              | Type                              | Default | What it does                                                         |
-| ---------------- | --------------------------------- | ------- | -------------------------------------------------------------------- |
-| `threshold`      | whole number above 0              | 6       | The number of refused answers that ends the step.                    |
-| `mode`           | `fail` or `default`               | `fail`  | `fail` fails the step. `default` completes it with `default_output`. |
-| `default_output` | a value that fits `output_schema` | None    | The answer recorded for the step in `default` mode.                  |
+| Key              | Type                              | Default | What it does                                                                                                           |
+| ---------------- | --------------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `threshold`      | whole number above 0              | 6       | The number of refused answers that ends the step.                                                                      |
+| `mode`           | `fail` or `default`               | `fail`  | `fail` fails the step. `default` completes it with `default_output`.                                                   |
+| `default_output` | a value that fits `output_schema` | None    | The answer recorded for the step in `default` mode, and with `on_model_failure: default` when its model request fails. |
 
 Every agent step with a schema has the limit of 6, whether or not it has this block.
 
@@ -100,7 +100,7 @@ Defaulted (settled by default): classify
   ```
 
 - `threshold` must be a whole number above 0. With `threshold: 1` the first refused answer ends the step.
-- `default_output` without `mode: default` is accepted with a warning that it is ignored.
+- `default_output` without `mode: default` or `on_model_failure: default` is accepted with a warning that it is ignored.
 
 ## `structured_output`
 
@@ -239,7 +239,11 @@ A failure that needs a fix first (a refused key, a model that does not exist, us
 
 After the step fails, `realm agent` goes on with whatever became ready, and exits with code 1 at the end.
 
-`fail` is the one value. The key is refused on `auto`, `guard` and `finalizer` steps. A run an assistant drives over MCP makes no model call through Realm, so the key does nothing there.
+`on_model_failure: default` completes the step with its default answer, `validation_exhaustion.default_output`, when its model request fails for good: the same failures `fail` fails it on. The step needs `output_schema`, and the default must fit it. `validation_exhaustion.mode` can stay `fail`, so that answers refused too often still fail the step. The step's record keeps an error entry for the failed request (its message, code, texts, tries and, for the requests that were billed, their cost), then the default answer, marked `settled_by_default`. A later step reads `$settlement.<step>.failure_kind`, which a default taken after refused answers never has. `realm agent` prints `• Step '<step>' took its default answer (<CODE>): …` and goes on as after any completed step, with exit code 0 when nothing failed.
+
+A later step reads why the request failed as `$settlement.<step>.message` (in a template or an `input_map`, `context.resources.$settlement.<step>.message`): in its prompt, its approval question or its `input_map`. `realm workflow validate` prints a note when it reaches a prompt. An approval question hides every secret Realm knows of in it; a prompt `realm agent` sends is masked as every prompt it sends is; an `input_map` hands the text on as the record keeps it.
+
+The key takes `fail` or `default`. The key is refused on `auto`, `guard` and `finalizer` steps. A run an assistant drives over MCP makes no model call through Realm, so the key does nothing there.
 
 ## `tools` and the tool limits
 

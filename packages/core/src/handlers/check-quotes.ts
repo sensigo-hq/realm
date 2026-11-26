@@ -256,12 +256,15 @@ export class CheckQuotesHandler implements StepHandler {
         const field = shown(
           typeof candidate['field'] === 'string' ? candidate['field'] : `candidate ${index + 1}`,
         );
-        // H3: a value with no quote says so; a search that ran says where it came closest.
+        // H3: a value with no quote says so; a search that ran says where it came closest — or, for a
+        // quote refused only for joining text across a blank line (#845, Q-C), how to quote it.
         const what = hasQuote
           ? `"${shown(quote)}" (${
-              check.nearest !== undefined
-                ? `nearest match at ${check.nearest.start}–${check.nearest.end}`
-                : 'no nearby match'
+              check.cause === 'blank_line_join'
+                ? 'this quote joins text across a blank line; quote each part separately'
+                : check.nearest !== undefined
+                  ? `nearest match at ${check.nearest.start}–${check.nearest.end}`
+                  : 'no nearby match'
             })`
           : quote === undefined || typeof quote === 'string'
             ? 'no quote given'

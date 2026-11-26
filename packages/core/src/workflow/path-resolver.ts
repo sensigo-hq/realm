@@ -29,7 +29,7 @@
 // (AA-C1-03, AA-AUU1-03); a handler or adapter step's output declares no shape (AA-C1-02); a bare
 // auto step records its one dependency's output (docs/concepts/step-kinds.md); `$settlement.<s>`
 // holds three fields (AA-AUU1-04), and a fourth, `failure_kind`, only on a step whose model request
-// failed and that took its failure path (gap 2, unit (ii-a)); a reader with `all_success` runs only
+// failed and that has `on_model_failure` (gap 2, units (ii-a) and (iii)); a reader with `all_success` runs only
 // after each of its
 // dependencies completed (AA-MA4-01), and with exactly one dependency `one_success` is the same
 // rule (AA-MA4-07); a step that runs only after `<s>` failed finds `$settlement.<s>`, because a
@@ -183,15 +183,20 @@ export type AbsentCause =
   | { readonly rule: 'trigger_rule'; readonly step: string; readonly through?: string }
   /** A property its schema does not require. */
   | { readonly rule: 'optional'; readonly field: string }
-  /** A field only `default_output` carries (both schemas, `validation_exhaustion.mode: default`). */
+  /** A field only `default_output` carries (both schemas; `mode: default` or `on_model_failure: default`). */
   | { readonly rule: 'default_only'; readonly field: string }
   /** A position in a list, which may be shorter. */
   | { readonly rule: 'list_position'; readonly position: string }
   /**
    * Gap 2, unit (ii-a): `$settlement.<step>.failure_kind`, set only when the step's model request
-   * failed and the step took its failure path.
+   * failed and the step has `on_model_failure` (it failed, or took its default answer, unit (iii)).
    */
-  | { readonly rule: 'model_failure_only'; readonly step: string };
+  | { readonly rule: 'model_failure_only'; readonly step: string }
+  /**
+   * Gap 2, unit (iv-a1): `$settlement.<step>.message`, set only when the step failed, or took its
+   * default answer after its model request failed.
+   */
+  | { readonly rule: 'failure_only'; readonly step: string };
 
 /**
  * Why a path was not checked. Piece 3a-ii-a: `added_from_file` is `workflow.context.schema`, an entry
@@ -215,13 +220,15 @@ export type PathJudgement =
 /**
  * The fields `$settlement.<s>` holds, in the order the words name them: the three every settled step
  * has (AA-AUU1-04), then `failure_kind`, which only a model failure's settle sets (gap 2, unit (ii-a);
- * judged may be absent).
+ * judged may be absent), then `message`, the failure's own text (unit (iv-a1); may be absent, except
+ * for a reader that runs only after that step failed).
  */
 const SETTLEMENT_FIELDS: readonly string[] = [
   'failed',
   'settled_by_default',
   'validation_rejections',
   'failure_kind',
+  'message',
 ];
 
 const SETTLEMENT = '$settlement';
@@ -601,6 +608,20 @@ export class PathIndex {
     return rule === 'all_failed' || (rule === 'one_failed' && this.depsOf[x]!.length === 1);
   }
 
+  /**
+   * Gap 2, unit (iv-a1): whether step `reader` runs only after step `t` failed — `trigger_rule:
+   * all_failed` with `t` in its `depends_on`, or `one_failed` with `t` its only dependency. Every
+   * write that fails a step records its error text in that write, so `$settlement.<t>.message` is
+   * there for such a reader.
+   */
+  runsOnlyAfterFailureOf(reader: string, t: string): boolean {
+    const x = this.position.get(reader);
+    const target = this.position.get(t);
+    if (x === undefined || target === undefined || !this.depsOf[x]!.includes(target)) return false;
+    const rule = this.rules[x];
+    return rule === 'all_failed' || (rule === 'one_failed' && this.depsOf[x]!.length === 1);
+  }
+
   /** The one test, for the reader's own rule and the step a warning names (F7). */
   private safeStep(x: number, t: number, settlement: boolean): boolean {
     return this.depsOf[x]!.includes(t) ? this.edgeSafe(x, settlement) : this.ruleSafe(x);
@@ -617,8 +638,10 @@ function localShape(step: Obj, deps: readonly string[]): Shape {
     const schemas = [step['input_schema'], step['output_schema']].filter(isObj);
     if (schemas.length === 0) return { kind: 'none', choice: gated };
     const exhaustion = step['validation_exhaustion'];
+    // Gap 2, unit (iii): either trigger records `default_output` as written.
     const defaultOutput =
-      isObj(exhaustion) && exhaustion['mode'] === 'default'
+      isObj(exhaustion) &&
+      (exhaustion['mode'] === 'default' || step['on_model_failure'] === 'default')
         ? exhaustion['default_output']
         : undefined;
     return { kind: 'schemas', schemas, defaultOutput, choice: gated };
@@ -765,9 +788,15 @@ class Context {
       const stepCause = this.index.stepCause(this.reader, t, true);
       if (stepCause !== undefined) return { verdict: 'may_be_absent', cause: stepCause };
       // Gap 2, unit (ii-a): set only on a model failure's settle, so never judged found.
-      return fields[0] === 'failure_kind'
-        ? { verdict: 'may_be_absent', cause: { rule: 'model_failure_only', step: t } }
-        : FOUND;
+      if (fields[0] === 'failure_kind') {
+        return { verdict: 'may_be_absent', cause: { rule: 'model_failure_only', step: t } };
+      }
+      // Gap 2, unit (iv-a1): set on a failed step (or a model-failure default), so found only for a
+      // reader that runs after that step failed and never otherwise.
+      if (fields[0] === 'message' && !this.index.runsOnlyAfterFailureOf(this.reader, t)) {
+        return { verdict: 'may_be_absent', cause: { rule: 'failure_only', step: t } };
+      }
+      return FOUND;
     }
 
     if (!this.isStep(s)) return this.noStep(s);
@@ -905,7 +934,8 @@ function judgeAnswer(
     (w): w is Extract<Walk, { kind: 'closed_miss' }> => w.kind === 'closed_miss',
   );
   if (refused !== undefined) {
-    // With `validation_exhaustion.mode: default` the step can record `default_output` as written,
+    // With `validation_exhaustion.mode: default` or `on_model_failure: default` (gap 2, unit (iii))
+    // the step can record `default_output` as written,
     // which the loader proves against `output_schema` alone (AA-AUU1-02, -21): a path it holds is
     // at most absent, never refused.
     if (resolvesIn(shape.defaultOutput, fields)) {

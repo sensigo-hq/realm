@@ -1,6 +1,6 @@
 // delivery-pass.ts — callback C3a (R1.3; the callback design rev 4 §1.8, §2): the ONE pass that sends
-// what is due. First (C3d) it ends every due row whose run finished 3 days or more ago, served here or
-// not (`endOverdue`, again while a round ends a full 1,000: C3d-B), with a line for each. Then, for
+// what is due. First (C3d) it expires every due row whose run finished 3 days or more ago, served here or
+// not (`expireOverdue`, again while a round expires a full 1,000: C3d-B), with a line for each. Then, for
 // each due row it can serve, it claims the row, ends it when its time limit has passed, builds the
 // body once and freezes it, signs it with the pair's keys read fresh, posts it to the address the
 // door stored (exactly as stored), and records the answer. Every collaborator is passed in; the
@@ -38,7 +38,7 @@ import { callbackSignatureHeader, webhookTimestamp } from './signature.js';
 export const CALLBACK_PASS_BUDGET_MS = 45_000;
 /** How many due rows one listing asks for: the port's maximum, the number of the backlog cap. */
 export const CALLBACK_DUE_LISTING = 1_000;
-/** C3d: how many overdue rows one sweep ends at most (the port's maximum), and how many it names. */
+/** C3d: how many overdue rows one sweep expires at most (the port's maximum), and how many it names. */
 export const CALLBACK_OVERDUE_SWEEP = 1_000;
 const CALLBACK_OVERDUE_LINES = 10;
 /** A callback whose last answer was a 4xx (but 408, 425, 429) ends this long after its first try: 1 h. */
@@ -353,8 +353,8 @@ export function makeCallbackPass(
   };
 
   /**
-   * C3d: ends what is overdue, before the listing; one line per row, at most 10 in the pass, then a
-   * count. C3d-B: asks again while a round ends a full 1,000 and the pass is live and within its
+   * C3d: expires what is overdue, before the listing; one line per row, at most 10 in the pass, then a
+   * count. C3d-B: asks again while a round expires a full 1,000 and the pass is live and within its
    * budget; the count line covers every round, and is said even when a later round throws. Answers
    * `undefined` when nothing overdue is left, else the pass's own answer for stopping early.
    */
@@ -363,8 +363,8 @@ export function makeCallbackPass(
     let more = 0;
     try {
       for (;;) {
-        const ended = await callbacks.endOverdue(CALLBACK_OVERDUE_SWEEP);
-        for (const row of ended) {
+        const expired = await callbacks.expireOverdue(CALLBACK_OVERDUE_SWEEP);
+        for (const row of expired) {
           saidFor.delete(row.run_id);
           if (named === CALLBACK_OVERDUE_LINES) {
             more += 1;
@@ -378,7 +378,7 @@ export function makeCallbackPass(
               : `${prefix} never sent: its time limit passed before a try could be made`,
           );
         }
-        if (ended.length < CALLBACK_OVERDUE_SWEEP) return undefined;
+        if (expired.length < CALLBACK_OVERDUE_SWEEP) return undefined;
         if (!live()) return false;
         if (spent()) return true;
       }

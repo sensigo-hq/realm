@@ -92,7 +92,8 @@ import {
  * listing, and an `update` that keeps it unchanged is accepted; entries written without it read back
  * without it (its listing case is skipped for a store with no `scanListed`). Gap 2, unit (ii-a), adds
  * `EVIDENCE_KEEPS_FAILURE_KIND`: an evidence entry written with `diagnostics.failure_kind` (why a
- * step's failed model request failed it) reads back with it unchanged, from `get` and from a
+ * step's model request failed, on the entry that failed the step or, under `on_model_failure:
+ * default`, completed it with its default answer) reads back with it unchanged, from `get` and from a
  * listing, and an `update` that keeps it unchanged is accepted; an entry written without it reads
  * back without it (its listing case is skipped for a store with no `scanListed`). Q1 (#592), unit
  * f2, adds `CLAIM_KEEPS_DEADLINE_CAUSE`: a claim on a step Realm cannot time-box carries

@@ -198,7 +198,7 @@ function neverReason(
       return {
         text:
           `'$settlement.${capText(cause.step)}' holds only 'failed', 'settled_by_default', ` +
-          `'validation_rejections' and 'failure_kind'`,
+          `'validation_rejections', 'failure_kind' and 'message'`,
         ...dym,
       };
     case 'no_param':
@@ -237,6 +237,7 @@ function absentReason(
     case 'trigger_rule':
       return settlement ? undefined : absentWhy(cause);
     case 'model_failure_only':
+    case 'failure_only':
       return undefined;
     case 'undeclared_field':
       return noGate ? choiceWhy(cause.step) : `step '${capText(cause.step)}' does not declare it`;

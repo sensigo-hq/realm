@@ -8,7 +8,13 @@ export function absentWhy(
   cause: Extract<
     AbsentCause,
     {
-      rule: 'trigger_rule' | 'optional' | 'default_only' | 'list_position' | 'model_failure_only';
+      rule:
+        | 'trigger_rule'
+        | 'optional'
+        | 'default_only'
+        | 'list_position'
+        | 'model_failure_only'
+        | 'failure_only';
     }
   >,
 ): string {
@@ -22,14 +28,20 @@ export function absentWhy(
     case 'default_only':
       return (
         `'${capText(cause.field)}' is only in default_output, which the step records only when ` +
-        `its answers are refused too often`
+        `it takes its default answer`
       );
     case 'list_position':
       return `'${cause.position}' is a position in a list that may be shorter`;
     case 'model_failure_only':
       return (
         `'failure_kind' is set only when step '${capText(cause.step)}''s model request failed and ` +
-        `the step took its failure path`
+        `the step has on_model_failure`
+      );
+    case 'failure_only':
+      // Gap 2, unit (iv-a1), Words 4.
+      return (
+        `'message' is set only when step '${capText(cause.step)}' failed, or took its default ` +
+        `answer after its model request failed`
       );
   }
 }

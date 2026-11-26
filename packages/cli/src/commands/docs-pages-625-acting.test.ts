@@ -829,76 +829,86 @@ describe(
       });
     });
 
-    it('advance, L150–L158: the preview’s project code words, each row on its case', async () => {
-      claim(
-        PAGE,
-        "The preview's `project code` words compare the code this program loaded with what the run last recorded:",
-      );
-      claim(PAGE, "| `same as the run's last record` | The same files with the same hashes. |");
-      claim(
-        PAGE,
-        "| `differs from the run's last record` | Comparable, and different: a code file, an entry module, the `realm.yaml` or the `--extensions-module` override, or the project's lockfile changed. |",
-      );
-      claim(
-        PAGE,
-        "| `not comparable with the run's last record` | The run records project code and this program loaded none, the two fingerprints were taken under different rules, one was cut short at its size limit, or one side's load failed. |",
-      );
-      claim(
-        PAGE,
-        '| `not comparable — the run has recorded no project code yet` | This program loaded project code, and the run has recorded none: no program with project code has run a step of it yet, as on a run just created. It is not a mismatch. |',
-      );
-      claim(
-        PAGE,
-        '| `neither side records project code` | Neither the run nor this program loaded project code. |',
-      );
-      const words = (out: string[]) => out[1]?.replace(/^This program: .* · project code: /, '');
-      const coded = await project('acting-words', A_THEN_QUESTION, true);
-      // A run just created: no program with project code has run a step of it yet.
-      const id = await started(coded.def);
-      const first = realm(['run', 'advance', id]);
-      // (a) red when a fresh run is called a mismatch or refused; (b) prints the words and the run.
-      expect({
-        code: first.code,
-        words: words(first.out),
-        ran: (await runStore.get(id)).record.completed_steps,
-      }).toEqual({
-        code: 0,
-        words: 'not comparable — the run has recorded no project code yet.',
-        ran: ['a'],
-      });
-      await answer(id);
-      // The same files.
-      // (a) red when the same code is not said the same; (b) prints the words.
-      expect(words(realm(['run', 'advance', id]).out)).toBe("same as the run's last record.");
-      // A code file changed.
-      const id2 = await started(coded.def);
-      realm(['run', 'advance', id2]);
-      await answer(id2);
-      writeFileSync(
-        join(coded.dir, 'dist', 'registry.js'),
-        "export default { handlers: { mark: { id: 'mark', execute: async () => ({ data: { from: 'changed' } }) } } };\n",
-        'utf8',
-      );
-      // (a) red when a changed code file is not said to differ; (b) prints the words.
-      expect(words(realm(['run', 'advance', id2]).out)).toBe("differs from the run's last record.");
-      // The run records project code and this program loaded none.
-      const made = await fromString('acting-words-string', A_THEN_QUESTION);
-      const mod = join(coded.dir, 'dist', 'registry.js');
-      const id3 = await started(made);
-      realm(['run', 'advance', id3, '--extensions-module', mod]);
-      await answer(id3);
-      // (a) red when loading nothing against a recorded fingerprint is not "not comparable"; (b)
-      //     prints the words.
-      expect(words(realm(['run', 'advance', id3]).out)).toBe(
-        "not comparable with the run's last record.",
-      );
-      // Neither side.
-      const bare = await project('acting-words-bare', autoStep('a', []), false);
-      // (a) red when no code on either side is said otherwise; (b) prints the words.
-      expect(words(realm(['run', 'advance', await started(bare.def)]).out)).toBe(
-        'neither side records project code.',
-      );
-    });
+    // These two cells run the built `realm` many times each (several `advance` previews and their
+    // runs). On a loaded machine they took 62–65 s against the block's 60 s and timed out four
+    // times in counted runs (CB-C3C1-IA-10; #1303 c-1; #1306 on 38c5dde8; #1309's wording checks),
+    // passing alone each time. They check the page's words, not speed: 180 s, three times their need.
+    it(
+      'advance, L150–L158: the preview’s project code words, each row on its case',
+      { timeout: 180_000 },
+      async () => {
+        claim(
+          PAGE,
+          "The preview's `project code` words compare the code this program loaded with what the run last recorded:",
+        );
+        claim(PAGE, "| `same as the run's last record` | The same files with the same hashes. |");
+        claim(
+          PAGE,
+          "| `differs from the run's last record` | Comparable, and different: a code file, an entry module, the `realm.yaml` or the `--extensions-module` override, or the project's lockfile changed. |",
+        );
+        claim(
+          PAGE,
+          "| `not comparable with the run's last record` | The run records project code and this program loaded none, the two fingerprints were taken under different rules, one was cut short at its size limit, or one side's load failed. |",
+        );
+        claim(
+          PAGE,
+          '| `not comparable — the run has recorded no project code yet` | This program loaded project code, and the run has recorded none: no program with project code has run a step of it yet, as on a run just created. It is not a mismatch. |',
+        );
+        claim(
+          PAGE,
+          '| `neither side records project code` | Neither the run nor this program loaded project code. |',
+        );
+        const words = (out: string[]) => out[1]?.replace(/^This program: .* · project code: /, '');
+        const coded = await project('acting-words', A_THEN_QUESTION, true);
+        // A run just created: no program with project code has run a step of it yet.
+        const id = await started(coded.def);
+        const first = realm(['run', 'advance', id]);
+        // (a) red when a fresh run is called a mismatch or refused; (b) prints the words and the run.
+        expect({
+          code: first.code,
+          words: words(first.out),
+          ran: (await runStore.get(id)).record.completed_steps,
+        }).toEqual({
+          code: 0,
+          words: 'not comparable — the run has recorded no project code yet.',
+          ran: ['a'],
+        });
+        await answer(id);
+        // The same files.
+        // (a) red when the same code is not said the same; (b) prints the words.
+        expect(words(realm(['run', 'advance', id]).out)).toBe("same as the run's last record.");
+        // A code file changed.
+        const id2 = await started(coded.def);
+        realm(['run', 'advance', id2]);
+        await answer(id2);
+        writeFileSync(
+          join(coded.dir, 'dist', 'registry.js'),
+          "export default { handlers: { mark: { id: 'mark', execute: async () => ({ data: { from: 'changed' } }) } } };\n",
+          'utf8',
+        );
+        // (a) red when a changed code file is not said to differ; (b) prints the words.
+        expect(words(realm(['run', 'advance', id2]).out)).toBe(
+          "differs from the run's last record.",
+        );
+        // The run records project code and this program loaded none.
+        const made = await fromString('acting-words-string', A_THEN_QUESTION);
+        const mod = join(coded.dir, 'dist', 'registry.js');
+        const id3 = await started(made);
+        realm(['run', 'advance', id3, '--extensions-module', mod]);
+        await answer(id3);
+        // (a) red when loading nothing against a recorded fingerprint is not "not comparable"; (b)
+        //     prints the words.
+        expect(words(realm(['run', 'advance', id3]).out)).toBe(
+          "not comparable with the run's last record.",
+        );
+        // Neither side.
+        const bare = await project('acting-words-bare', autoStep('a', []), false);
+        // (a) red when no code on either side is said otherwise; (b) prints the words.
+        expect(words(realm(['run', 'advance', await started(bare.def)]).out)).toBe(
+          'neither side records project code.',
+        );
+      },
+    );
 
     it("#828 PR B, check 11: advance's project code words after a lockfile-only change: differs", async () => {
       const words = (out: string[]) => out[1]?.replace(/^This program: .* · project code: /, '');
@@ -914,122 +924,126 @@ describe(
       expect(words(realm(['run', 'advance', id]).out)).toBe("differs from the run's last record.");
     });
 
-    it('advance, L160 + L169 + L176 + blocks: when the engine can run nothing the last preview line says why and nothing runs; the way out after a refused step; a step another program holds', async () => {
-      claim(
-        PAGE,
-        "When another program holds an owed step, the preview says so before anything runs, once, with the program and the time: `In flight: '<step>' is in flight, taken by <program> since <time>.` For a claim that names a lease it reads `In flight: '<step>' was taken by <program> at <time>.`, and, when work is owed or a question is open, `In flight: '<step>' was taken by <program> at <time> (<what the lease check found>).`: the preview prints no held line then (a `Stopped:` held line after the work reads the record again) (added after version 0.50.0).",
-      );
-      claim(
-        PAGE,
-        'When the engine can run nothing, the last preview line says why and nothing runs. It opens `Nothing is owed to the engine: <reason>` when nothing is owed (the run ended, a question is open, only agent steps are ready), and `The engine can run nothing now: <reason>` when steps are still owed to the engine but none can run here now (a step that cannot run, or a step in flight in another program). A reason that ends with a command ends the line there, with no full stop, so the command can be copied as printed; any other ends with a full stop. With more than one reason, the opening ends with its colon and each reason is a line of its own, indented two spaces (added after version 0.46.0, which joined them with `; ` and ended the line with a full stop).',
-      );
-      claim(
-        PAGE,
-        "When the run stops on a step refused before its claim (an invalid `trust`, a failed precondition, an input its schema refuses) and nothing else is ready, the last line gives the way out — for a refused `trust` or precondition, correcting the workflow and registering it again is the fix, since the run picks up the corrected definition; for an input its schema refuses, the line names each such step's own way (a new run with params that fit, or a corrected `input_schema`; with `depends_on` the engine gives the step no input, so a corrected `input_schema`; for a step that builds its input with an `input_map`, a corrected `input_map` or `input_schema`, or a new run with params that fit when the key its schema refuses is built from `run.params`):",
-      );
-      claim(
-        PAGE,
-        "After a call that ran other steps, the same way out takes the place of the `Run <id>: phase '<phase>'` line. A step another program holds:",
-      );
-      // A step that cannot run: the page's screen.
-      const stuck = await project('acting-nothing-refused', needsN('compute', []), false);
-      const id = await started(stuck.def);
-      const r = realm(['run', 'advance', id]);
-      // (a) red when the last lines differ from the page's screen, exit 0, or a step ran; (b)
-      //     prints both.
-      expect({
-        code: r.code,
-        tail: r.out.slice(3),
-        ran: (await runStore.get(id)).record.evidence.length,
-      }).toEqual({
-        code: 1,
-        tail: put(block(PAGE, "The engine can run nothing now: 'compute' cannot run"), {
-          '507090b5-3b5b-4a6c-a814-3faa03404f95': id,
-        }),
-        ran: 0,
-      });
-      // ...and the run picks up the corrected definition once registered again.
-      writeFileSync(
-        join(stuck.dir, 'workflows', 'wf', 'workflow.yaml'),
-        yamlOf('acting-nothing-refused', autoStep('compute', [])),
-        'utf8',
-      );
-      // (a) red when registering the corrected workflow again fails; (b) prints the exit.
-      expect(
-        realm(['workflow', 'register', 'workflows/wf/workflow.yaml'], { cwd: stuck.dir }).code,
-      ).toBe(0);
-      const fixed = realm(['run', 'advance', id]);
-      // (a) red when the corrected definition is not the one the run uses; (b) prints stdout.
-      expect(fixed.out.slice(-2)).toEqual(['→ compute', `Run ${id}: phase 'completed'`]);
-      // A step another program holds: the page's screen.
-      const held = await project('acting-nothing-held', autoStep('process', []), false);
-      const idh = await started(held.def);
-      await runStore.claimStep(idh, 'process', held.def, {
-        by: 'crown',
-        by_source: 'ambient',
-        channel: 'advance',
-      });
-      const heldClaim = (await runStore.get(idh)).record.claims!['process']!;
-      const since = heldClaim.since;
-      const h = realm(['run', 'advance', idh]);
-      // (a) red when the lines differ from the page's screen, or In flight is said twice; (b)
-      //     prints both.
-      expect({ code: h.code, tail: h.out.slice(3) }).toEqual({
-        code: 0,
-        tail: put(block(PAGE, "In flight: 'process' is in flight, taken by crown"), {
-          '2026-10-04T22:26:13.994Z': since!,
-          // #922 P2-2: the held line's deadline
-          '2026-10-04T23:27:13.994Z': heldClaim.deadline!,
-          '65d2afc8-2cb3-4401-808c-1d83a40bf989': idh,
-        }),
-      });
-      // Nothing owed: the run ended; only agent steps are ready; a question is open.
-      const ended = await started(held.def);
-      // (a) red when the run cannot be ended (fixture); (b) prints the exit.
-      expect(realm(['run', 'abandon', ended]).code).toBe(0);
-      const agentOnly = await project('acting-nothing-agent', agentStep('finish', []), false);
-      const ida = await started(agentOnly.def);
-      const asked = await project('acting-nothing-question', CONFIRM(), false);
-      const q = await atQuestion(asked.def);
-      const { record: before } = await runStore.get(q.id);
-      // decision C181: the preview's reason line (a waiting-process line may follow it).
-      const last = (runId: string) =>
-        realm(['run', 'advance', runId])
-          .out.filter((l) => l.startsWith('Nothing is owed') || l.startsWith('The engine can'))
-          .at(-1);
-      // (a) red when a reason or its opening words change; (b) prints the three lines.
-      expect([last(ended), last(ida), last(q.id)]).toEqual([
-        // F2: a run an operator ended says that ending and its reason, never the undo. #625 PR-2b,
-        // the actor unit: `realm run abandon` now records this program (REALM_OPERATOR, `tester`).
-        "Nothing is owed to the engine: the run has ended (abandoned). It was abandoned with 'realm run abandon', by tester (from REALM_OPERATOR); no reason was given. To run the work again, start a new run.",
-        `Nothing is owed to the engine: an agent step is ready: 'finish' — drive it with realm agent --run-id ${ida} --provider <provider> --model <model>`,
-        `Nothing is owed to the engine: a question is open — realm run respond ${q.id} --gate ${q.gateId} --choice <one of: approve, reject>`,
-      ]);
-      // (a) red when advance at an open question changes the run; (b) prints both records' steps.
-      const { record: afterQ } = await runStore.get(q.id);
-      expect([afterQ.completed_steps, afterQ.pending_gate?.gate_id]).toEqual([
-        before.completed_steps,
-        q.gateId,
-      ]);
-      // After a call that ran other steps: the way out in place of the phase line.
-      const ranFirst = await project(
-        'acting-nothing-after',
-        [autoStep('a', []), needsN('compute', ['a'])].join('\n'),
-        false,
-      );
-      const idr = await started(ranFirst.def);
-      const rr = realm(['run', 'advance', idr]);
-      // (a) red when the phase line comes back after steps ran, or exit 0; (b) prints stdout.
-      expect({ code: rr.code, tail: rr.out.slice(-3) }).toEqual({
-        code: 1,
-        tail: [
-          '→ a',
-          "Stopped: 'compute' cannot run (input_schema): Invalid input for step 'compute': the input must have required property 'n'",
-          // F15: `compute` (with `depends_on`) is refused for its input — its own way out
-          `Run ${idr} stays open (phase 'running'): for 'compute', the engine gives it no input, so correct its input_schema and register the workflow again; then, after a fix, realm run advance ${idr} — or end it: realm run abandon ${idr}`,
-        ],
-      });
-    });
+    it(
+      'advance, L160 + L169 + L176 + blocks: when the engine can run nothing the last preview line says why and nothing runs; the way out after a refused step; a step another program holds',
+      { timeout: 180_000 },
+      async () => {
+        claim(
+          PAGE,
+          "When another program holds an owed step, the preview says so before anything runs, once, with the program and the time: `In flight: '<step>' is in flight, taken by <program> since <time>.` For a claim that names a lease it reads `In flight: '<step>' was taken by <program> at <time>.`, and, when work is owed or a question is open, `In flight: '<step>' was taken by <program> at <time> (<what the lease check found>).`: the preview prints no held line then (a `Stopped:` held line after the work reads the record again) (added after version 0.50.0).",
+        );
+        claim(
+          PAGE,
+          'When the engine can run nothing, the last preview line says why and nothing runs. It opens `Nothing is owed to the engine: <reason>` when nothing is owed (the run ended, a question is open, only agent steps are ready), and `The engine can run nothing now: <reason>` when steps are still owed to the engine but none can run here now (a step that cannot run, or a step in flight in another program). A reason that ends with a command ends the line there, with no full stop, so the command can be copied as printed; any other ends with a full stop. With more than one reason, the opening ends with its colon and each reason is a line of its own, indented two spaces (added after version 0.46.0, which joined them with `; ` and ended the line with a full stop).',
+        );
+        claim(
+          PAGE,
+          "When the run stops on a step refused before its claim (an invalid `trust`, a failed precondition, an input its schema refuses) and nothing else is ready, the last line gives the way out — for a refused `trust` or precondition, correcting the workflow and registering it again is the fix, since the run picks up the corrected definition; for an input its schema refuses, the line names each such step's own way (a new run with params that fit, or a corrected `input_schema`; with `depends_on` the engine gives the step no input, so a corrected `input_schema`; for a step that builds its input with an `input_map`, a corrected `input_map` or `input_schema`, or a new run with params that fit when the key its schema refuses is built from `run.params`):",
+        );
+        claim(
+          PAGE,
+          "After a call that ran other steps, the same way out takes the place of the `Run <id>: phase '<phase>'` line. A step another program holds:",
+        );
+        // A step that cannot run: the page's screen.
+        const stuck = await project('acting-nothing-refused', needsN('compute', []), false);
+        const id = await started(stuck.def);
+        const r = realm(['run', 'advance', id]);
+        // (a) red when the last lines differ from the page's screen, exit 0, or a step ran; (b)
+        //     prints both.
+        expect({
+          code: r.code,
+          tail: r.out.slice(3),
+          ran: (await runStore.get(id)).record.evidence.length,
+        }).toEqual({
+          code: 1,
+          tail: put(block(PAGE, "The engine can run nothing now: 'compute' cannot run"), {
+            '507090b5-3b5b-4a6c-a814-3faa03404f95': id,
+          }),
+          ran: 0,
+        });
+        // ...and the run picks up the corrected definition once registered again.
+        writeFileSync(
+          join(stuck.dir, 'workflows', 'wf', 'workflow.yaml'),
+          yamlOf('acting-nothing-refused', autoStep('compute', [])),
+          'utf8',
+        );
+        // (a) red when registering the corrected workflow again fails; (b) prints the exit.
+        expect(
+          realm(['workflow', 'register', 'workflows/wf/workflow.yaml'], { cwd: stuck.dir }).code,
+        ).toBe(0);
+        const fixed = realm(['run', 'advance', id]);
+        // (a) red when the corrected definition is not the one the run uses; (b) prints stdout.
+        expect(fixed.out.slice(-2)).toEqual(['→ compute', `Run ${id}: phase 'completed'`]);
+        // A step another program holds: the page's screen.
+        const held = await project('acting-nothing-held', autoStep('process', []), false);
+        const idh = await started(held.def);
+        await runStore.claimStep(idh, 'process', held.def, {
+          by: 'crown',
+          by_source: 'ambient',
+          channel: 'advance',
+        });
+        const heldClaim = (await runStore.get(idh)).record.claims!['process']!;
+        const since = heldClaim.since;
+        const h = realm(['run', 'advance', idh]);
+        // (a) red when the lines differ from the page's screen, or In flight is said twice; (b)
+        //     prints both.
+        expect({ code: h.code, tail: h.out.slice(3) }).toEqual({
+          code: 0,
+          tail: put(block(PAGE, "In flight: 'process' is in flight, taken by crown"), {
+            '2026-10-04T22:26:13.994Z': since!,
+            // #922 P2-2: the held line's deadline
+            '2026-10-04T23:27:13.994Z': heldClaim.deadline!,
+            '65d2afc8-2cb3-4401-808c-1d83a40bf989': idh,
+          }),
+        });
+        // Nothing owed: the run ended; only agent steps are ready; a question is open.
+        const ended = await started(held.def);
+        // (a) red when the run cannot be ended (fixture); (b) prints the exit.
+        expect(realm(['run', 'abandon', ended]).code).toBe(0);
+        const agentOnly = await project('acting-nothing-agent', agentStep('finish', []), false);
+        const ida = await started(agentOnly.def);
+        const asked = await project('acting-nothing-question', CONFIRM(), false);
+        const q = await atQuestion(asked.def);
+        const { record: before } = await runStore.get(q.id);
+        // decision C181: the preview's reason line (a waiting-process line may follow it).
+        const last = (runId: string) =>
+          realm(['run', 'advance', runId])
+            .out.filter((l) => l.startsWith('Nothing is owed') || l.startsWith('The engine can'))
+            .at(-1);
+        // (a) red when a reason or its opening words change; (b) prints the three lines.
+        expect([last(ended), last(ida), last(q.id)]).toEqual([
+          // F2: a run an operator ended says that ending and its reason, never the undo. #625 PR-2b,
+          // the actor unit: `realm run abandon` now records this program (REALM_OPERATOR, `tester`).
+          "Nothing is owed to the engine: the run has ended (abandoned). It was abandoned with 'realm run abandon', by tester (from REALM_OPERATOR); no reason was given. To run the work again, start a new run.",
+          `Nothing is owed to the engine: an agent step is ready: 'finish' — drive it with realm agent --run-id ${ida} --provider <provider> --model <model>`,
+          `Nothing is owed to the engine: a question is open — realm run respond ${q.id} --gate ${q.gateId} --choice <one of: approve, reject>`,
+        ]);
+        // (a) red when advance at an open question changes the run; (b) prints both records' steps.
+        const { record: afterQ } = await runStore.get(q.id);
+        expect([afterQ.completed_steps, afterQ.pending_gate?.gate_id]).toEqual([
+          before.completed_steps,
+          q.gateId,
+        ]);
+        // After a call that ran other steps: the way out in place of the phase line.
+        const ranFirst = await project(
+          'acting-nothing-after',
+          [autoStep('a', []), needsN('compute', ['a'])].join('\n'),
+          false,
+        );
+        const idr = await started(ranFirst.def);
+        const rr = realm(['run', 'advance', idr]);
+        // (a) red when the phase line comes back after steps ran, or exit 0; (b) prints stdout.
+        expect({ code: rr.code, tail: rr.out.slice(-3) }).toEqual({
+          code: 1,
+          tail: [
+            '→ a',
+            "Stopped: 'compute' cannot run (input_schema): Invalid input for step 'compute': the input must have required property 'n'",
+            // F15: `compute` (with `depends_on`) is refused for its input — its own way out
+            `Run ${idr} stays open (phase 'running'): for 'compute', the engine gives it no input, so correct its input_schema and register the workflow again; then, after a fix, realm run advance ${idr} — or end it: realm run abandon ${idr}`,
+          ],
+        });
+      },
+    );
 
     it('advance, C191 (walk c9, W3-Y1): `Last recorded driver:` names the program on the newest entry that names one — after an answer, still the program that opened the question; inspect shows who answered; newer entries with no program are counted', async () => {
       claim(
