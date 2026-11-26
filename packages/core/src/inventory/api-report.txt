@@ -2292,7 +2292,7 @@ LoadErrorCode · type · public
 LoaderNote · type · public
   interface LoaderNote {
       step: string;
-      placement: 'prompt' | 'instructions';
+      placement: 'prompt' | 'instructions' | 'input_map';
       reads: string;
       message: string;
   }
