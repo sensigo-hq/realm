@@ -494,6 +494,17 @@ describe("gap 2 (iv-a2-ii), check 7 — a store that does not declare 'pending_g
     }).toEqual({ state: 'why: none', paths: [] });
   });
 
+  it('the same store, on a run whose only message is over 500 characters (not kept): the question as stored', async () => {
+    const w = await world(stubStore(false));
+    const { state } = await opened(w, D.long, 'hidden');
+    // (a) red when the fallback counts the not-kept marker as a failure message (the question is
+    //     shaped whole though no words were kept); (b) prints the text and the paths.
+    expect({
+      state: state.pending_gate?.resolved_message,
+      paths: receiptOf(state).shaped.filter((p) => p.startsWith('pending_gate')),
+    }).toEqual({ state: `why: ${NOT_KEPT}`, paths: [] });
+  });
+
   it('a store that declares nothing and keeps every key: the twin served, as on a declaring store', async () => {
     const w = await world(stubStore(true));
     const { state } = await opened(w, D.ask, 'hidden');
