@@ -70,6 +70,8 @@ import {
   abortMessageHidingFailureText,
   carriesFailureWords,
   isFailureWordsThrow,
+  conditionValueHidingFailureText,
+  withPreconditionHidingFailureText,
   type RunRecord,
 } from '@sensigo/realm';
 import { mcpHostOf } from './start-run.js';
@@ -1119,6 +1121,101 @@ function failureTextPaths(reply: {
   ];
 }
 
+/** A guard's evaluated condition, as `aborted_at.conditions` keeps it. */
+type GuardCondition = NonNullable<NonNullable<RunRecord['aborted_at']>['conditions']>[number];
+
+/**
+ * Gap 2, unit (iv-a2-i): under the failure-text setting `hidden`, the copies of a failure's message
+ * this read shows, each as its shape: a value a condition read from a message path (a skipped step's
+ * `when` leaves in `skip_details`, a guard's `abort_context.conditions`), and a refused step's
+ * precondition that read one (`engine_runnable`, `agent_refused`, `cannot_go_on`'s refused facts),
+ * with core's shaped twins of its value and its sentence. With their paths, the walk's spelling, for
+ * the receipt. Under `shown`, or with nothing to shape, each part as it is.
+ */
+function copiesHidingFailureText(parts: {
+  hidden: boolean;
+  skipDetails: Record<string, SkipDetail> | undefined;
+  abortConditions: readonly GuardCondition[] | undefined;
+  engineRunnable: EngineRunnable[];
+  agentRefused: EngineRunnable[];
+  runHealth: RunHealthFinding[];
+}): {
+  skipDetails?: Record<string, SkipDetail>;
+  abortConditions?: GuardCondition[];
+  engineRunnable: EngineRunnable[];
+  agentRefused: EngineRunnable[];
+  runHealth: RunHealthFinding[];
+  paths: string[];
+} {
+  const paths: string[] = [];
+  const unchanged = {
+    engineRunnable: parts.engineRunnable,
+    agentRefused: parts.agentRefused,
+    runHealth: parts.runHealth,
+    paths,
+  };
+  if (!parts.hidden) return unchanged;
+  let skipChanged = false;
+  const skipDetails = Object.fromEntries(
+    Object.entries(parts.skipDetails ?? {}).map(([step, detail]) => {
+      if (detail.kind !== 'when_false') return [step, detail];
+      let changed = false;
+      const leaves = detail.leaves.map((leaf, j) => {
+        const shaped = conditionValueHidingFailureText(leaf.leaf, leaf.resolved_value);
+        if (shaped === undefined) return leaf;
+        changed = true;
+        paths.push(`skip_details.${step}.leaves[${j}].resolved_value`);
+        return { ...leaf, resolved_value: shaped };
+      });
+      skipChanged ||= changed;
+      return [step, changed ? { ...detail, leaves } : detail];
+    }),
+  );
+  let abortChanged = false;
+  const abortConditions = (parts.abortConditions ?? []).map((c, j) => {
+    const shaped = conditionValueHidingFailureText(c.condition, c.resolved_value);
+    if (shaped === undefined) return c;
+    abortChanged = true;
+    paths.push(`abort_context.conditions[${j}].resolved_value`);
+    return { ...c, resolved_value: shaped };
+  });
+  const refusals = (list: EngineRunnable[], key: string): EngineRunnable[] =>
+    list.map((entry, j) => {
+      const shaped = withPreconditionHidingFailureText(entry);
+      if (shaped === undefined) return entry;
+      paths.push(`${key}[${j}].refusal`, `${key}[${j}].precondition.value`);
+      return shaped;
+    });
+  const engineRunnable = refusals(parts.engineRunnable, 'engine_runnable');
+  const agentRefused = refusals(parts.agentRefused, 'agent_refused');
+  const runHealth = parts.runHealth.map((finding, i) => {
+    const refused = finding.kind === 'cannot_go_on' ? finding.evidence?.['refused'] : undefined;
+    if (!Array.isArray(refused)) return finding;
+    let changed = false;
+    const shown = refused.map(
+      (facts: { refusal?: string; precondition?: PreconditionFacts }, k) => {
+        const shaped = withPreconditionHidingFailureText(facts);
+        if (shaped === undefined) return facts;
+        changed = true;
+        paths.push(
+          `run_health[${i}].evidence.refused[${k}].refusal`,
+          `run_health[${i}].evidence.refused[${k}].precondition.value`,
+        );
+        return shaped;
+      },
+    );
+    return changed ? { ...finding, evidence: { ...finding.evidence, refused: shown } } : finding;
+  });
+  return {
+    ...(skipChanged ? { skipDetails } : {}),
+    ...(abortChanged ? { abortConditions } : {}),
+    engineRunnable,
+    agentRefused,
+    runHealth,
+    paths,
+  };
+}
+
 /**
  * Business logic for the get_run_state tool.
  * Returns a structured summary of the run without the full evidence array.
@@ -1502,15 +1599,28 @@ export async function handleGetRunState(
   const shapedAbortMessage = hideFailureText ? abortMessageHidingFailureText(run) : undefined;
   const driveFailuresShown =
     shownDriveFailures !== undefined ? boundedDriveFailures(shownDriveFailures) : undefined;
+  // Gap 2, unit (iv-a2-i): under `hidden`, the copies of a failure's message in condition values
+  // and in a precondition's refusal, as their shape.
+  const copies = copiesHidingFailureText({
+    hidden: hideFailureText,
+    skipDetails: run.skip_details,
+    abortConditions: run.aborted_at?.conditions,
+    engineRunnable: pending?.engine_runnable ?? [],
+    agentRefused: pending?.agent_refused ?? [],
+    runHealth: runHealthShown.shown,
+  });
   const shapedPaths = hideFailureText
-    ? failureTextPaths({
-        terminalReasonShaped: shapedReason !== undefined,
-        failures,
-        ...(driveFailuresShown !== undefined ? { driveFailures: driveFailuresShown } : {}),
-        runHealth: runHealthShown.shown,
-        abortMessageShaped: shapedAbortMessage !== undefined,
-        loadWarningShaped,
-      })
+    ? [
+        ...failureTextPaths({
+          terminalReasonShaped: shapedReason !== undefined,
+          failures,
+          ...(driveFailuresShown !== undefined ? { driveFailures: driveFailuresShown } : {}),
+          runHealth: copies.runHealth,
+          abortMessageShaped: shapedAbortMessage !== undefined,
+          loadWarningShaped,
+        }),
+        ...copies.paths,
+      ]
     : [];
 
   /* eslint-disable-next-line no-restricted-syntax --
@@ -1586,8 +1696,16 @@ export async function handleGetRunState(
     ...(run.aborted_at !== undefined
       ? {
           abort_context:
-            shapedAbortMessage !== undefined
-              ? { ...run.aborted_at, abort_message: shapedAbortMessage }
+            shapedAbortMessage !== undefined || copies.abortConditions !== undefined
+              ? {
+                  ...run.aborted_at,
+                  ...(shapedAbortMessage !== undefined
+                    ? { abort_message: shapedAbortMessage }
+                    : {}),
+                  ...(copies.abortConditions !== undefined
+                    ? { conditions: copies.abortConditions }
+                    : {}),
+                }
               : run.aborted_at,
         }
       : {}),
@@ -1618,10 +1736,10 @@ export async function handleGetRunState(
         }
       : {}),
     ...(run.skip_details !== undefined && Object.keys(run.skip_details).length > 0
-      ? { skip_details: run.skip_details }
+      ? { skip_details: copies.skipDetails ?? run.skip_details }
       : {}),
     // #872 (b1) correction 1 (H5): at most ten findings of a kind; `run_health_more` counts the rest.
-    ...(runHealthShown.shown.length > 0 ? { run_health: runHealthShown.shown } : {}),
+    ...(copies.runHealth.length > 0 ? { run_health: copies.runHealth } : {}),
     ...(Object.keys(runHealthShown.more).length > 0
       ? { run_health_more: runHealthShown.more }
       : {}),
@@ -1653,10 +1771,10 @@ export async function handleGetRunState(
       ? { pending_guards: pending.pending_guards }
       : {}),
     ...(pending !== undefined && pending.engine_runnable.length > 0
-      ? { engine_runnable: pending.engine_runnable }
+      ? { engine_runnable: copies.engineRunnable }
       : {}),
     ...(pending !== undefined && pending.agent_refused.length > 0
-      ? { agent_refused: pending.agent_refused }
+      ? { agent_refused: copies.agentRefused }
       : {}),
     // #872 (b1) correction 1 (H7): at most ten steps; the command's placeholder is core's bounded one.
     ...(resumable !== undefined ? { resumable: boundedResumable(resumable) } : {}),

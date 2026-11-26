@@ -4,7 +4,7 @@
 // Unknown references are left as-is. Object/array values are JSON-stringified.
 import type { WorkflowContextSnapshot } from '../types/run-record.js';
 import type { ContextWrapperFormat } from '../types/workflow-definition.js';
-import { discloseValueAt } from '../utils/disclosure-walk.js';
+import { discloseValueAt, shapeOf } from '../utils/disclosure-walk.js';
 import { WHOLE_NAMED_MARKER, type DisclosureSet, type DisclosureTier } from '../utils/redaction.js';
 import { splitOnUnquotedDelimiter } from './comparison-expr.js';
 
@@ -509,6 +509,15 @@ export interface RenderDisclosure {
    * at this tier first, on a copy, before the `tier` pass and before any filter (a question's: `all`).
    */
   readonly failureMessagesAt?: DisclosureTier;
+  /**
+   * Gap 2, unit (iv-a2-i): each failure message at such a path shown as its shape instead,
+   * `‹string, N characters›` (N its length on the record), first, on a copy, before the `tier` pass
+   * and before any filter — so a filter sees the shape whole. A message already wholly a named
+   * marker (over 500 characters, `‹N characters, not kept›`) stays as it is. `onShaped` is called for
+   * each message shaped. Set by the renders a door's `hidden` set reaches (a step's prompt, a gated
+   * step's instructions), never by the question's.
+   */
+  readonly failureMessagesShaped?: { readonly onShaped?: () => void };
 }
 
 /** Where a failure message sits in a render's context: `context.resources.$settlement.<step>.message`. */
@@ -531,16 +540,32 @@ export function holdsFailureMessages(path: string): boolean {
   return segments.every((s, i) => FAILURE_MESSAGE_LEAF[i] === '*' || FAILURE_MESSAGE_LEAF[i] === s);
 }
 
-/** `value`, read at `path`, with each failure message it holds hidden at `tier`: a copy, never a write. */
+/** Where a condition reads a failure message: `$settlement.<step>.message`, on the bare root a
+ *  `when`, a guard and a precondition resolve against. */
+const CONDITION_FAILURE_MESSAGE_LEAF: readonly string[] = ['$settlement', '*', 'message'];
+
+/**
+ * Gap 2, unit (iv-a2-i): whether a condition's left-hand `path` reads a step's failure message — the
+ * field's own path, or a shorter one that holds it (`$settlement.<step>`, `$settlement`).
+ */
+export function conditionReadsFailureMessages(path: string): boolean {
+  const segments = path.trim().split('.');
+  if (segments.length > CONDITION_FAILURE_MESSAGE_LEAF.length) return false;
+  return segments.every(
+    (s, i) => CONDITION_FAILURE_MESSAGE_LEAF[i] === '*' || CONDITION_FAILURE_MESSAGE_LEAF[i] === s,
+  );
+}
+
+/** `value`, read at `path`, with each failure message it holds passed through `leaf`: a copy, never a
+ *  write. */
 function failureMessagesHidden(
   value: unknown,
   path: string,
-  set: DisclosureSet,
-  tier: DisclosureTier,
+  leaf: (message: unknown) => unknown,
 ): unknown {
   if (!holdsFailureMessages(path)) return value;
   const hide = (node: unknown, depth: number): unknown => {
-    if (depth === FAILURE_MESSAGE_LEAF.length) return discloseValueAt(node, set, tier);
+    if (depth === FAILURE_MESSAGE_LEAF.length) return leaf(node);
     if (typeof node !== 'object' || node === null || Array.isArray(node)) return node;
     const obj = node as Record<string, unknown>;
     const key = FAILURE_MESSAGE_LEAF[depth]!;
@@ -639,11 +664,21 @@ export function renderTemplate(
   // The filter-mask fix (B1): a resolved value as the render site masks it, before any filter.
   const disclosure = options?.disclosure;
   // Gap 2, unit (iv-a1): a failure message first at its own tier, then every value at the site's.
+  // Unit (iv-a2-i): or first as its shape, under a door's `hidden`.
+  const shaped = disclosure?.failureMessagesShaped;
+  const messageLeaf = (message: unknown): unknown => {
+    if (shaped !== undefined) {
+      if (typeof message !== 'string' || WHOLE_NAMED_MARKER.test(message)) return message;
+      shaped.onShaped?.();
+      return shapeOf(message);
+    }
+    return discloseValueAt(message, disclosure!.set, disclosure!.failureMessagesAt!);
+  };
   const masked = (value: unknown, path: string): unknown =>
     disclosure !== undefined && value !== undefined
       ? discloseValueAt(
-          disclosure.failureMessagesAt !== undefined
-            ? failureMessagesHidden(value, path, disclosure.set, disclosure.failureMessagesAt)
+          shaped !== undefined || disclosure.failureMessagesAt !== undefined
+            ? failureMessagesHidden(value, path, messageLeaf)
             : value,
           disclosure.set,
           disclosure.tier,

@@ -4756,6 +4756,7 @@ computeClaimDeadline · value · public
   function computeClaimDeadline(definition: WorkflowDefinition, stepName: string, now: Date): string | null;
 
 computeGateDueState · value · internal
+conditionValueHidingFailureText · value · internal
 consumedKindsFor · value · internal
 consumesInputMap · value · internal
 controlEscape · value · internal
@@ -4939,6 +4940,8 @@ heldRerunOf · value · internal
 heldStateAt · value · internal
 heldStateOf · value · internal
 heldWordsStateOf · value · internal
+hidesFailureWords · value · internal
+holdsShapedFailureMessage · value · internal
 identityRefusalLine · value · internal
 inboundMarkerWarning · value · internal
 instantText · value · internal
@@ -5056,6 +5059,7 @@ notKeptMarker · value · internal
 notSecretIntersection · value · internal
 notSecretNames · value · internal
 noteFailureWords · value · internal
+noteHidingFailureWords · value · internal
 noteRealmProvider · value · internal
 offeredResumeWay · value · internal
 omitClaim · value · internal
@@ -5277,6 +5281,7 @@ withFullStop · value · internal
 withLibraryWords · value · public
   function withLibraryWords<Host>(partial: PartialWayRenderer<Host>): WayRenderer<string, Host>;
 
+withPreconditionHidingFailureText · value · internal
 withResumeOffer · value · internal
 withTestClockNotice · value · internal
 withheldCauseOf · value · internal
