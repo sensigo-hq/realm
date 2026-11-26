@@ -25,7 +25,7 @@ Where the docs teach it: [Workflow file: top-level fields](../workflow/top-level
 | [`JsonSchema`](#jsonschema) | interface | The JSON Schema object a workflow gives for a step's input and for a run's params (`StepDefinition.input_schema`, `WorkflowDefinition.params_schema`). |
 | [`LoaderNote`](#loadernote) | interface | A placeholder or an `input_map` leaf that puts a step's failure message (`$settlement.<step>.message`, or a path that holds it) into a `prompt`, a gated step's `instructions` or a step's `input_map`. |
 | [`McpServerConfig`](#mcpserverconfig) | interface | An MCP server a workflow's tool-enabled steps may call: its id and the command that starts it (`WorkflowDefinition.mcp_servers`). |
-| [`NotCheckedPath`](#notcheckedpath) | interface | An `input_map` path or a `when` condition that reads data the workflow declares no shape for (`validate --json`'s `not_checked`). |
+| [`NotCheckedPath`](#notcheckedpath) | interface | An `input_map` path, a `when` condition, a template placeholder or a `remember` path that reads data the workflow declares no shape for (`validate --json`'s `not_checked`). |
 | [`ProtocolConfig`](#protocolconfig) | interface | A workflow's own words for the agent protocol: a quick-start paragraph that replaces the generated one, and rules added as they are written (`WorkflowDefinition.protocol`). |
 | [`RememberConfig`](#rememberconfig) | interface | What a step keeps for later runs of its workflow (`StepDefinition.remember`). |
 | [`RetryConfig`](#retryconfig) | interface | How a step is tried again after a failure: the most attempts, the backoff and its delays (`StepDefinition.retry`). |
@@ -311,12 +311,12 @@ interface McpServerConfig {
 
 interface · public
 
-An `input_map` path or a `when` condition that reads data the workflow declares no shape for
-(`validate --json`'s `not_checked`).
+An `input_map` path, a `when` condition, a template placeholder or a `remember` path that reads
+data the workflow declares no shape for (`validate --json`'s `not_checked`).
 
 ```ts
 interface NotCheckedPath {
-    surface: 'input_map' | 'when' | 'template';
+    surface: 'input_map' | 'when' | 'template' | 'remember';
     step: string;
     key: string;
     path: string;
