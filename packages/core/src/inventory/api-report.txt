@@ -2371,6 +2371,33 @@ McpServerConfig · type · public
 MemberKind · type · public
   type MemberKind = typeof KIND.environment | typeof KIND.declared;
 
+MemoryForgetMarker · type · internal
+MemoryHorizon · type · internal
+MemoryRow · type · beta
+  interface MemoryRow {
+      readonly run_id: string;
+      readonly seq: number;
+      readonly workflow_id: string;
+      readonly workflow_version: number;
+      readonly step: string;
+      readonly memory: string;
+      readonly key: Readonly<Record<string, string>>;
+      readonly key_hash: string;
+      readonly at: string;
+      readonly expires_at: string;
+      readonly choice?: string;
+      readonly supplied_by?: string;
+      readonly value: Readonly<Record<string, unknown>>;
+  }
+
+MemoryRowSkipReason · type · internal
+MemoryRowsInput · type · internal
+MemoryRowsResult · type · internal
+MemoryStore · type · beta
+  interface MemoryStore {
+      rowsOfRun(runId: string): Promise<MemoryRow[]>;
+  }
+
 MockAdapter · both · internal
 ModelAttempt · type · public
   interface ModelAttempt {
@@ -2443,6 +2470,7 @@ MoneySourceTotal · type · internal
 NAMES_SHOWN · value · internal
 NAME_CAP_MARKER · value · internal
 NAME_MAX_LENGTH · value · internal
+NAME_PATTERN · value · internal
 NAME_REFUSAL_REASONS · value · internal
 NEW_RUN_SENTENCE · value · internal
 NEXT_ACTIONS_STATUS · value · internal
@@ -2470,6 +2498,7 @@ NOT_REMEMBERED_REASONS · value · public
       "key_empty",
       "key_not_text",
       "key_masked",
+      "key_too_large",
       "value_too_large"
   ];
 
@@ -3363,7 +3392,7 @@ RunStepWay · type · public
       brief: StepBrief;
   };
 
-RunStore · type · public (beta: callbacks, claimStep.hold, leases, outbound)
+RunStore · type · public (beta: callbacks, claimStep.hold, leases, memory, outbound)
   interface RunStore {
       readonly clock: Clock;
       persistsClaims: boolean;
@@ -3371,6 +3400,7 @@ RunStore · type · public (beta: callbacks, claimStep.hold, leases, outbound)
       readonly leases?: LeasePort | null;
       readonly outbound?: OutboundLedger | null;
       readonly callbacks?: CallbackStore | null;
+      readonly memory?: MemoryStore | null;
       readonly persistedRunRecordFields?: ReadonlySet<LoadBearingRunRecordField>;
       create(options: CreateRunOptions): Promise<CreateResult>;
       get(runId: string): Promise<Snapshot>;
@@ -5074,6 +5104,7 @@ isRunRecordShape · value · public
 isSizeBlock · value · internal
 isStepScopedFence · value · internal
 isStepSettledOrInFlight · value · internal
+isStoredInstant · value · internal
 isStrictModeRefusal · value · internal
 isTerminalPhase · value · internal
 isTerminalState · value · internal
@@ -5143,6 +5174,8 @@ markSaid · value · internal
 markTestClock · value · internal
 markersIn · value · internal
 matchModel · value · internal
+memoryKeyHashOf · value · internal
+memoryRowsOf · value · internal
 minCacheableTokensFor · value · internal
 mintQuestionView · value · internal
 modelRetryScheduleMs · value · internal

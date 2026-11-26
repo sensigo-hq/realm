@@ -9,8 +9,12 @@ import { Ajv } from 'ajv';
 import type { ErrorObject } from 'ajv';
 import type { InputMapNode, RememberConfig } from '../types/workflow-definition.js';
 
-/** A memory's name and each key part's name: a letter, then letters, digits and `_`, 64 at most. */
-const NAME_PATTERN = '^[A-Za-z][A-Za-z0-9_]{0,63}$';
+/**
+ * A memory's name and each key part's name: a letter, then letters, digits and `_`, 64 at most. The
+ * schema's pattern, and `memoryRowsOf`'s check of a stamp it did not write (gap 3, unit 2a).
+ * @internal
+ */
+export const NAME_PATTERN = '^[A-Za-z][A-Za-z0-9_]{0,63}$';
 
 /** The longest `keep_days`: ten years, as AWS AgentCore's `eventExpiryDuration` allows. */
 export const REMEMBER_KEEP_DAYS_MAX = 3650;

@@ -17,6 +17,11 @@ export * from './store/outbound-ledger.js';
 export * from './store/callback-store.js';
 // R1.3 callback A2: the callback store's signing keys, their request check, fingerprint and deciders.
 export * from './store/callback-keys.js';
+// Gap 3 (memory across runs), unit 2a: the memory row, the port a store implements, and the one pure
+// function every store derives its rows with, inside the transaction that writes the evidence.
+export * from './store/memory-store.js';
+// The name pattern of `remember:`'s names, which `memoryRowsOf` checks a stamp against again.
+export { NAME_PATTERN } from './workflow/remember-block.js';
 // #729, the claim window, CW-1b: the facts a store's lease port found, and their one reader.
 export { leaseFactsOf, leaseFactOf, NO_LEASE_FACTS, LeaseFactsClass } from './store/lease-facts.js';
 export type { LeaseFacts, Unleased } from './store/lease-facts.js';
@@ -633,6 +638,7 @@ export type { ReminderItem, ReminderSettings } from './engine/reminder-due.js';
 export {
   readInstant,
   parseStamp,
+  isStoredInstant,
   isPastDeadline,
   overdueOf,
   recordStampedAheadSentence,

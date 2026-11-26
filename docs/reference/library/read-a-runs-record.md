@@ -1860,8 +1860,8 @@ const · public
 
 Why a step with `remember:` remembered nothing on its entry (`NotRemembered.not_remembered`). In the
 order they are checked: it took its default answer; a path could not be read; a key part was
-absent, `null`, empty or only whitespace, not text or a finite number, or held a mask marker; what
-it would keep was over 32 KB as JSON.
+absent, `null`, empty or only whitespace, not text or a finite number, held a mask marker, or was
+over 1 KB in UTF-8; what it would keep was over 32 KB as JSON.
 
 ```ts
 const NOT_REMEMBERED_REASONS: readonly [
@@ -1872,6 +1872,7 @@ const NOT_REMEMBERED_REASONS: readonly [
     "key_empty",
     "key_not_text",
     "key_masked",
+    "key_too_large",
     "value_too_large"
 ];
 ```

@@ -138,15 +138,15 @@ remember:
   keep_days: 90 # required
 ```
 
-| Field                | Type                       | Default  | What it does                                                                                      |
-| -------------------- | -------------------------- | -------- | ------------------------------------------------------------------------------------------------- |
-| `remember`           | map                        | None     | What the step keeps for later runs of its workflow.                                               |
-| `remember.as`        | name                       | Required | The memory's name.                                                                                |
-| `remember.key`       | map of names to paths      | Required | One or more named parts, each a path in this run. A part is kept as text, a number as its digits. |
-| `remember.value`     | map, in `input_map`'s form | None     | What to keep, in `input_map`'s form. Without it, the step's output is kept.                       |
-| `remember.keep_days` | whole number               | Required | How many days to keep each entry, from 1 to 3650.                                                 |
+| Field                | Type                       | Default  | What it does                                                                                                                                        |
+| -------------------- | -------------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `remember`           | map                        | None     | What the step keeps for later runs of its workflow.                                                                                                 |
+| `remember.as`        | name                       | Required | The memory's name.                                                                                                                                  |
+| `remember.key`       | map of names to paths      | Required | One or more named parts, each a path in this run. A part is kept as text, a number as its digits; with a part over 1 KB the step remembers nothing. |
+| `remember.value`     | map, in `input_map`'s form | None     | What to keep, in `input_map`'s form. Without it, the step's output is kept.                                                                         |
+| `remember.keep_days` | whole number               | Required | How many days to keep each entry, from 1 to 3650.                                                                                                   |
 
-`remember` goes on an agent step, or an auto step with `handler` or `uses_service`; the step's own output is `context.resources.<this step>`. A gated step remembers when its question is answered, with the choice. A step that failed, took its default answer or whose question expired remembers nothing. When a key part is missing, empty, null, masked, or not text or a number, or what it would keep is over 32 KB, the step remembers nothing: its entry says why, and an assistant's `execute_step` reply and `realm run advance` warn. A path that reads a step's failure message is refused, because a memory outlives the run. The step's entry records what it remembered (`remembered`), with `expires_at`: when it was written plus `keep_days`. Nothing reads it back yet.
+`remember` goes on an agent step, or an auto step with `handler` or `uses_service`; the step's own output is `context.resources.<this step>`. A gated step remembers when its question is answered, with the choice. A step that failed, took its default answer or whose question expired remembers nothing. When a key part is missing, empty, null, masked, over 1 KB, or not text or a number, or what it would keep is over 32 KB, the step remembers nothing: its entry says why, and an assistant's `execute_step` reply and `realm run advance` warn. A path that reads a step's failure message is refused, because a memory outlives the run. The step's entry records what it remembered (`remembered`), with `expires_at`: when it was written plus `keep_days`. Nothing reads it back yet.
 
 A name (`as`, and each part of `key`) is letters, digits and underscores, starts with a letter, and is at most 64 characters. See [The run record](../run-record-and-export.md) for the entry's `remembered`.
 

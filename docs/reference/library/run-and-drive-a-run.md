@@ -3041,6 +3041,8 @@ Names this job reaches whose entry is on another page.
 - [`MarkFinalizerResult`](implement-a-store.md#markfinalizerresult): The result a `mark_finalizer` delta reports for one finalizer's handler: `completed` or `failed`.
 - [`McpServerConfig`](define-and-load-a-workflow.md#mcpserverconfig): An MCP server a workflow's tool-enabled steps may call: its id and the command that starts it (`WorkflowDefinition.mcp_servers`).
 - [`MemberKind`](embed-the-mcp-server.md#memberkind): Where a value a disclosure set hides came from: the environment, or the values declared to it; the declared kind wins where two overlap (`DisclosureSet.forms`).
+- [`MemoryRow`](implement-a-store.md#memoryrow): One memory row: what one evidence entry remembered for later runs, as a store keeps it.
+- [`MemoryStore`](implement-a-store.md#memorystore): A store's memory: the rows it derived from its runs' `remembered` stamps.
 - [`MODEL_FAILURE_KINDS`](read-a-runs-record.md#model_failure_kinds): What a failed model request can need before it succeeds: another try (`transient`), an operator's fix first (`setup`), or nothing, because it will fail the same way again (`permanent`).
 - [`ModelAttempt`](read-a-runs-record.md#modelattempt): One failed try of one of a step's model requests, as `model_attempts` keeps it on an evidence entry and on a drive-failure entry.
 - [`ModelFailureKind`](read-a-runs-record.md#modelfailurekind): What a failed model request needs before it can succeed: one of `MODEL_FAILURE_KINDS`.
