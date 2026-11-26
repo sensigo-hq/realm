@@ -191,7 +191,12 @@ export type AbsentCause =
    * Gap 2, unit (ii-a): `$settlement.<step>.failure_kind`, set only when the step's model request
    * failed and the step has `on_model_failure` (it failed, or took its default answer, unit (iii)).
    */
-  | { readonly rule: 'model_failure_only'; readonly step: string };
+  | { readonly rule: 'model_failure_only'; readonly step: string }
+  /**
+   * Gap 2, unit (iv-a1): `$settlement.<step>.message`, set only when the step failed, or took its
+   * default answer after its model request failed.
+   */
+  | { readonly rule: 'failure_only'; readonly step: string };
 
 /**
  * Why a path was not checked. Piece 3a-ii-a: `added_from_file` is `workflow.context.schema`, an entry
@@ -215,13 +220,15 @@ export type PathJudgement =
 /**
  * The fields `$settlement.<s>` holds, in the order the words name them: the three every settled step
  * has (AA-AUU1-04), then `failure_kind`, which only a model failure's settle sets (gap 2, unit (ii-a);
- * judged may be absent).
+ * judged may be absent), then `message`, the failure's own text (unit (iv-a1); may be absent, except
+ * for a reader that runs only after that step failed).
  */
 const SETTLEMENT_FIELDS: readonly string[] = [
   'failed',
   'settled_by_default',
   'validation_rejections',
   'failure_kind',
+  'message',
 ];
 
 const SETTLEMENT = '$settlement';
@@ -601,6 +608,20 @@ export class PathIndex {
     return rule === 'all_failed' || (rule === 'one_failed' && this.depsOf[x]!.length === 1);
   }
 
+  /**
+   * Gap 2, unit (iv-a1): whether step `reader` runs only after step `t` failed — `trigger_rule:
+   * all_failed` with `t` in its `depends_on`, or `one_failed` with `t` its only dependency. Every
+   * write that fails a step records its error text in that write, so `$settlement.<t>.message` is
+   * there for such a reader.
+   */
+  runsOnlyAfterFailureOf(reader: string, t: string): boolean {
+    const x = this.position.get(reader);
+    const target = this.position.get(t);
+    if (x === undefined || target === undefined || !this.depsOf[x]!.includes(target)) return false;
+    const rule = this.rules[x];
+    return rule === 'all_failed' || (rule === 'one_failed' && this.depsOf[x]!.length === 1);
+  }
+
   /** The one test, for the reader's own rule and the step a warning names (F7). */
   private safeStep(x: number, t: number, settlement: boolean): boolean {
     return this.depsOf[x]!.includes(t) ? this.edgeSafe(x, settlement) : this.ruleSafe(x);
@@ -767,9 +788,15 @@ class Context {
       const stepCause = this.index.stepCause(this.reader, t, true);
       if (stepCause !== undefined) return { verdict: 'may_be_absent', cause: stepCause };
       // Gap 2, unit (ii-a): set only on a model failure's settle, so never judged found.
-      return fields[0] === 'failure_kind'
-        ? { verdict: 'may_be_absent', cause: { rule: 'model_failure_only', step: t } }
-        : FOUND;
+      if (fields[0] === 'failure_kind') {
+        return { verdict: 'may_be_absent', cause: { rule: 'model_failure_only', step: t } };
+      }
+      // Gap 2, unit (iv-a1): set on a failed step (or a model-failure default), so found only for a
+      // reader that runs after that step failed and never otherwise.
+      if (fields[0] === 'message' && !this.index.runsOnlyAfterFailureOf(this.reader, t)) {
+        return { verdict: 'may_be_absent', cause: { rule: 'failure_only', step: t } };
+      }
+      return FOUND;
     }
 
     if (!this.isStep(s)) return this.noStep(s);

@@ -111,9 +111,10 @@ describe('gap 2, unit (ii-a) — the loader judges failure_kind may be absent (c
 });
 
 describe('gap 2, unit (ii-a) — each refusal sentence lists failure_kind (check 8, Words 1)', () => {
+  // Gap 2, unit (iv-a1), Words 3: the sentences now list 'message' too.
   const HOLDS =
-    "'$settlement.classify' holds only 'failed', 'settled_by_default', 'validation_rejections' " +
-    "and 'failure_kind'";
+    "'$settlement.classify' holds only 'failed', 'settled_by_default', 'validation_rejections', " +
+    "'failure_kind' and 'message'";
 
   it('a template', () => {
     const yaml = workflow(

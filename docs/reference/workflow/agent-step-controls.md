@@ -241,6 +241,8 @@ After the step fails, `realm agent` goes on with whatever became ready, and exit
 
 `on_model_failure: default` completes the step with its default answer, `validation_exhaustion.default_output`, when its model request fails for good: the same failures `fail` fails it on. The step needs `output_schema`, and the default must fit it. `validation_exhaustion.mode` can stay `fail`, so that answers refused too often still fail the step. The step's record keeps an error entry for the failed request (its message, code, texts, tries and, for the requests that were billed, their cost), then the default answer, marked `settled_by_default`. A later step reads `$settlement.<step>.failure_kind`, which a default taken after refused answers never has. `realm agent` prints `• Step '<step>' took its default answer (<CODE>): …` and goes on as after any completed step, with exit code 0 when nothing failed.
 
+A later step reads why the request failed as `$settlement.<step>.message` (in a template or an `input_map`, `context.resources.$settlement.<step>.message`): in its prompt, its approval question or its `input_map`. `realm workflow validate` prints a note when it reaches a prompt. An approval question hides every secret Realm knows of in it; a prompt `realm agent` sends is masked as every prompt it sends is; an `input_map` hands the text on as the record keeps it.
+
 The key takes `fail` or `default`. The key is refused on `auto`, `guard` and `finalizer` steps. A run an assistant drives over MCP makes no model call through Realm, so the key does nothing there.
 
 ## `tools` and the tool limits

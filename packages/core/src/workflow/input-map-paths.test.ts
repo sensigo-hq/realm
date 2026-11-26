@@ -368,7 +368,7 @@ describe('fix 1, unit 1 — check 7: row 5, `$settlement`', () => {
     expect(findings(yaml).messages).toEqual([
       "Step 'refund': input_map 'amount' reads 'context.resources.$settlement.propose.failled', " +
         "but '$settlement.propose' holds only 'failed', 'settled_by_default', " +
-        `'validation_rejections' and 'failure_kind'. Did you mean 'failed'? (line ${lineOf(yaml, 'amount: ')})`,
+        `'validation_rejections', 'failure_kind' and 'message'. Did you mean 'failed'? (line ${lineOf(yaml, 'amount: ')})`,
     ]);
   });
 

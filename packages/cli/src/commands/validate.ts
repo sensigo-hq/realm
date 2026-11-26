@@ -26,6 +26,7 @@ import {
   probeClassOf,
   repairActFor,
   type LoaderWarning,
+  type LoaderNote,
   type NotCheckedPath,
   type WorkflowRegistrar,
 } from '@sensigo/realm';
@@ -141,6 +142,7 @@ function printValidationOutcome(
   checksNotRun = 0,
   extensionKeys: readonly string[] = [],
   notChecked: readonly NotCheckedPath[] = [],
+  notes: readonly LoaderNote[] = [],
 ): boolean {
   printLoaderWarnings(warnings);
   const stepCount = Object.keys(definition.steps).length;
@@ -179,6 +181,9 @@ function printValidationOutcome(
   ]) {
     if (line !== undefined) console.log(line);
   }
+  // Gap 2, unit (iv-a1): a failure message a prompt or instructions puts into its text — a note,
+  // never a warning (no exit code, no --strict), in file and registered mode alike.
+  for (const note of notes) console.log(`ℹ ${note.message}`);
   return strictFailing;
 }
 
@@ -500,6 +505,12 @@ interface ValidateJsonEmit {
    */
   notChecked: readonly NotCheckedPath[];
   /**
+   * Gap 2, unit (iv-a1): the loader's notes, as `{ step, placement, reads, message }` — a prompt or a
+   * gated step's instructions that puts a step's failure message into its text. On an arm where the
+   * file loaded; absent (emitted `[]`) on every other.
+   */
+  notes?: readonly LoaderNote[];
+  /**
    * Issue #600 caching PR 5 — each agent step's fixed part: its size, what it shares, and whether it
    * can cache (`lib/cacheability.ts`). On every arm where a definition loaded; never on a
    * load-failure arm.
@@ -533,6 +544,11 @@ const VALIDATE_JSON_TABLE: ClassTable = {
   not_checked: {
     nested: { surface: 'fact', step: 'fact', key: 'fact', path: 'bounded', why: 'fact' },
   },
+  // Gap 2, unit (iv-a1): the step and placement are facts; the path and the sentence carry the
+  // author's text, bounded as the diagnostics are.
+  notes: {
+    nested: { step: 'fact', placement: 'fact', reads: 'bounded', message: 'bounded' },
+  },
   // issue #600 caching PR 5 (Δ3): sizes, counts, verdict and cause words, segment names, step ids, a
   // model id and floor numbers — never prompt text.
   cacheability: 'fact',
@@ -556,6 +572,7 @@ function emitValidateJson(result: ValidateJsonEmit): void {
       checks_not_run: result.checksNotRun,
       extension_keys: result.extensionKeys,
       not_checked: result.notChecked,
+      notes: result.notes ?? [],
       ...(result.cacheability !== undefined ? { cacheability: result.cacheability } : {}),
     },
     VALIDATE_JSON_TABLE,
@@ -905,6 +922,7 @@ async function validateRegistered(
   let definition: WorkflowDefinition;
   let loaderWarnings: LoaderWarning[];
   let notChecked: NotCheckedPath[];
+  let notes: LoaderNote[];
   try {
     // After #553 the four context-free rules (context_wrapper, the workflow_context names,
     // source.path) run here too — the string loader carries them. No `(line N)`: the body is
@@ -913,6 +931,7 @@ async function validateRegistered(
       definition,
       warnings: loaderWarnings,
       notChecked,
+      notes,
     } = loadWorkflowFromStringWithDiagnostics(stripped));
   } catch (err) {
     exitOnLoadFailure(err, json ? registeredCtx(id, warningsOf(err)) : undefined);
@@ -1065,6 +1084,7 @@ async function validateRegistered(
         checksNotRun: notRun,
         extensionKeys: [],
         notChecked,
+        notes,
         cacheability: cacheabilityJson(cache),
       });
       process.exit(1);
@@ -1083,6 +1103,7 @@ async function validateRegistered(
       checksNotRun: notRun,
       extensionKeys: extensionKeysOf(definition),
       notChecked,
+      notes,
       cacheability: cacheabilityJson(cache),
     });
     if (strictFailed) {
@@ -1100,6 +1121,7 @@ async function validateRegistered(
     notRun.length,
     extensionKeysOf(definition),
     notChecked,
+    notes,
   );
   // issue #600 caching PR 5: the last block (no nudge in this mode), before a --strict exit.
   printCacheabilityLines(renderCacheabilityLines(cache));
@@ -1272,8 +1294,9 @@ export const validateCommand = new Command('validate')
       let manifest: LoadedProjectExtensions['manifest'];
       let cacheEconomicsPath: string | undefined;
       let notChecked: NotCheckedPath[];
+      let notes: LoaderNote[];
       try {
-        ({ definition, warnings, manifest, cacheEconomicsPath, notChecked } =
+        ({ definition, warnings, manifest, cacheEconomicsPath, notChecked, notes } =
           await loadWorkflowForAdmission(filePath, {
             ...(opts.extensionsModule !== undefined
               ? { overrideModule: opts.extensionsModule }
@@ -1360,6 +1383,7 @@ export const validateCommand = new Command('validate')
             checksNotRun: [],
             extensionKeys: [],
             notChecked,
+            notes,
             cacheability: cacheabilityJson(cache),
           });
           process.exit(1);
@@ -1378,6 +1402,7 @@ export const validateCommand = new Command('validate')
           checksNotRun: [],
           extensionKeys: extensionKeysOf(definition),
           notChecked,
+          notes,
           cacheability: cacheabilityJson(cache),
         });
         // issue #422/#236: the Extensions manifest line and the nudge are both suppressed under
@@ -1397,6 +1422,7 @@ export const validateCommand = new Command('validate')
         0,
         extensionKeysOf(definition),
         notChecked,
+        notes,
       );
       if (manifest.modules.length > 0) {
         console.log(
