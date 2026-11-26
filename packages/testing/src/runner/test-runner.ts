@@ -3,6 +3,7 @@ import {
   loadWorkflowFromFile,
   findEligibleSteps,
   ExtensionRegistry,
+  assertRegistryLine,
   createDefaultRegistry,
   executeChain,
   advanceRun,
@@ -95,6 +96,9 @@ export function buildFixtureRegistries(
   definition: WorkflowDefinition,
   options: Pick<RunFixtureTestsOptions, 'registry' | 'extensions'>,
 ): { fixtureRegistry: ExtensionRegistry; fallbackRegistry: ExtensionRegistry | undefined } {
+  // #828 unit 2b correction 1: a caller's registry of another Realm release is refused on both paths,
+  // with `extensions` or without (where it would be the dispatcher's fallback), before any use.
+  assertRegistryLine(options.registry, 'the registry handed to runFixtureTests', ExtensionRegistry);
   // Build per-fixture registry: start from built-in adapters, then overlay
   // mock adapters so fixture mocks take precedence over the real ones.
   const fixtureRegistry = createDefaultRegistry();

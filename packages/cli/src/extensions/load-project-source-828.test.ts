@@ -7,7 +7,7 @@
 //
 // Every assertion carries (1) the change that turns it red and (2) what it prints when it fails.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readdirSync, writeFileSync, rmSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
@@ -15,9 +15,12 @@ import type { ExtensionIdentityModule, WorkflowDefinition } from '@sensigo/realm
 import { joinSweeps, sweepFolder } from '@sensigo/realm-mcp/code-hashes';
 import { loadProjectExtensions, clearProjectExtensionsCache } from './load-project-extensions.js';
 
-/** What the wrapped load's `entryHash` and `tree` answer: the real map's, nothing, or fixed values. */
+/**
+ * What the wrapped load's `entryHash` and `tree` answer: the real map's; nothing from either
+ * (`unavailable`); fixed values; or one of them failing alone (`no_entry_hash`, `tree_throws`).
+ */
 const seam = vi.hoisted(() => ({
-  mode: 'real' as 'real' | 'unavailable' | 'fixed',
+  mode: 'real' as 'real' | 'unavailable' | 'fixed' | 'no_entry_hash' | 'tree_throws',
   entry: 'e'.repeat(64),
   tree: 'f'.repeat(64),
 }));
@@ -34,10 +37,15 @@ vi.mock('@sensigo/realm-mcp/code-hashes', async (importOriginal) => {
         importFailed: (entry: string) => load.importFailed(entry),
         signals: () => load.signals(),
         lockfile: () => load.lockfile(),
-        entryHash: () => (seam.mode === 'fixed' ? seam.entry : undefined),
+        entryHash: (resolved: string) => {
+          if (seam.mode === 'fixed') return seam.entry;
+          return seam.mode === 'tree_throws' ? load.entryHash(resolved) : undefined;
+        },
         tree: (roots: readonly string[]) => {
-          if (seam.mode === 'unavailable') throw new Error('no sweep of this root was taken');
-          return { ...load.tree(roots), tree_hash: seam.tree };
+          if (seam.mode === 'unavailable' || seam.mode === 'tree_throws')
+            throw new Error('no sweep of this root was taken');
+          const real = load.tree(roots);
+          return seam.mode === 'fixed' ? { ...real, tree_hash: seam.tree } : real;
         },
       };
     },
@@ -199,8 +207,8 @@ describe('#828 unit 2b check 6 — the loader states each entry’s source', () 
     });
   });
 
-  // (1) red when a missing hash, or a root the map never swept, is recorded as a hash or throws; (2)
-  //     prints both sources.
+  // GROUNDING (correction 1, check 3): both conjuncts fail at once here, so it cannot tell them apart;
+  // the two cells after check 6 pin each alone. Prints both sources.
   it("the load's entryHash gives nothing and its tree throws: absent 'hashes_unavailable'", async () => {
     seam.mode = 'unavailable';
     const handler = `hu_${counter}`;
@@ -245,5 +253,92 @@ describe('#828 unit 2b check 6 — the loader states each entry’s source', () 
       [seam.entry, seam.tree],
       [seam.entry, seam.tree],
     ]);
+  });
+});
+
+/** A handler's `folder_tree_hash` in `registry`, or its whole source when it has none. */
+function folderHashOf(
+  registry: Awaited<ReturnType<typeof loadProjectExtensions>>['registry'],
+  name: string,
+): unknown {
+  const source = registry.entry('handler', name)?.source;
+  return source?.source === 'project' && 'folder_tree_hash' in source
+    ? source.folder_tree_hash
+    : source;
+}
+
+describe('#828 unit 2b correction 1 — each folder hash is taken after the load’s last import', () => {
+  // (1) red when a module's folder hash is taken at its registration: the second load's first import
+  //     of y sweeps the folder again, after x registered; (2) prints both hashes and the identity's.
+  it("two loads in one process, y.js added to x's folder between them: x's and y's folder hash are the identity's tree", async () => {
+    const [hx, hy] = [`hx_${counter}`, `hy_${counter}`];
+    const x = write('d', `${unique('x')}.js`, moduleSource(hx));
+    await loadProjectExtensions(definition([`./d/${basename(x)}`]));
+    const y = write('d', `${unique('y')}.js`, moduleSource(hy));
+    const { registry } = await loadProjectExtensions(
+      definition([`./d/${basename(x)}`, `./d/${basename(y)}`]),
+    );
+    const now = folderTree(dirname(x));
+    expect({
+      x: folderHashOf(registry, hx),
+      y: folderHashOf(registry, hy),
+      identity: registry.identity?.tree.tree_hash,
+    }).toEqual({ x: now, y: now, identity: now });
+  });
+
+  // (1) red when a module's folder hash is taken at its registration: w writes state.json while it is
+  //     imported, and z's first import, in the same folder, sweeps it again; (2) prints the hashes.
+  it('a module that writes a .json beside itself at import, then another in its folder: both are the identity’s tree', async () => {
+    const [hw, hz] = [`hw_${counter}`, `hz_${counter}`];
+    const w = write(
+      'e',
+      `${unique('w')}.js`,
+      "import { writeFileSync } from 'node:fs';\n" +
+        "writeFileSync(new URL('./state.json', import.meta.url), '{}');\n" +
+        moduleSource(hw),
+    );
+    const z = write('e', `${unique('z')}.js`, moduleSource(hz));
+    const { registry } = await loadProjectExtensions(
+      definition([`./e/${basename(w)}`, `./e/${basename(z)}`]),
+    );
+    const now = folderTree(dirname(w));
+    expect({
+      w: folderHashOf(registry, hw),
+      z: folderHashOf(registry, hz),
+      identity: registry.identity?.tree.tree_hash,
+      written: readdirSync(dirname(w)).includes('state.json'),
+    }).toEqual({ w: now, z: now, identity: now, written: true });
+  });
+});
+
+describe('#828 unit 2b correction 1 check 3 — "hashes unavailable", one cell per conjunct', () => {
+  // (1) red when the entry-hash conjunct is dropped (the load then crashes: register refuses the
+  //     undefined hash with VALIDATION_OPTION_INVALID); (2) prints the source or the load's error.
+  it("only the load's entryHash gives nothing: absent 'hashes_unavailable'", async () => {
+    seam.mode = 'no_entry_hash';
+    const handler = `hn_${counter}`;
+    const file = write('n', `${unique('n')}.js`, moduleSource(handler));
+    const { registry } = await loadProjectExtensions(definition([`./n/${basename(file)}`]));
+    expect(registry.entry('handler', handler)?.source).toEqual({
+      source: 'project',
+      declared: `./n/${basename(file)}`,
+      via: 'extensions_file',
+      absent: 'hashes_unavailable',
+    });
+  });
+
+  // (1) red when the folder-hash conjunct is dropped (the load then crashes the same way); (2) prints
+  //     the source or the load's error.
+  it("only the load's tree throws: absent 'hashes_unavailable'", async () => {
+    seam.mode = 'tree_throws';
+    const handler = `ht_${counter}`;
+    const file = write('t', `${unique('t')}.js`, moduleSource(handler));
+    const { registry } = await loadProjectExtensions(definition([`./t/${basename(file)}`]));
+    expect(registry.entry('handler', handler)?.source).toEqual({
+      source: 'project',
+      declared: `./t/${basename(file)}`,
+      via: 'extensions_file',
+      absent: 'hashes_unavailable',
+    });
   });
 });

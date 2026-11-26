@@ -17,8 +17,10 @@
  * `projectSourceOf`, the module's real path. `via` says which: `manifest`, `extensions_file`,
  * `override_flag` or `host_stated`. `entry_hash` is the sha256 of the module's own file, the value
  * the identity's `modules[].entry_hash` holds. `folder_tree_hash` is the dir_tree_v1 hash of the
- * module's own folder; the identity's `tree.tree_hash` joins every module's folder, so the two
- * differ once a project has modules in two folders. Each hash is 64 lowercase hex characters.
+ * module's own folder. The CLI's loader takes it after the load's last import, from the sweeps the
+ * identity reads, so with one folder it equals the identity's `tree.tree_hash` from the same load;
+ * the identity's tree joins every module's folder, so the two differ once a project has modules in
+ * two folders. Each hash is 64 lowercase hex characters.
  * @beta
  */
 export type ProjectSource =

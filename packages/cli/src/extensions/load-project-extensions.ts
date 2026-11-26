@@ -565,6 +565,10 @@ export async function loadProjectExtensions(
     }
   }
 
+  // #828 unit 2b correction 1: this load's imports are done, so each project entry's source takes
+  // its hashes again now, from the sweeps the identity reads next.
+  settleProjectSources(registry, identityModules, hashes);
+
   // Drift evidence: identity captured ONCE per cache entry at module-LOAD time. The
   // manifest contributes its content hash (never a sweep root); `use:`-resolved module
   // FILES contribute sweep roots exactly like extension-list modules; secret NAMES are
@@ -878,9 +882,35 @@ async function applyDeploymentManifest(
 }
 
 /**
- * #828 unit 2b: a project module's source, with its hashes from this load's map, the values the run's
- * identity reads: its own file's, and its own folder's tree (the identity's tree joins every module's
- * folder). When the map has no hash for the file, or never swept its folder, the hashes are absent.
+ * #828 unit 2b correction 1: after the load's last import, each project entry's source with its
+ * hashes taken again. A later first import in a folder sweeps it again, so the hash an entry took
+ * at registration can be older than the identity's. Its module is the identity's own with the same
+ * `declared`; an entry with none keeps its source.
+ */
+function settleProjectSources(
+  registry: ExtensionRegistry,
+  modules: readonly { declared: string; resolved: string }[],
+  hashes: CodeHashLoad,
+): void {
+  const resolvedOf = new Map(modules.map((m) => [m.declared, m.resolved]));
+  for (const kind of ['adapter', 'handler', 'processor'] as const) {
+    for (const name of registry.names(kind)) {
+      const held = registry.entry(kind, name);
+      const source = held?.source;
+      const resolved = source?.source === 'project' ? resolvedOf.get(source.declared) : undefined;
+      if (held === undefined || source?.source !== 'project' || resolved === undefined) continue;
+      const settled = moduleSourceOf(source.declared, resolved, source.via, hashes);
+      registry.register(kind as 'adapter', name, held.impl as never, settled);
+    }
+  }
+}
+
+/**
+ * #828 unit 2b: a project module's source, with its hashes from this load's map: its own file's, and
+ * its own folder's tree as the load last swept it. Taken again after the last import, these are the
+ * values the run's identity reads; with one folder, `folder_tree_hash` is its `tree.tree_hash` (the
+ * identity's tree joins every module's folder). With no hash for the file, or no sweep of its
+ * folder, the hashes are absent.
  */
 function moduleSourceOf(
   declared: string,
