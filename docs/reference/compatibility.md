@@ -6,7 +6,7 @@ Realm's version starts with 0. From 0.50.0 on, every change to Realm follows one
 
 ## What a release keeps
 
-Two kinds of thing are outside Realm and depend on it: what you write and store (workflow files, the project file `realm.yaml`, registered workflows, the runs in `realm.db`, export files, the environment names Realm reads and the files under its home folder) and what you call (the CLI's commands, flags and exit codes; the MCP tools and the fields of their replies; `realm listen`'s addresses and reply fields; the store interface and its test kit; the library's exported names).
+Two kinds of thing are outside Realm and depend on it: what you write and store (workflow files, the project file `realm.yaml`, registered workflows, the runs in `realm.db`, export files, the environment names Realm reads and the files under its home folder) and what you call (the CLI's commands, flags and exit codes; the MCP tools, the fields of their replies and the shape `tools/list` declares for a reply (`outputSchema`); `realm listen`'s addresses and reply fields; the store interface and its test kit; the library's exported names).
 
 The CLI's commands, flags and exit codes, and the reply codes of `realm listen` and `realm serve`, are listed in one file in the repository, `packages/cli/src/inventory/kept-surface.txt`. The test suite regenerates that list from the code and fails when it differs from the file, and it fails too when an entry changed since the last release without a changelog line naming it — so a change to them is made on purpose, in the same change as the line that announces it.
 

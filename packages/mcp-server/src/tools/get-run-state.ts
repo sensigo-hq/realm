@@ -85,7 +85,7 @@ import {
   renderWaysOf,
   replyPlanOf,
   safeTool,
-  toolContentOf,
+  toolContentWithTwinOf,
   type WithDoorDisclosure,
   type McpAlsoEntry,
   type McpElsewhereEntry,
@@ -106,6 +106,7 @@ import {
   registryRole,
 } from './assert-tool-stores.js';
 import { boundedLines, boundedRefusal } from './refusal-format.js';
+import { runStateWireFloor, runStateWireSchema } from './run-state-wire.js';
 
 /** issue #558 PR-T — the store's own classification, passed through to classifyRunHealth. */
 function toDefinitionError(err: unknown): { code: string; message: string; class?: string } {
@@ -1702,11 +1703,14 @@ export function registerGetRunState(
           cursor: z.string().optional(),
         }),
       ),
+      // CP-2: the published schema's two shapes under one object root; every result below carries
+      // the object its JSON text serializes, checked against this before it leaves.
+      outputSchema: runStateWireSchema(),
     },
     safeTool(
       async (args) => {
         const result = await handleGetRunState(args, opts);
-        return toolContentOf(
+        return toolContentWithTwinOf(
           { ...result },
           {
             set: await setForSubject(door, await replySubject(opts, { runId: args.run_id })),
@@ -1714,6 +1718,7 @@ export function registerGetRunState(
             table: RUN_STATE_SUMMARY_TABLE,
           },
           RUN_STATE_PLAN,
+          runStateWireFloor,
         );
       },
       async (err, args) => {
@@ -1744,7 +1749,8 @@ export function registerGetRunState(
         // This reply's field set is as before PR-0: no run was read (no version), and an untyped
         // throw names no code.
         const { run_version: _version, error_code: _code, ...envelope } = rendered.envelope;
-        return toolContentOf(
+        // CP-2: a refusal stays an ordinary result; it carries its envelope as the second shape.
+        return toolContentWithTwinOf(
           {
             ...envelope,
             ...(err instanceof WorkflowError ? { error_code: err.code } : {}),
@@ -1757,6 +1763,8 @@ export function registerGetRunState(
             audience: 'agent',
             table: MCP_ENVELOPE_TABLE,
           },
+          undefined,
+          runStateWireFloor,
         );
       },
       SAFE_TOOL_CONSTANT_RUNLESS,

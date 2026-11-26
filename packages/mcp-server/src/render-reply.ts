@@ -1959,9 +1959,13 @@ export interface ToolDisclosure {
   table: ClassTable;
 }
 
-/** One reply's tool result. */
+/**
+ * One reply's tool result. CP-2: `structuredContent` is set on `get_run_state`'s results only
+ * ({@link toolContentWithTwinOf}): the very object the first text block serializes.
+ */
 export type ToolResult = {
   content: Array<{ type: 'text'; text: string; annotations?: { audience: ['user'] } }>;
+  structuredContent?: Record<string, unknown>;
   isError?: boolean;
 };
 
@@ -2279,6 +2283,51 @@ export function toolContentOf(
       ],
     };
   }
+  return { content: composed(reply, disclosure, plan, guardWayOut).content };
+}
+
+/**
+ * CP-2: what a result's twin passes before it leaves. `carried` is the object the result carries (the
+ * twin itself; a test may replace it); `refused` returns `undefined` when it fits the tool's listed
+ * schema, else the plain sentence the error result starts with.
+ */
+export interface TwinFloor {
+  carried(twin: Record<string, unknown>): Record<string, unknown>;
+  refused(twin: Record<string, unknown>): string | undefined;
+}
+
+/**
+ * CP-2: {@link toolContentOf}'s result for an object reply, with `structuredContent` — the very object
+ * its first text block serializes: the reply walked once by the door and, over the ceiling, the cut
+ * copy the text sends (with the overflow line in `warnings[0]` when nothing fits), never the uncut
+ * one. An explicit opt-in at a result site (`get_run_state`'s); no other tool's result carries it.
+ * When `floor` refuses the twin, the result is an error result with no `structuredContent`: its first
+ * block is the floor's sentence, a newline, then the same JSON text; the person block follows as before.
+ */
+export function toolContentWithTwinOf(
+  reply: WithPersonBlock<Record<string, unknown>> | WithPersonBlock<McpEnvelope>,
+  disclosure: ToolDisclosure,
+  plan: ReplyPlan | undefined,
+  floor: TwinFloor,
+): ToolResult {
+  const { content, twin: shown } = composed(reply, disclosure, plan, undefined);
+  const twin = floor.carried(shown);
+  const line = floor.refused(twin);
+  if (line === undefined) return { content, structuredContent: twin };
+  const [agent, ...rest] = content;
+  return {
+    content: [{ type: 'text' as const, text: `${line}\n${agent!.text}` }, ...rest],
+    isError: true,
+  };
+}
+
+/** An object reply's content blocks, and the object its agent text serializes. */
+function composed(
+  reply: WithPersonBlock<Record<string, unknown>> | WithPersonBlock<McpEnvelope>,
+  disclosure: ToolDisclosure,
+  plan: ReplyPlan | undefined,
+  guardWayOut: string | undefined,
+): { content: ToolResult['content']; twin: Record<string, unknown> } {
   const person = reply[PERSON_BLOCK];
   // Gap 2, unit (iv-b1): the fields the composer shaped under the failure-text setting, read from the
   // reply as given; every walk (the ceiling's cut copies too) lists those it meets.
@@ -2296,9 +2345,17 @@ export function toolContentOf(
       unknown
     >;
   const shown = walk(raw);
+  let twin = shown;
   let text = sseJsonStringify(shown);
   if (text.length > REPLY_CEILING_CHARS) {
-    text = fitted(raw, shown, text.length, walk, plan ?? reply[REPLY_PLAN], guardWayOut);
+    ({ text, shown: twin } = fitted(
+      raw,
+      shown,
+      text.length,
+      walk,
+      plan ?? reply[REPLY_PLAN],
+      guardWayOut,
+    ));
   }
   return {
     content: [
@@ -2307,7 +2364,14 @@ export function toolContentOf(
         ? [{ type: 'text' as const, text: person, annotations: { audience: ['user'] as ['user'] } }]
         : []),
     ],
+    twin,
   };
+}
+
+/** A reply the agent receives: its JSON text, and the object that text serializes (CP-2). */
+interface Sent {
+  text: string;
+  shown: Record<string, unknown>;
 }
 
 /**
@@ -2384,10 +2448,11 @@ function stablePrefixOf(
  * — created or existing — as its FIRST key; every other key in its order (the line is Realm's own
  * fact text, added after the walk).
  */
-function withOverflowLine(shown: Readonly<Record<string, unknown>>, line: string): string {
+function withOverflowLine(shown: Readonly<Record<string, unknown>>, line: string): Sent {
   const { warnings, ...rest } = shown;
   const others = Array.isArray(warnings) ? (warnings as unknown[]) : [];
-  return sseJsonStringify({ warnings: [line, ...others], ...rest });
+  const lined = { warnings: [line, ...others], ...rest };
+  return { text: sseJsonStringify(lined), shown: lined };
 }
 
 /**
@@ -2405,7 +2470,7 @@ function fitted(
   walk: (r: Readonly<Record<string, unknown>>) => Record<string, unknown>,
   plan: ReplyPlan | undefined,
   guardWayOut: string | undefined,
-): string {
+): Sent {
   if (plan === undefined) {
     return withOverflowLine(
       shown,
@@ -2432,7 +2497,7 @@ function fitted(
     held = cut;
     heldShown = walk(held);
     const text = sseJsonStringify(heldShown);
-    if (text.length <= REPLY_CEILING_CHARS) return text;
+    if (text.length <= REPLY_CEILING_CHARS) return { text, shown: heldShown };
     heldSize = text.length;
   }
   const floor = floorOf(reply, shown, size, walk, plan);
