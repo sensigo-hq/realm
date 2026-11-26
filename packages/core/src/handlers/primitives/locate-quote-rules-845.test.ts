@@ -1928,8 +1928,8 @@ describe('#845 1b-i-n check 1: after a blank line inside a sentence, a piece who
         nMid(`(a) \u{201c}${N_NR}`),
       ],
     ]);
-    // (1) red when an opening mark alone is enough again (ce898697's clause), or a `(` that opens a
-    //     clause number is read as an opening mark; (2) prints each differing row.
+    // (1) red when an opening mark alone is enough again (ce898697's clause); (2) prints each
+    //     differing row.
     expect(misses(rows)).toEqual([]);
   });
 
