@@ -23,7 +23,7 @@ Where the docs teach it: [Workflow file: top-level fields](../workflow/top-level
 | [`DedupConfig`](#dedupconfig) | interface | How a webhook trigger drops a repeated event: the dot-path to the event's id, how long an id is remembered, and what to do when the id cannot be read (`WebhookTrigger.dedup`). |
 | [`GateConfig`](#gateconfig) | interface | A gate's settings: its choices, who may answer, its messages, its timeout and what happens when it expires, and its reminders. |
 | [`JsonSchema`](#jsonschema) | interface | The JSON Schema object a workflow gives for a step's input and for a run's params (`StepDefinition.input_schema`, `WorkflowDefinition.params_schema`). |
-| [`LoaderNote`](#loadernote) | interface | Gap 2, unit (iv-a1): a placeholder that puts a step's failure message (`$settlement.<step>.message`, or a path that holds it) into a `prompt` or a gated step's `instructions`. |
+| [`LoaderNote`](#loadernote) | interface | A placeholder or an `input_map` leaf that puts a step's failure message (`$settlement.<step>.message`, or a path that holds it) into a `prompt`, a gated step's `instructions` or a step's `input_map`. |
 | [`McpServerConfig`](#mcpserverconfig) | interface | An MCP server a workflow's tool-enabled steps may call: its id and the command that starts it (`WorkflowDefinition.mcp_servers`). |
 | [`NotCheckedPath`](#notcheckedpath) | interface | An `input_map` path or a `when` condition that reads data the workflow declares no shape for (`validate --json`'s `not_checked`). |
 | [`ProtocolConfig`](#protocolconfig) | interface | A workflow's own words for the agent protocol: a quick-start paragraph that replaces the generated one, and rules added as they are written (`WorkflowDefinition.protocol`). |
@@ -77,8 +77,9 @@ alongside the definition.
 Opt-in for callers that want to surface warnings
 themselves (validate/register/watch/`--strict`) instead of the default console.warn behavior.
 `notChecked` (fix 1, unit 1) lists the `input_map` paths into data the workflow declares no
-shape for, which `validate` reports; `notes` (gap 2, unit (iv-a1)) the placeholders that put a
-step's failure message into a prompt or a gated step's instructions, which `validate` prints.
+shape for, which `validate` reports; `notes` (gap 2, unit (iv-a1)) the placeholders and
+`input_map` leaves that put a step's failure message into a prompt, a gated step's instructions
+or an `input_map`, which `validate` prints.
 
 ```ts
 function loadWorkflowFromFileWithDiagnostics(filePath: string, registry?: ExtensionRegistry, declared?: DeclaredNames): {
@@ -274,15 +275,15 @@ interface JsonSchema {
 
 interface · public
 
-Gap 2, unit (iv-a1): a placeholder that puts a step's failure message (`$settlement.<step>.message`,
-or a path that holds it) into a `prompt` or a gated step's `instructions`. Information for the
-author, never a warning: it moves no exit code and never counts toward `--strict`
-(`validate --json`'s `notes`).
+A placeholder or an `input_map` leaf that puts a step's failure message
+(`$settlement.<step>.message`, or a path that holds it) into a `prompt`, a gated step's
+`instructions` or a step's `input_map`. Information for the author, never a warning: it moves no
+exit code and never counts toward `--strict` (`validate --json`'s `notes`).
 
 ```ts
 interface LoaderNote {
     step: string;
-    placement: 'prompt' | 'instructions';
+    placement: 'prompt' | 'instructions' | 'input_map';
     reads: string;
     message: string;
 }
