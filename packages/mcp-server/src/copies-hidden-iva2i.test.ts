@@ -122,6 +122,13 @@ const D = {
       abort_unless: ["$settlement.classify.failure_kind == 'nope'"],
     }),
   }),
+  agentPre: def('iva2i-agent-pre', {
+    classify: CLASSIFY,
+    explain: onFailure('classify', {
+      execution: 'agent',
+      preconditions: [`$settlement.classify.message != "${MODEL_MSG}"`],
+    }),
+  }),
   alone: def('iva2i-alone', {
     classify: CLASSIFY,
     preMsg: onFailure(
@@ -463,6 +470,29 @@ describe('gap 2 (iv-a2-i), check 4 — the value a condition read', () => {
       hintHolds: true,
       hintWords: false,
       replyReceipt: expect.arrayContaining(['context_hint']),
+    });
+  });
+
+  it("an agent step's precondition on the message: agent_refused[0] carries the shape and is listed", async () => {
+    const w = await world();
+    const runId = await w.failed(D.agentPre);
+    const state = await (await w.connect('hidden'))('get_run_state', { run_id: runId });
+    const entry = (
+      state['agent_refused'] as Array<{ refusal?: string; precondition?: { value: string } }>
+    )[0];
+    // (a) red when agent_refused's entries are not swapped (the words show); (b) prints the entry's
+    //     sentence and value and the receipt.
+    expect({
+      refusal: entry?.refusal,
+      value: entry?.precondition?.value,
+      receipt: receiptOf(state).shaped,
+    }).toEqual({
+      refusal: refusal('explain', MSG_EXPR, shape(MODEL_MSG.length)),
+      value: shape(MODEL_MSG.length),
+      receipt: expect.arrayContaining([
+        'agent_refused[0].refusal',
+        'agent_refused[0].precondition.value',
+      ]),
     });
   });
 
