@@ -1671,6 +1671,8 @@ describe('buildSettlementNamespace — the $settlement mint (issue #220 §4c)', 
       validation_rejections: 0,
       // This fixture's step is in failed_steps — the polarity is per-cell, never blanket.
       failed: true,
+      // Gap 2, unit (iv-a1): a failed step carries its last error text.
+      message: 'Guard resolution error',
     });
     expect(result['finalizer_ok']).toEqual({
       settled_by_default: false,

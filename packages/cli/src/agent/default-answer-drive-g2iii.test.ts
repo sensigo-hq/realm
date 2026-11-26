@@ -364,6 +364,8 @@ describe('gap 2 (iii), check 1 — a request that failed for good takes the defa
         settled_by_default: true,
         validation_rejections: 0,
         failure_kind: 'transient',
+        // Gap 2, unit (iv-a1): the error entry's message, before the default.
+        message: FAILURE_503,
       },
       defaulted: ['s'],
     });

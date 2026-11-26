@@ -423,6 +423,8 @@ describe('correction 1 — check 5: N3, a throw while judging never stops a load
           why: 'check_failed',
         },
       ],
+      // Gap 2, unit (iv-a1): the findings carry the notes too (none here).
+      notes: [],
     });
   });
 });

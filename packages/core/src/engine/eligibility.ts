@@ -20,7 +20,8 @@ import { SEAL_ARMS } from '../types/run-record.js';
 import type { ListedRecord, RunPhase } from '../types/run-record.js';
 import { resolvePath } from './render-template.js';
 import { splitComparison, type ComparisonOp } from './comparison-expr.js';
-import { boundResolvedValue } from '../utils/redaction.js';
+import { boundResolvedValue, capText } from '../utils/redaction.js';
+import { isModelFailureDefault } from './defaulted-steps.js';
 
 // ---------------------------------------------------------------------------
 // issue #367 — the recorded seal fact: mappings, the permanent legacy read oracle, the run-level
@@ -770,13 +771,15 @@ export function buildEvidenceByStep(run: ListedRecord): Record<string, Record<st
 /**
  * One step's `$settlement` entry. Gap 2, units (ii-a) and (iii): `failure_kind` only on a step whose
  * model request failed and that settled through `on_model_failure` (failed with `fail`, completed
- * with its default answer with `default`).
+ * with its default answer with `default`). Unit (iv-a1): `message`, the failure's own text, bounded
+ * as `failures[].message` is, only on a failed step or a model-failure default.
  */
 type SettlementEntry = {
   settled_by_default: boolean;
   validation_rejections: number;
   failed: boolean;
   failure_kind?: 'transient' | 'permanent';
+  message?: string;
 };
 
 /**
@@ -825,17 +828,20 @@ type SettlementEntry = {
  * structurally unable to diverge from the live engine's for a `$settlement`-referencing
  * precondition (issue #220 §4c-M7).
  *
- * **`failed` (issue #305) — STATUS ONLY, deliberately.** The entry says THAT a step failed; the one
- * "why" it carries is `failure_kind` (gap 2, unit (ii-a)), a closed word — `transient` or
- * `permanent` — on a step whose model request failed and that settled through `on_model_failure`
- * (failed, or completed with its default answer, gap 2 unit (iii)), from that entry's
- * `diagnostics`; absent on every other step, a default taken after refused answers included. Failure detail (messages, causes) stays on the
- * run record, which is where every surveyed
- * orchestrator keeps it: status enumeration is the field's in-band floor (GitHub Actions'
- * `needs.<job>.result`; Step Functions and Airflow make it query-reachable), while detail in a
- * declarative cleanup payload is shipped nowhere. Detail here would also fork the truth away from
- * the append-only record, and these payloads feed AGENT PROMPTS — provider-generated text of
- * unbounded size is not something to inject by default.
+ * **`failed` (issue #305) — status, a kind, and since gap 2 (iv-a1) a bounded message.** The entry
+ * says THAT a step failed, and two "why"s. `failure_kind` (gap 2, unit (ii-a)) is a closed word —
+ * `transient` or `permanent` — on a step whose model request failed and that settled through
+ * `on_model_failure` (failed, or completed with its default answer, gap 2 unit (iii)), from that
+ * entry's `diagnostics`; absent on every other step, a default taken after refused answers
+ * included. `message` (unit (iv-a1)) is the failure's own text: the step's last entry whose
+ * `error` is a string (`composeFailures`' rule), bounded by `capText` as `failures[].message` is,
+ * on a failed step or a model-failure default (the error entry before that default), and on no
+ * other step, so a step that completed after a failed attempt never shows a stale error. #305 kept
+ * detail out of this namespace: these payloads feed approval questions and agent prompts, and
+ * provider text is not something to inject by default. The owner chose to let a workflow pass the
+ * failure on (c283b555): the value is bounded, a question hides every secret Realm knows of in it
+ * (`RenderDisclosure.failureMessagesAt`), and validate notes when a prompt reads it. The run record
+ * stays the one home of the full text.
  *
  * **`failed` is a POSITION fact.** It is derived from WHICH half of the domain walk produced the
  * entry (`completed_steps` ⇒ false, `failed_steps` ⇒ true), not from a lookup. Any future
@@ -854,9 +860,15 @@ type SettlementEntry = {
  */
 export function buildSettlementNamespace(run: ListedRecord): Record<string, SettlementEntry> {
   const lastDiag: Record<string, StepDiagnostics | undefined> = {};
+  // Gap 2, unit (iv-a1): in the same pass, the step's last entry with a string `error`, and whether
+  // its newest entry other than a gate answer is a model-failure default.
+  const lastError: Record<string, string> = {};
+  const defaultedAfterFailure: Record<string, boolean> = {};
   for (const snap of run.evidence) {
+    if (typeof snap.error === 'string') lastError[snap.step_id] = snap.error;
     if (snap.kind !== 'gate_response') {
       lastDiag[snap.step_id] = snap.diagnostics;
+      defaultedAfterFailure[snap.step_id] = isModelFailureDefault(snap);
     }
   }
   const result: Record<string, SettlementEntry> = {};
@@ -872,6 +884,9 @@ export function buildSettlementNamespace(run: ListedRecord): Record<string, Sett
       validation_rejections: diag?.validation_rejections ?? 0,
       failed,
       ...(diag?.failure_kind !== undefined ? { failure_kind: diag.failure_kind } : {}),
+      ...((failed || defaultedAfterFailure[step] === true) && lastError[step] !== undefined
+        ? { message: capText(lastError[step]) }
+        : {}),
     };
   };
   for (const step of run.completed_steps) write(step, false);

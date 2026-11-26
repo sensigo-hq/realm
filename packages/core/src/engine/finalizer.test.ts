@@ -701,11 +701,13 @@ describe('finalizer handler sees the failed marker (issue #305)', () => {
     expect(observed).toBeDefined();
     expect(observed!['extract']).toMatchObject({ failed: true });
     expect(observed!['transform']).toMatchObject({ failed: false });
-    // Status only, beside the settlement-honesty fields that were already there — no detail.
+    // Status, beside the settlement-honesty fields that were already there, and (gap 2, unit
+    // (iv-a1)) the failure's own message, bounded.
     expect(observed!['extract']).toEqual({
       settled_by_default: false,
       validation_rejections: 0,
       failed: true,
+      message: "Handler 'h_boom' threw: extract exploded",
     });
   });
 });
