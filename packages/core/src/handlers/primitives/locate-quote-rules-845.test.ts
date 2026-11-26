@@ -944,20 +944,20 @@ describe('#845 check 4: every neighbour is read by code point', () => {
     expect(misses(rows)).toEqual([]);
   });
 
-  it('nearest rounds the longest found piece down to a code-point boundary: `x`+U+20000+U+20001 gives 16–28 (E5)', () => {
+  it('nearest rounds the longest found piece down to a code-point boundary, and leaves out the word it cuts: `x`+U+20000+U+20001 gives 16–24 (E5; #845 1b-ii-c, A4)', () => {
     releaseQuoteCache();
     const r = locateQuote(
       'the rent x\u{20000}\u{20001} now due',
       'The Tenant pays the rent x\u{20000}\u{20002} here',
     );
-    // (1) red when the round-down is removed (the piece ends inside U+20000); (2) prints the state and
-    //     where `nearest` lies.
+    // (1) red when the cut word is kept (16–28, `the rent x`+U+20000), or the round-down is removed
+    //     (the piece ends inside U+20000: 16–30); (2) prints the state and where `nearest` lies.
     expect({
       state: r.state,
       nearest: r.nearest === undefined ? null : [r.nearest.start, r.nearest.end],
     }).toEqual({
       state: 'not_found',
-      nearest: [16, 28],
+      nearest: [16, 24],
     });
   });
 });
@@ -3036,6 +3036,30 @@ describe('#845 1b-ii-b correction 1, check 1: `cut_short_at` names one offset fo
       reformatted: 'reformatted@151',
       stitched: 'stitched@151',
       outOfOrder: 'stitched_out_of_order@151',
+    });
+  });
+});
+
+describe('#845 1b-ii-c check 1: `nearest` leaves out only a word the piece cuts', () => {
+  /** The state, and `nearest` as `start–end` with the document's text there, or `none`. */
+  const near = (quote: string, source: string): string => {
+    releaseQuoteCache();
+    const { state: s, nearest: n } = locateQuote(quote, source);
+    return `${s} ${n === undefined ? 'none' : `${n.start}–${n.end} ${source.slice(n.start, n.end)}`}`;
+  };
+
+  it('a number keeps its sign or symbol at the piece’s edge (`€48,000`, `4%`); a piece that starts inside `twenty-four` leaves the whole word out', () => {
+    // (1) red when the piece is trimmed to its first and last whole word (rev 1's rule: `€` and `%`
+    //     dropped, 13–26 and 12–25), or the cut word is kept (`four thousand euro`, 20–38); (2) prints
+    //     each row's state, offsets and the document's text there.
+    expect({
+      euro: near('zzz €48,000 a year', 'The rent is €48,000 a year.'),
+      percent: near('the rate of 4% qqq', 'Interest at the rate of 4% per annum.'),
+      twentyFour: near('qqq four thousand euro', 'a deposit of twenty-four thousand euro'),
+    }).toEqual({
+      euro: 'not_found 12–26 €48,000 a year',
+      percent: 'not_found 12–26 the rate of 4%',
+      twentyFour: 'not_found 25–38 thousand euro',
     });
   });
 });

@@ -19,8 +19,11 @@
  *   skipped only between parts, never inside a piece (the owner's yes, 2026-10-18).
  * - `stitched_out_of_order`: the same, with the parts in another order.
  * - `not_found`: otherwise; `nearest` is the longest piece of the quote found in the source, when it
- *   covers at least one whole word. A quote placed in order only by joining text across a blank line
- *   inside a sentence carries `cause` and `join_at` instead (#845, Q-C).
+ *   covers at least one whole word. It leaves out a word that piece cuts at either end, so it never
+ *   starts or ends inside a word of the source; a number keeps its sign or symbol (`€48,000`, `-5`,
+ *   `4%`), and words joined by punctuation with no space between them count as one (`twenty-four`,
+ *   `and/or`, `Landlord's`, `U.K.`). A quote placed in order only by joining text across a blank
+ *   line inside a sentence carries `cause` and `join_at` instead (#845, Q-C).
  * (`unquoted` is the handler's, for a candidate with no quote and no value; this never returns it.)
  *
  * A quote that ends a sentence where the source's sentence goes on is marked `cut_short` (L2). Every
@@ -66,7 +69,10 @@ export interface QuoteCheck {
   /** How many times the whole quote occurs (canonically); 0 unless `exact` or `reformatted`. */
   readonly occurrences: number;
   /** For `not_found` only: the longest piece of the quote that IS in the source, when it covers at
-   *  least one whole word. */
+   *  least one whole word. It leaves out a word that piece cuts at either end, so it never starts or
+   *  ends inside a word of the source; a number keeps its sign or symbol (`€48,000`, `-5`, `4%`), and
+   *  words joined by punctuation with no space between them count as one (`twenty-four`, `and/or`,
+   *  `Landlord's`, `U.K.`). */
   readonly nearest?: QuoteSpan;
   /** L2: the quote ends a sentence where the source's sentence goes on. Absent otherwise. */
   readonly cut_short?: true;
@@ -1833,9 +1839,14 @@ function tilesOf(budget: Budget, quote: string, source: string, tiles: Tile[]): 
   }
 }
 
+/** A letter, a digit or a mark: what a word of the canonical text is made of. */
+const isWordChar = (c: string | undefined): boolean => isAlnum(c) || isMark(c);
+
 /** A7: the longest found tile, when it covers at least one whole word of the source (a word with a
  *  word edge at both ends inside the tile's span) — a whole word, read by code point past marks (the
- *  reads `wordEdgesHold` uses: a mark is part of its letter's word, never its edge). */
+ *  reads `wordEdgesHold` uses: a mark is part of its letter's word, never its edge). #845 1b-ii-c
+ *  (A4): the span leaves out a word of the source the tile cuts at either end, and the spaces beside
+ *  it; everything else in the tile is kept, a number's sign or symbol included. */
 function nearestOf(tiles: readonly Tile[], canonical: Canonical): QuoteSpan | undefined {
   let best: Tile | undefined;
   for (const t of tiles) {
@@ -1849,10 +1860,28 @@ function nearestOf(tiles: readonly Tile[], canonical: Canonical): QuoteSpan | un
     if (!isAlnum(cpAt(hay, k)) || isAlnum(cpBefore(hay, pastMarks(hay, k)))) continue;
     // it runs over letters, digits and marks; it is whole when it ends inside the tile
     let w = k;
-    for (let d = cpAt(hay, w); isAlnum(d) || isMark(d); d = cpAt(hay, w)) w += d!.length;
-    if (w <= end) return spanOf(canonical, best.at, best.text.length);
+    for (let d = cpAt(hay, w); isWordChar(d); d = cpAt(hay, w)) w += d!.length;
+    if (w <= end) return uncutSpan(canonical, best.at, end);
   }
   return undefined;
+}
+
+/** #845 1b-ii-c (A4): the canonical span `[a, b)` without a word it cuts at either end, and the spaces
+ *  beside that word. It cuts a word at its start when it starts on a letter, digit or mark whose
+ *  neighbour before it, read past marks, is a letter or digit (`nearestOf`'s word-start test); at its
+ *  end when it ends on one and the character after it is one. Called only on a tile holding a whole
+ *  word, which neither cut reaches, so the span is never empty. */
+function uncutSpan(canonical: Canonical, a: number, b: number): QuoteSpan {
+  const hay = canonical.text;
+  if (isWordChar(cpAt(hay, a)) && isAlnum(cpBefore(hay, pastMarks(hay, a)))) {
+    while (a < b && isWordChar(cpAt(hay, a))) a += cpAt(hay, a)!.length;
+    while (a < b && hay[a] === ' ') a++;
+  }
+  if (isWordChar(cpBefore(hay, b)) && isWordChar(cpAt(hay, b))) {
+    while (b > a && isWordChar(cpBefore(hay, b))) b -= cpBefore(hay, b)!.length;
+    while (b > a && hay[b - 1] === ' ') b--;
+  }
+  return spanOf(canonical, a, b - a);
 }
 
 // ─── L2, L3: what a found span says at its edges ────────────────────────────────────────────────
