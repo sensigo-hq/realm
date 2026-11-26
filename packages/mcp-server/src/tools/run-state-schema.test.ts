@@ -38,23 +38,27 @@ import { toJsonSchemaCompat } from '@modelcontextprotocol/sdk/server/zod-json-sc
 import { AjvJsonSchemaValidator } from '@modelcontextprotocol/sdk/validation/ajv';
 import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
+  SKIP_KINDS,
   WorkflowError,
   compileDisclosure,
   priceFromEconomics,
   writeTestClockFile,
   type CacheEconomics,
+  type ClassTable,
+  type DisclosureClass,
   type PriceSource,
   type RunRecord,
   type WorkflowDefinition,
 } from '@sensigo/realm';
 import { createRealmMcpServer } from '../server.js';
-import { FAILURE_TEXT_SHAPED, toolContentOf } from '../render-reply.js';
+import { FAILURE_TEXT_SHAPED, MCP_ENVELOPE_TABLE, toolContentOf } from '../render-reply.js';
 import { makeTempHome, seedRun, type TempHome } from '../test-support/temp-home.js';
 import { handleGetRunState, RUN_STATE_PLAN, RUN_STATE_SUMMARY_TABLE } from './get-run-state.js';
 import {
   RUN_STATE_DESCRIBED_LOOSELY,
   RUN_STATE_OK,
   RUN_STATE_REFUSAL,
+  runStateSchemaFile,
 } from './run-state-schema.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -518,6 +522,26 @@ const PLANTED: Array<[string, RunRecord, Json]> = [
         expires_at: LATER,
         on_expiry: 'settle_default',
         default_choice: 'no',
+      },
+    }),
+    {},
+  ],
+  [
+    // d2c: waiting at a gate that says what each answer means (its per-choice messages)
+    'waiting, with messages',
+    record('wait-messages-1', WAIT.id, {
+      run_phase: 'gate_waiting',
+      evidence: [exec('ask', 'success')],
+      pending_gate: {
+        gate_id: 'gate-m',
+        step_name: 'ask',
+        preview: { draft: 'Dear customer, …' },
+        choices: ['send', 'reject'],
+        opened_at: T1,
+        resolution_messages: {
+          send: 'The reply is on its way.',
+          reject: 'The draft was rejected.',
+        },
       },
     }),
     {},
@@ -1029,6 +1053,24 @@ beforeAll(async () => {
     );
     replies.withheld.set(label, JSON.parse(walked.content[0]!.text) as Json);
   }
+  // d2c: the gate with per-choice messages under a set whose declared values changed — the door's
+  // other sentence.
+  const { set: changed } = compileDisclosure([], {
+    declared: 'partial',
+    cause: 'manifest_changed',
+    audience: 'agent',
+    environment: 'swept',
+  });
+  replies.withheld.set(
+    'waiting, with messages, declared values changed',
+    JSON.parse(
+      toolContentOf(
+        { ...(await handleGetRunState({ run_id: 'wait-messages-1' }, stores)) },
+        { set: changed, audience: 'agent', table: RUN_STATE_SUMMARY_TABLE },
+        RUN_STATE_PLAN,
+      ).content[0]!.text,
+    ) as Json,
+  );
   const costsRaw = await handleGetRunState(
     { run_id: COST_RUN.id, include_steps: true },
     { ...stores, priceSourceProvider: async () => PRICES },
@@ -1155,11 +1197,155 @@ function withUnknowns(reply: Json, nodes: Map<string, Json[]>) {
   return { reply: visit(reply, '') as Json, ...counts };
 }
 
+// ─── The door × the schema (d2c) ────────────────────────────────────────────────────────────────
+
+/** A path's schema alternatives: every `anyOf` member, flattened. */
+const alternatives = (nodes: readonly Json[]): Json[] =>
+  nodes.flatMap((n) => (Array.isArray(n['anyOf']) ? alternatives(n['anyOf'] as Json[]) : [n]));
+const typesOf = (n: Json): string[] =>
+  n['type'] === undefined
+    ? []
+    : Array.isArray(n['type'])
+      ? (n['type'] as string[])
+      : [n['type'] as string];
+const isNode = (v: unknown): v is Json => v !== null && typeof v === 'object' && !Array.isArray(v);
+/** Whether one alternative admits any string the door writes: a plain string, or anything at all. */
+const admitsString = (nodes: readonly Json[]): boolean =>
+  alternatives(nodes).some(
+    (n) =>
+      (typesOf(n).length === 0 || typesOf(n).includes('string')) &&
+      !['const', 'enum', 'pattern', 'format', 'maxLength', 'not'].some((k) => k in n),
+  );
+const SHAPED_TYPES = ['number', 'integer', 'boolean'];
+
+/**
+ * Where the door writes a string when it withholds values (disclosure-walk.ts, `walkRow`), checked
+ * against one arm of the schema: a `question` row's whole child becomes one sentence; under a
+ * `value`, `bounded` or `choose` row every number and true/false leaf becomes its shape; a table's
+ * or a map's node that is not the object it describes is walked as a value. Two rules the door
+ * imposes: (a) a key no table classes is walked as a value — the receipt `disclosure` is attached
+ * after the walk, so it is skipped by name at the root, and any other such key is a finding; (b) a
+ * table chosen by its value is resolved for every value it can be chosen by.
+ */
+function doorAgainstSchema(table: ClassTable, arm: Json) {
+  const findings = new Set<string>();
+  const skipped: string[] = [];
+  const rows = new Map<string, Set<string>>();
+  const shapedLeaves = new Set<string>();
+  const met = (cls: string, path: string) => rows.set(cls, (rows.get(cls) ?? new Set()).add(path));
+  const at = (path: string, key: string) => (path === '' ? key : `${path}.${key}`);
+  const shaped = (n: Json) => typesOf(n).some((t) => SHAPED_TYPES.includes(t));
+  /** Every number and true/false leaf of `walked` (alternatives at `path`) and below, as `walkValue`
+   *  shapes them; a string is admitted when any alternative at the path (`all`) admits one. */
+  const leaves = (walked: readonly Json[], path: string, all: readonly Json[] = walked): void => {
+    if (walked.some(shaped)) shapedLeaves.add(path);
+    if (walked.some(shaped) && !admitsString(all)) {
+      findings.add(`${path}: a number or true/false with no string beside it`);
+    }
+    for (const n of walked) {
+      for (const [key, child] of Object.entries((n['properties'] as Json | undefined) ?? {})) {
+        leaves(alternatives([child as Json]), at(path, key));
+      }
+      if (isNode(n['additionalProperties'])) {
+        leaves(alternatives([n['additionalProperties']]), `${path}.*`);
+      }
+      if (isNode(n['items'])) leaves(alternatives([n['items']]), `${path}[]`);
+    }
+  };
+  /** The tables a row's table resolves to — rule (b) for the two the reply chooses by value. */
+  const tablesOf = (
+    given: ClassTable | ((value: unknown) => ClassTable),
+    nodes: readonly Json[],
+    path: string,
+  ): ClassTable[] => {
+    if (typeof given !== 'function') return [given];
+    if (path === 'skip_details.*') {
+      const unknown = given({ kind: 'zz_not_a_skip_kind' });
+      if (Object.keys(unknown).length > 0)
+        findings.add(`${path}: the unknown kind's table classes a key`);
+      skipped.push(
+        `${path} (a kind this release does not know): its table classes nothing — a later release's kind brings its own keys, admitted as unknown`,
+      );
+      return SKIP_KINDS.map((kind) => given({ kind }));
+    }
+    const anything = alternatives(nodes).every(
+      (n) =>
+        typesOf(n).includes('object') &&
+        isNode(n['additionalProperties']) &&
+        Object.keys(n['additionalProperties']).length === 0 &&
+        n['properties'] === undefined,
+    );
+    if (path === 'run_health[].evidence' && anything) {
+      skipped.push(`${path}: a record of unknowns, which admits anything — no walk needed`);
+      return [];
+    }
+    findings.add(`${path}: a table chosen by its value that this cell has no rule for`);
+    return [];
+  };
+  /** A node a table describes (`walkTable`): its entries when an array, its keys when an object. */
+  const described = (tables: readonly ClassTable[], nodes: readonly Json[], path: string): void => {
+    const alts = alternatives(nodes);
+    // Not the object the table describes (a number or true/false beside it): walked as a value.
+    leaves(alts.filter(shaped), path, alts);
+    for (const n of alts) {
+      if (isNode(n['items'])) described(tables, [n['items']], `${path}[]`);
+      for (const [key, child] of Object.entries((n['properties'] as Json | undefined) ?? {})) {
+        const classes = [
+          ...new Set(tables.filter((t) => Object.hasOwn(t, key)).map((t) => t[key]!)),
+        ];
+        if (classes.length === 0) {
+          if (path === '' && key === 'disclosure') {
+            skipped.push('disclosure: the receipt, attached after the walk (never shaped)');
+          } else findings.add(`${at(path, key)}: a key no table classes (walked as a value)`);
+          continue;
+        }
+        for (const cls of classes) row(cls, [child as Json], at(path, key));
+      }
+    }
+  };
+  const row = (cls: DisclosureClass, nodes: readonly Json[], path: string): void => {
+    if (cls === 'fact' || cls === 'frozen') return;
+    if (cls === 'question') {
+      met('question', path);
+      if (!admitsString(nodes)) findings.add(`${path}: a withheld question's sentence is refused`);
+      return;
+    }
+    if (cls === 'value' || cls === 'bounded' || 'choose' in cls) {
+      met(typeof cls === 'string' ? cls : 'choose', path);
+      return leaves(alternatives(nodes), path);
+    }
+    if ('map' in cls) {
+      // `walkMap`: a node that is not a map is walked as a value; each entry by its table.
+      const alts = alternatives(nodes);
+      leaves(
+        alts.filter((n) => !isNode(n['additionalProperties'])),
+        path,
+        alts,
+      );
+      for (const n of alts) {
+        if (!isNode(n['additionalProperties'])) continue;
+        const entry = [n['additionalProperties']];
+        described(tablesOf(cls.map, entry, `${path}.*`), entry, `${path}.*`);
+      }
+      return;
+    }
+    described(tablesOf(cls.nested, nodes, path), nodes, path);
+  };
+  described([table], [arm], '');
+  return {
+    findings: [...findings].sort(),
+    skipped,
+    met: Object.fromEntries([...rows].map(([cls, paths]) => [cls, paths.size])),
+    shapedLeaves: shapedLeaves.size,
+    questions: [...(rows.get('question') ?? [])].sort(),
+  };
+}
+
 // ─── The words a reader reads (item 4) ──────────────────────────────────────────────────────────
 
 const PAGE_SECTION = [
   "`get_run_state`'s reply is described by `docs/reference/mcp/run-state.schema.json` in the repository, a JSON Schema (draft 2020-12) built from the same word lists the engine uses, so the file and the code cannot drift: a test regenerates it and fails when they differ. Every list in it is open and every object accepts a key it does not know. Added after version 0.50.0.",
-  "The file describes both replies: the run's state, and a refusal (for example, the run is not found). Every field in it is kept under the rule of [Compatibility](../compatibility.md), so a new word or field is never a breaking change. When Realm withholds values (the receipt's `values` is `withheld`), a number or true/false inside `steps` or a failed drive's cost (`drive_failure_costs[].cost`) can arrive as its shape, a string such as `‹number›`; the schema allows it.",
+  "The file describes both replies: the run's state, and a refusal (for example, the run is not found). Every field in it is kept under the rule of [Compatibility](../compatibility.md), so a new word or field is never a breaking change. When Realm withholds values (the receipt's `values` is `withheld`), a number or true/false inside `steps` or a failed drive's cost (`drive_failure_costs[].cost`) can arrive as its shape, a string such as `‹number›`; the schema allows it. A gate's per-choice messages (`pending_gate.resolution_messages`) arrive then as one sentence, `withheld (declared values could not be read)` or `withheld (declared values changed)`, in place of the map; the schema allows that too.",
   'A program that reads the reply must accept a word it does not know in any list, and a key it does not know in any object. For a word it does not know, it acts as for the most cautious word of that list:',
   'Where the reply types a field as a plain string, the file says so; the rule still applies to the word it carries.',
   "`docs/reference/mcp/run-state.added-after.json` says the release each field and each word arrived after: `\"0.50.0\"` marks what was there when the file was first published. A path in it is dotted keys, with `[]` for a list's entries and `.*` for a map's values (`steps.*.attempts[].status`), and `described_loosely` names the fields the schema does not yet describe in full (none today). It is a file of its own because a validator in strict mode, Ajv's default, refuses a keyword it does not know, so a release marker inside the schema would stop such a client from using it.",
@@ -1471,19 +1657,69 @@ describe('Q1 (#592) d2a — the published schema of get_run_state', () => {
 
   it('(e)(ii) #2464: every planted reply validates when the door withholds values (a leaf of steps arrives as its shape)', () => {
     const [ok] = arms();
-    // (a) red when a number or true/false inside `steps` is described with no string beside it;
-    //     (b) prints each reply's errors.
+    const rendered = runStateSchemaFile();
+    // (a) red when a number or true/false inside `steps` is described with no string beside it, or
+    //     (d2c) a gate's per-choice messages admit no sentence in place of the map — in the committed
+    //     file or in the module's own rendering; (b) prints each reply's errors.
     expect(
       [...replies.withheld].map(([label, reply]) => ({
         label,
         file: errorsOf(file(), reply) ?? 'valid',
         okArm: errorsOf(ok!, reply) ?? 'valid',
+        module: errorsOf(rendered, reply) ?? 'valid',
       })),
     ).toEqual(
-      [...replies.withheld.keys()].map((label) => ({ label, file: 'valid', okArm: 'valid' })),
+      [...replies.withheld.keys()].map((label) => ({
+        label,
+        file: 'valid',
+        okArm: 'valid',
+        module: 'valid',
+      })),
     );
-    // The set did withhold: the rich run's steps were shown as their shape.
+    // The set did withhold: the rich run's steps were shown as their shape, and the gate's messages
+    // as the door's two sentences.
     expect((replies.withheld.get('rich')!['disclosure'] as Json)['values']).toBe('withheld');
+    const messages = (label: string) =>
+      (replies.withheld.get(label)!['pending_gate'] as Json)['resolution_messages'];
+    expect([
+      messages('waiting, with messages'),
+      messages('waiting, with messages, declared values changed'),
+    ]).toEqual([
+      'withheld (declared values could not be read)',
+      'withheld (declared values changed)',
+    ]);
+  });
+
+  it('(e)(iv) d2c: wherever the door writes a string when it withholds values, the schema admits one — every row of both tables that is not a fact', () => {
+    const [ok, refusal] = runStateSchemaFile()['anyOf'] as Json[];
+    // (a) red when a row the door withholds as a string — a question's sentence, a number or
+    //     true/false shown as its shape — is described with no string beside it, when a key no table
+    //     classes appears, or when a table chosen by its value meets no rule; (b) prints each path.
+    expect({
+      ok: doorAgainstSchema(RUN_STATE_SUMMARY_TABLE, ok!),
+      refusal: doorAgainstSchema(MCP_ENVELOPE_TABLE, refusal!),
+    }).toEqual({
+      ok: {
+        findings: [],
+        skipped: [
+          "skip_details.* (a kind this release does not know): its table classes nothing — a later release's kind brings its own keys, admitted as unknown",
+          'run_health[].evidence: a record of unknowns, which admits anything — no walk needed',
+          'disclosure: the receipt, attached after the walk (never shaped)',
+        ],
+        // What the cell met, so a zero is not a blind one: the rows by class, and the number and
+        // true/false leaves below them — every path where the file gives such a leaf a string.
+        met: { value: 12, bounded: 12, choose: 7, question: 2 },
+        shapedLeaves: 135,
+        questions: ['pending_gate.resolution_messages', 'pending_gate.resolved_message'],
+      },
+      refusal: {
+        findings: [],
+        skipped: ['disclosure: the receipt, attached after the walk (never shaped)'],
+        met: { value: 2, bounded: 4 },
+        shapedLeaves: 0,
+        questions: [],
+      },
+    });
   });
 
   it('(e)(iii) #2748: real refusals validate against the refusal arm and the file, and the ok arm rejects them', () => {
