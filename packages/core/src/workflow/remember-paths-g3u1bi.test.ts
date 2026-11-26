@@ -532,6 +532,31 @@ describe('gap 3 (1b-i), check 7 — a block the loader refuses', () => {
     });
   }
 
+  it("a block with no `as`: its path is still judged, the opening without the memory's name", () => {
+    const text = wf([
+      '  a:',
+      '    description: a',
+      '    execution: auto',
+      '    handler: h',
+      '    remember:',
+      '      key: { email: context.resources.nope.email }',
+      '      keep_days: 90',
+    ]);
+    // (a) red when the opening writes a name that is not text (`remember 'undefined'`), or the
+    //     block is skipped; (b) prints the verdict.
+    expect(judge(text)).toEqual({
+      loads: false,
+      errors: [`Step 'a': 'remember' needs 'as'. (line ${lineOf(text, 'remember:')})`],
+      findings: [
+        unresolvable(
+          'key.email',
+          `Step 'a': remember key 'email' reads 'context.resources.nope.email', but the workflow has no step 'nope'. (line ${lineOf(text, 'key:')})`,
+        ),
+      ],
+      notChecked: [],
+    });
+  });
+
   it('a block refused for reading a failure message is left out of the key-names rule; its path is still judged', () => {
     const text = wf(
       ['  c:', '    description: c', '    execution: auto', '    handler: h'],
