@@ -40,6 +40,7 @@ import { registerStartRunBatch } from './tools/start-run-batch.js';
 import { doorDisclosureOf, type DoorDisclosure, type OperatorRoute } from './render-reply.js';
 import { setDeprecationSink } from './deprecations.js';
 import { registerPresentQuestion } from './tools/present-question.js';
+import { assertLimitsOption } from './tools/caller-limits.js';
 import { ABANDON_RUN_DESCRIPTION_NO_ANSWER_TOOL } from './tools/abandon-run.js';
 import {
   FAILURE_TEXT_ENV,
@@ -219,6 +220,23 @@ export interface RealmMcpServerOptions {
    * `principal_not_passed`. A principal a tool's caller sends is never read.
    */
   principal?: Principal;
+  /**
+   * #625 named keys unit 2: what this server's caller may call, as `realm serve` passes a named key's
+   * limits. `caller` is the name the refusals give (`Key '<caller>' may not …`). `readOnly`: only the
+   * reading tools (`READING_TOOLS`); `tools`: only these tools; `workflows`: only these workflows and
+   * their runs, for reading as for starting and driving (`create_workflow` is then refused, and
+   * `list_workflows` lists only these). Every tool stays listed; a call outside the limits is refused
+   * with `CALL_OUTSIDE_LIMITS` before the tool does anything. A closed shape, checked when the server
+   * is built: an unknown member, no limit, an empty `caller` or list, a `readOnly` that is not `true`,
+   * `readOnly` beside `tools`, or a tool name that is not one of Realm's tools throws. Absent ⇒ no limit.
+   * @beta
+   */
+  limits?: {
+    caller: string;
+    readOnly?: true;
+    tools?: readonly string[];
+    workflows?: readonly string[];
+  };
   /** #627 W: the monotonic clock a form's per-call budget is read from (default `performance.now`). */
   monotonicNow?: () => number;
 }
@@ -338,6 +356,8 @@ export function createRealmMcpServer(options: RealmMcpServerOptions): McpServer 
   ) {
     throw new Error(INVALID_PRINCIPAL_OPTION);
   }
+  // #625 named keys unit 2: the caller's limits, a closed shape — a typo must never limit nothing.
+  if (options?.limits !== undefined) assertLimitsOption(options.limits);
   const waitJudged = judgeFormWait({
     flag: options?.formWaitSecondsFlag,
     env: process.env[FORM_WAIT_ENV],
@@ -557,6 +577,8 @@ export function createRealmMcpServer(options: RealmMcpServerOptions): McpServer 
     // #627 W (correction 1, A2): the door, as every other tool gets it from `effectiveOptions`.
     door,
     ...(options?.operatorRoute !== undefined ? { operatorRoute: options.operatorRoute } : {}),
+    // #625 named keys unit 2: the caller's limits, as every other tool gets them.
+    ...(options.limits !== undefined ? { limits: options.limits } : {}),
   });
 
   // #627 W (§5.2b): the session's forms, negotiated at `initialize` — form elicitation declared by
