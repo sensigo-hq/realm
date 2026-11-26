@@ -1736,6 +1736,24 @@
         "doc": "The Landlord shall insure the Building for its cost at 9:\n30 minutes before the Tenant arrives at the Building."
       },
       "expect": "not_found"
+    },
+    {
+      "group": "follow-up",
+      "id": "contraction-in-capitals",
+      "quote": "THE LANDLORD CAN",
+      "source": {
+        "doc": "THE LANDLORD CAN'T REFUSE CONSENT."
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "follow-up",
+      "id": "hyphen-at-a-line-break",
+      "quote": "paid twenty-one (21) days after becoming payable",
+      "source": {
+        "doc": "If any Rent is un-\npaid twenty-one (21) days after becoming payable."
+      },
+      "expect": "not_found"
     }
   ],
   "T2": [
@@ -2012,28 +2030,6 @@
       },
       "expect": "stitched",
       "why": "a dotted decimal before a capitalised word at a line start that counts reads as a clause label",
-      "cut_short": false
-    },
-    {
-      "group": "follow-up",
-      "id": "contraction-in-capitals",
-      "quote": "THE LANDLORD CAN",
-      "source": {
-        "doc": "THE LANDLORD CAN'T REFUSE CONSENT."
-      },
-      "expect": "exact",
-      "why": "a contraction in capitals: only a lowercase t after the apostrophe `'` or `’` is read (`can´t` is not read)",
-      "cut_short": false
-    },
-    {
-      "group": "follow-up",
-      "id": "hyphen-at-a-line-break",
-      "quote": "paid twenty-one (21) days after becoming payable",
-      "source": {
-        "doc": "If any Rent is un-\npaid twenty-one (21) days after becoming payable."
-      },
-      "expect": "exact",
-      "why": "a quote that starts at a hyphen breaking a word across a line",
       "cut_short": false
     }
   ],
