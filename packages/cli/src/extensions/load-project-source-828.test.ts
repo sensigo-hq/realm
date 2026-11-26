@@ -7,7 +7,16 @@
 //
 // Every assertion carries (1) the change that turns it red and (2) what it prints when it fails.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtempSync, mkdirSync, readdirSync, writeFileSync, rmSync, realpathSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import {
+  mkdtempSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+  rmSync,
+  realpathSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
@@ -339,6 +348,53 @@ describe('#828 unit 2b correction 1 check 3 — "hashes unavailable", one cell p
       declared: `./t/${basename(file)}`,
       via: 'extensions_file',
       absent: 'hashes_unavailable',
+    });
+  });
+});
+
+/** The sha256 of a file's bytes. */
+const sha256 = (file: string): string =>
+  createHash('sha256').update(readFileSync(file)).digest('hex');
+
+describe('#828 unit 2b correction 2 — each settled source reads its own module', () => {
+  // (1) red when the settle pass finds an entry's module by its `declared` alone (c19311f6): the
+  //     identity holds `./<x>.js` twice, the map keeps the manifest's, and the extensions-file handler
+  //     takes that file's hashes; (2) prints both handlers' hashes beside each file's own.
+  it("the workflow's ./x.js and the manifest's use: ./x.js are two files: each handler carries its own file's hashes", async () => {
+    const name = `${unique('x')}.js`;
+    const handler = `hc_${counter}`;
+    const listed = write('wf', name, moduleSource(handler));
+    const used = write(
+      '.',
+      name,
+      'export default function factory({ id }) { return { id, execute: async () => ({ data: { m: 1 } }) }; }\n',
+    );
+    writeFileSync(join(root, 'realm.yaml'), `version: 1\nhandlers:\n  hcm:\n    use: ./${name}\n`);
+    const { registry } = await loadProjectExtensions({
+      ...definition([`./${name}`]),
+      source_dir: join(root, 'wf'),
+    });
+    const modules = registry.identity?.modules;
+    const hashesOf = (entry: string): unknown => {
+      const source = registry.entry('handler', entry)?.source;
+      return source?.source === 'project' && 'entry_hash' in source
+        ? { entry: source.entry_hash, folder: source.folder_tree_hash }
+        : source;
+    };
+    expect({
+      listed: hashesOf(handler),
+      used: hashesOf('hcm'),
+      identity: [identityModule(modules, listed), identityModule(modules, used)].map((m) => [
+        m?.declared,
+        m?.entry_hash,
+      ]),
+    }).toEqual({
+      listed: { entry: sha256(listed), folder: folderTree(dirname(listed)) },
+      used: { entry: sha256(used), folder: folderTree(dirname(used)) },
+      identity: [
+        [`./${name}`, sha256(listed)],
+        [`./${name}`, sha256(used)],
+      ],
     });
   });
 });

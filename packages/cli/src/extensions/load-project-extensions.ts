@@ -567,7 +567,7 @@ export async function loadProjectExtensions(
 
   // #828 unit 2b correction 1: this load's imports are done, so each project entry's source takes
   // its hashes again now, from the sweeps the identity reads next.
-  settleProjectSources(registry, identityModules, hashes);
+  settleProjectSources(registry, moduleRefs ?? [], useModuleRefs, hashes);
 
   // Drift evidence: identity captured ONCE per cache entry at module-LOAD time. The
   // manifest contributes its content hash (never a sweep root); `use:`-resolved module
@@ -884,23 +884,30 @@ async function applyDeploymentManifest(
 /**
  * #828 unit 2b correction 1: after the load's last import, each project entry's source with its
  * hashes taken again. A later first import in a folder sweeps it again, so the hash an entry took
- * at registration can be older than the identity's. Its module is the identity's own with the same
- * `declared`; an entry with none keeps its source.
+ * at registration can be older than the identity's. Each entry reads its own module (correction 2):
+ * a manifest entry the one its `use:` text resolved to, as at registration; any other the listed
+ * module with its `declared`. A manifest `use:` and a listed module can be spelled the same and be
+ * two files, each resolved against its own folder. A listed entry whose module is not found keeps
+ * its source.
  */
 function settleProjectSources(
   registry: ExtensionRegistry,
-  modules: readonly { declared: string; resolved: string }[],
+  listed: readonly { declared: string; resolved: string }[],
+  useModuleRefs: Map<string, string>,
   hashes: CodeHashLoad,
 ): void {
-  const resolvedOf = new Map(modules.map((m) => [m.declared, m.resolved]));
+  const resolvedOf = new Map(listed.map((m) => [m.declared, m.resolved]));
   for (const kind of ['adapter', 'handler', 'processor'] as const) {
     for (const name of registry.names(kind)) {
       const held = registry.entry(kind, name);
       const source = held?.source;
-      const resolved = source?.source === 'project' ? resolvedOf.get(source.declared) : undefined;
-      if (held === undefined || source?.source !== 'project' || resolved === undefined) continue;
-      const settled = moduleSourceOf(source.declared, resolved, source.via, hashes);
-      registry.register(kind as 'adapter', name, held.impl as never, settled);
+      if (held === undefined || source?.source !== 'project') continue;
+      const resolved = resolvedOf.get(source.declared);
+      const settled =
+        source.via === 'manifest'
+          ? manifestEntrySource(source.declared, useModuleRefs, hashes)
+          : resolved !== undefined && moduleSourceOf(source.declared, resolved, source.via, hashes);
+      if (settled) registry.register(kind as 'adapter', name, held.impl as never, settled);
     }
   }
 }
