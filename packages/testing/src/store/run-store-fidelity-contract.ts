@@ -103,7 +103,9 @@ import {
  * three workflows, and is skipped for a store that keeps no claims.
  * #625 PR-2b, named keys, adds `CLAIM_HOLDER_KEEPS_KEY_SOURCE`: a claim taken for a caller that
  * presented one of `realm serve`'s named keys reads back, through core's reader, with
- * `by_source: 'key'`.
+ * `by_source: 'key'`. Gap 3, unit 1a, adds `EVIDENCE_KEEPS_REMEMBERED`: an evidence entry written
+ * with `remembered` (what a step remembered for later runs, or why it remembered nothing) reads back
+ * with it, equal, and one written without it reads back without it.
  */
 export const RUN_STORE_FIDELITY_LAWS = [
   'FIDELITY_HONESTY',
@@ -132,6 +134,7 @@ export const RUN_STORE_FIDELITY_LAWS = [
   'EVIDENCE_KEEPS_FAILURE_KIND',
   'CLAIM_KEEPS_DEADLINE_CAUSE',
   'CLAIM_HOLDER_KEEPS_KEY_SOURCE',
+  'EVIDENCE_KEEPS_REMEMBERED',
 ] as const;
 
 export type RunStoreFidelityLaw = (typeof RUN_STORE_FIDELITY_LAWS)[number];
@@ -1539,6 +1542,62 @@ export function runStoreFidelityContract(
         throw new Error(
           `an evidence entry written without supplied_by must read back without it (issue #729 ` +
             `PR-0): read back ${JSON.stringify(second?.supplied_by)}`,
+        );
+      }
+    },
+  });
+
+  // Gap 3, unit 1a — EVIDENCE_KEEPS_REMEMBERED. Always active: every store round-trips evidence. The
+  // engine writes the stamp before the write, so a store keeps it as written, both arms, and an entry
+  // written without one keeps none.
+  cases.push({
+    law: 'EVIDENCE_KEEPS_REMEMBERED',
+    name: 'an entry written with remembered reads back with it, equal, and one written without reads back without',
+    run: async () => {
+      const { record: run } = await adapter.store.create({
+        workflowId: `tck-remembered-${Math.random().toString(36).slice(2)}`,
+        workflowVersion: 1,
+        params: {},
+      });
+      const base: EvidenceSnapshot = {
+        step_id: adapter.stepName,
+        started_at: '2026-01-01T00:00:00.000Z',
+        completed_at: '2026-01-01T00:00:01.000Z',
+        duration_ms: 1,
+        input_summary: {},
+        output_summary: { rung: 2 },
+        status: 'success',
+        evidence_hash: 'tck-remembered',
+      };
+      const stamps: NonNullable<EvidenceSnapshot['remembered']>[] = [
+        {
+          as: 'offers',
+          key: { customer_email: 'a@example.test', order: '42' },
+          value: { rung: 2, note: { lines: ['x', 'y'] } },
+          choice: 'approve',
+          expires_at: '2026-04-01T00:00:01.000Z',
+        },
+        { as: 'offers', not_remembered: 'key_absent', key_name: 'customer_email' },
+      ];
+      await adapter.store.update({
+        ...run,
+        evidence: [...stamps.map((remembered) => ({ ...base, remembered })), { ...base }],
+      });
+      const { record: reread } = await adapter.store.get(run.id);
+      stamps.forEach((wrote, i) => {
+        const read = reread.evidence[i]?.remembered;
+        if (!isDeepStrictEqual(read, wrote)) {
+          throw new Error(
+            `EVIDENCE_KEEPS_REMEMBERED: an evidence entry's remembered reads back as ` +
+              `${JSON.stringify(read)}, not ${JSON.stringify(wrote)}`,
+          );
+        }
+      });
+      const last = reread.evidence[stamps.length];
+      if (last === undefined || 'remembered' in last) {
+        throw new Error(
+          `EVIDENCE_KEEPS_REMEMBERED: an evidence entry written without remembered reads back with ` +
+            `${JSON.stringify(last?.remembered)}`,
         );
       }
     },
