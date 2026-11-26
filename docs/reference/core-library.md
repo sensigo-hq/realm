@@ -272,18 +272,19 @@ A new run has `version` 0 and the phase `running`.
 
 ### `persistedRunRecordFields`
 
-A store that keeps the whole record, as the file store does, lists all 8 fields. A store that maps a record onto columns lists only the fields it has columns for. For a field that is not listed, Realm does not trust an empty value, and says so.
+A store that keeps the whole record, as the file store does, lists all 9 fields. A store that maps a record onto columns lists only the fields it has columns for. For a field that is not listed, Realm does not trust an empty value, and says so.
 
-| Field                        | If the store loses it                                                                      |
-| ---------------------------- | ------------------------------------------------------------------------------------------ |
-| `capability_blocks`          | A step that is blocked looks free.                                                         |
-| `workflow_context_snapshots` | The history of the workflow's context files is lost.                                       |
-| `extension_identity`         | A change in the project's code can never be detected.                                      |
-| `validation_rejections`      | A step whose answers keep being refused is never stopped.                                  |
-| `defaulted_steps`            | The run no longer lists the steps that were given their default output.                    |
-| `settled`                    | `settleStep` cannot tell what was already settled. A store with `settleStep` must list it. |
-| `finalizer_ledger`           | Cleanup steps may run twice, or not at all. A store with `settleStep` must list it.        |
-| `sealed_by`                  | Readers get the wrong answer to how the run ended. A store with `settleStep` must list it. |
+| Field                        | If the store loses it                                                                                                      |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `capability_blocks`          | A step that is blocked looks free.                                                                                         |
+| `workflow_context_snapshots` | The history of the workflow's context files is lost.                                                                       |
+| `extension_identity`         | A change in the project's code can never be detected.                                                                      |
+| `validation_rejections`      | A step whose answers keep being refused is never stopped.                                                                  |
+| `defaulted_steps`            | The run no longer lists the steps that were given their default output.                                                    |
+| `settled`                    | `settleStep` cannot tell what was already settled. A store with `settleStep` must list it.                                 |
+| `finalizer_ledger`           | Cleanup steps may run twice, or not at all. A store with `settleStep` must list it.                                        |
+| `sealed_by`                  | Readers get the wrong answer to how the run ended. A store with `settleStep` must list it.                                 |
+| `pending_gate`               | Under `--failure-text hidden`, a gate's whole question reaches an assistant as its length on a run with a failure message. |
 
 With a store that lists no fields, `get_run_state` warned:
 
@@ -402,8 +403,8 @@ The 3 fenced functions of a trace buffer take a condition on the run, and must c
 
 | Store                                                            | Cases | Failed |
 | ---------------------------------------------------------------- | ----- | ------ |
-| `InMemoryStore`                                                  | 60    | 0      |
-| A copy that lists `capability_blocks` and drops it on `update`   | 60    | 1      |
+| `InMemoryStore`                                                  | 61    | 0      |
+| A copy that lists `capability_blocks` and drops it on `update`   | 61    | 1      |
 | A copy that lists no fields and does not keep the identity entry | 52    | 0      |
 
 The failure:

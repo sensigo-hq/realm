@@ -5,7 +5,7 @@
 // (`gate.agent_hint`), and in the value a condition read (a skipped step's `skip_details`, a guard's
 // `abort_context.conditions`, a precondition's refusal wherever it appears). Each shaped path is
 // listed in the reply's receipt. Under `shown`, every reply is as today, and the stored question keeps
-// its words under both (unit (iv-a2-ii)'s).
+// its words under both (unit (iv-a2-ii) shows an assistant the question's twin).
 //
 // The real server runs in process (`createRealmMcpServer` over `InMemoryTransport`) on runs failed
 // by their real writers: a handler that throws, and a model request failed through core's
@@ -327,7 +327,7 @@ describe('gap 2 (iv-a2-i), check 2 — a handler text over 500 characters', () =
 });
 
 describe("gap 2 (iv-a2-i), checks 3 and 5 — a gated step's instructions, and its stored question", () => {
-  it('under hidden: gate.agent_hint shows the shape and is listed; the stored question and gate.display keep the words', async () => {
+  it('under hidden: gate.agent_hint shows the shape and is listed; the stored question keeps the words, and the assistant reads its twin (unit (iv-a2-ii))', async () => {
     const w = await world();
     // The gate opens on the door's own call, so its opening reply carries the hint.
     const runId = await w.failed(D.gated, undefined, false);
@@ -336,19 +336,22 @@ describe("gap 2 (iv-a2-i), checks 3 and 5 — a gated step's instructions, and i
     const state = await call('get_run_state', { run_id: runId });
     const gate = opening['gate'] as { agent_hint?: string; display?: string };
     const pending = state['pending_gate'] as { resolved_message?: string };
+    const stored = (await w.runStore.get(runId)).record.pending_gate;
     // (a) red when gateInstructionsAt's render does not read the mark (the words show in the hint),
     //     when the opening gate's mark is missing (the path absent from the receipt), or when the
     //     question's mint reads the mark (the stored question loses its words); (b) prints the hint,
-    //     the question and the receipt.
+    //     the receipt, the question the assistant reads and the stored one.
     expect({
       hint: gate.agent_hint,
       receipt: receiptOf(opening).shaped,
       display: gate.display,
-      stored: pending.resolved_message,
+      served: pending.resolved_message,
+      stored: stored?.resolved_message,
     }).toEqual({
       hint: `From the workflow's author: Why: ${shape(MSG.length)}`,
-      receipt: ['gate.agent_hint'],
-      display: `Q: ${MSG}`,
+      receipt: ['gate.display', 'gate.agent_hint'],
+      display: `Q: ${shape(MSG.length)}`,
+      served: `Q: ${shape(MSG.length)}`,
       stored: `Q: ${MSG}`,
     });
   });

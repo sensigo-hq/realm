@@ -72,6 +72,7 @@ import {
   isFailureWordsThrow,
   conditionValueHidingFailureText,
   withPreconditionHidingFailureText,
+  questionHidingFailureText,
   type RunRecord,
 } from '@sensigo/realm';
 import { mcpHostOf } from './start-run.js';
@@ -746,7 +747,9 @@ export interface RunStateSummary {
    */
   failures: FailureView[];
   skipped_steps: string[];
-  pending_gate: import('@sensigo/realm').PendingGate | undefined;
+  // Gap 2, unit (iv-a2-ii): the gate's twin is never on the wire (its question is served in
+  // `resolved_message` under `hidden`).
+  pending_gate: Omit<import('@sensigo/realm').PendingGate, 'resolved_message_shaped'> | undefined;
   evidence_count: number;
   last_step: string | null;
   created_at: string;
@@ -1610,6 +1613,20 @@ export async function handleGetRunState(
     agentRefused: pending?.agent_refused ?? [],
     runHealth: runHealthShown.shown,
   });
+  // Gap 2, unit (iv-a2-ii): the live gate without its twin; under `hidden`, its question as core's
+  // rule gives it (the twin, or the whole question as its shape when the store may have dropped it).
+  const liveGate = run.terminal_state ? undefined : run.pending_gate;
+  const gateQuestion =
+    hideFailureText && liveGate !== undefined
+      ? questionHidingFailureText(liveGate, run, runStore)
+      : undefined;
+  const pendingGate =
+    liveGate === undefined
+      ? undefined
+      : (({ resolved_message_shaped: _twin, ...gate }) =>
+          gateQuestion !== undefined ? { ...gate, resolved_message: gateQuestion } : gate)(
+          liveGate,
+        );
   const shapedPaths = hideFailureText
     ? [
         ...failureTextPaths({
@@ -1621,6 +1638,7 @@ export async function handleGetRunState(
           loadWarningShaped,
         }),
         ...copies.paths,
+        ...(gateQuestion !== undefined ? ['pending_gate.resolved_message'] : []),
       ]
     : [];
 
@@ -1643,7 +1661,7 @@ export async function handleGetRunState(
     skipped_steps: run.skipped_steps,
     // Suppress a stale/leftover pending_gate on a terminal record (the #282 class) — never
     // surface a gate that no longer means anything live.
-    pending_gate: run.terminal_state ? undefined : run.pending_gate,
+    pending_gate: pendingGate,
     evidence_count: run.evidence.length,
     last_step: run.evidence.at(-1)?.step_id ?? null,
     created_at: run.created_at,

@@ -58,7 +58,7 @@ function realm(args: string[], extra: Record<string, string> = {}) {
 }
 
 const HIDDEN_LINE = (from: string) =>
-  `Failure text over MCP: hidden (${from}). In get_run_state and in the replies to its own calls, an assistant sees the step and its code, category or class, not the failure's words; realm run inspect still shows them.`;
+  `Failure text over MCP: hidden (${from}). In get_run_state and in the replies to its own calls, an assistant sees the step and its code, category or class, not the failure's words, except where a step copies them into its own output; realm run inspect still shows them.`;
 
 /** `realm mcp` over stdio: the capability its server advertises and its stderr lines. */
 async function mcpSession(args: string[], extra: Record<string, string> = {}) {
@@ -131,11 +131,11 @@ describe('gap 2 (iv-b1), check 1 — each command reads the flag and the variabl
   it('realm mcp: the flag and the variable each reach the server, with their start line; none under shown', async () => {
     claim(
       MCP_PAGE,
-      "| `--failure-text <value>` | `shown` | Whether an assistant sees a failure's words in `get_run_state` and in the replies to its own calls: `shown`, or `hidden`, which shows the step, its code, category or class and its kind where the record has them, and in place of the words their length (`‹string, N characters›`). With `REALM_MCP_FAILURE_TEXT` also set, `hidden` wins. Added after version 0.50.0. |",
+      "| `--failure-text <value>` | `shown` | Whether an assistant sees a failure's words in `get_run_state` and in the replies to its own calls: `shown`, or `hidden`, which shows the step, its code, category or class and its kind where the record has them, and in place of the words their length (`‹string, N characters›`); a copy a step writes into its own output still shows. With `REALM_MCP_FAILURE_TEXT` also set, `hidden` wins. Added after version 0.50.0. |",
     );
     claim(
       MCP_PAGE,
-      "Under the failure-text value `hidden`, the start line is followed by one more: `Failure text over MCP: hidden (from --failure-text). In get_run_state and in the replies to its own calls, an assistant sees the step and its code, category or class, not the failure's words; realm run inspect still shows them.`, naming where the value came from as the gate-answers line does; under `shown` there is none. Added after version 0.50.0.",
+      "Under the failure-text value `hidden`, the start line is followed by one more: `Failure text over MCP: hidden (from --failure-text). In get_run_state and in the replies to its own calls, an assistant sees the step and its code, category or class, not the failure's words, except where a step copies them into its own output; realm run inspect still shows them.`, naming where the value came from as the gate-answers line does; under `shown` there is none. Added after version 0.50.0.",
     );
     const flag = await mcpSession(['--failure-text', 'hidden']);
     const env = await mcpSession([], { REALM_MCP_FAILURE_TEXT: 'hidden' });
@@ -283,7 +283,7 @@ describe('gap 2 (iv-b1), check 9 — --check, --help and the environment table',
     const mcp = realm(['mcp', '--help']);
     const serve = realm(['serve', '--help']);
     const words =
-      "--failure-text <value> Whether the assistant sees a failure's words in get_run_state and in the replies to its own calls: shown (the default) or hidden. The most restrictive of this flag and REALM_MCP_FAILURE_TEXT wins.";
+      "--failure-text <value> Whether the assistant sees a failure's words in get_run_state and in the replies to its own calls: shown (the default) or hidden (a copy a step writes into its own output still shows). The most restrictive of this flag and REALM_MCP_FAILURE_TEXT wins.";
     // (a) red when a command lacks the flag or its help says otherwise; (b) prints both lines.
     expect({ mcp: flagLine(mcp.stdout), serve: flagLine(serve.stdout) }).toEqual({
       mcp: words,

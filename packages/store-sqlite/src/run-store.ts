@@ -555,7 +555,7 @@ export class SqliteRunStore implements RunStore, PerRunArtifactStore {
   /** This store deletes runs (`deleteAllForRun`), and each deletion leaves a tombstone (#616 PR-2c c4-i). */
   readonly purgesRuns = true;
 
-  /** The fields this store round-trips: all eight, as the JSON store declares them. */
+  /** The fields this store round-trips: all nine, as the JSON store declares them. */
   readonly persistedRunRecordFields: ReadonlySet<LoadBearingRunRecordField> = new Set([
     'capability_blocks',
     'workflow_context_snapshots',
@@ -565,6 +565,8 @@ export class SqliteRunStore implements RunStore, PerRunArtifactStore {
     'settled',
     'finalizer_ledger',
     'sealed_by',
+    // Gap 2, unit (iv-a2-ii): the record is one JSON document, so the stored gate keeps every key.
+    'pending_gate',
   ]);
 
   /** The home's clock: every reading the store takes is the primitive's, of this clock. */

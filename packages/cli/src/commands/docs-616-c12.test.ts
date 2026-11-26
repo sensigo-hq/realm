@@ -587,7 +587,7 @@ describe('#616 PR-2c c12 — no JSON-era sentence is left (C6)', () => {
     },
     {
       page: CORE,
-      words: 'as the file store does, lists all 8 fields',
+      words: 'as the file store does, lists all 9 fields',
       why: "L: the library class's listed fields",
     },
     {

@@ -414,8 +414,8 @@ Build a new adapter and store for each case, as above. Several cases delete or d
 
 | Contract                      | For a store that implements                                                             | Laws | Cases with Realm's own store                   |
 | ----------------------------- | --------------------------------------------------------------------------------------- | ---- | ---------------------------------------------- |
-| `runStoreFidelityContract`    | `RunStore`                                                                              | 26   | 60, with `InMemoryStore`                       |
-| `settlementContract`          | `RunStore` with `settleStep`                                                            | 60   | 153, with `InMemoryStore` (below)              |
+| `runStoreFidelityContract`    | `RunStore`                                                                              | 26   | 61, with `InMemoryStore`                       |
+| `settlementContract`          | `RunStore` with `settleStep`                                                            | 60   | 154, with `InMemoryStore` (below)              |
 | `perRunArtifactStoreContract` | `PerRunArtifactStore`                                                                   | 7    | 7, with `JsonFileFailedAttemptStore`           |
 | `fencedTraceBufferContract`   | `TraceBufferStore` with the fenced functions                                            | 12   | 72, with `InMemoryTraceBufferStore`            |
 | `storeClockContract`          | `RunStore`, on a clock the test moves                                                   | 12   | 12, with `InMemoryStore`                       |
@@ -529,7 +529,7 @@ ANSWERER_REFUSAL_WRITES_NOTHING, ADAPTER_WIRING, STORE_RELEASE_LINE_TRUE, SEAL_R
 ROUTE_CLOCK_IS_STORE_CLOCK
 ```
 
-Each case's `name` says in a sentence what the law requires. With `InMemoryStore`, `defaultSettlementFixture`, a `route` that builds an `InMemoryStore` on the case's clock and a `seedLegacyTerminal` that puts the run straight into the store's map of runs, 59 of the laws have cases, 153 in all, and all of them pass. `ADAPTER_WIRING` has one only when the adapter is incomplete. Without `seedLegacyTerminal`, `STAMP_CLASSIFIED_ROUNDTRIP` has no case and a `STAMP_PRESERVES_UPDATED_AT` case fails, saying that the hook is missing: 149 cases.
+Each case's `name` says in a sentence what the law requires. With `InMemoryStore`, `defaultSettlementFixture`, a `route` that builds an `InMemoryStore` on the case's clock and a `seedLegacyTerminal` that puts the run straight into the store's map of runs, 59 of the laws have cases, 154 in all, and all of them pass. `ADAPTER_WIRING` has one only when the adapter is incomplete. Without `seedLegacyTerminal`, `STAMP_CLASSIFIED_ROUNDTRIP` has no case and a `STAMP_PRESERVES_UPDATED_AT` case fails, saying that the hook is missing: 150 cases.
 
 `GATE_PROOF_NEVER_GATES_THE_ANSWER` was added in 0.46.0. It answers one question: does a token passed with a gate answer change anything but the `claim_proof` on the answer's entry? For each way a token can relate to the claim (`matched`, `absent`, `mismatch`, and each cause of `unverifiable` and `spent`), the record after the answer must equal the record after the same answer with no token, except for that field. It also checks that the verdict survives a guard settled in the same write, that `gateClaim.claim` carries `holder` and `since` and never the token, and that a store declaring `persistsClaims: false` gets `store_keeps_no_claims`. A store's `settleStep` must return the `gateClaim` that `applySettlement` computed, and must pass `storeKeepsClaims: store.persistsClaims === true` to it.
 

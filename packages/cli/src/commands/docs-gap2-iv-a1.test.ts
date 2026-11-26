@@ -31,7 +31,7 @@ describe('gap 2 (iv-a1), check 9 — the words', () => {
     // loader's cells (absent unless the reader runs only after the failure; `| default`).
     claim(
       'docs/reference/workflow/conditions.md',
-      "| `message` | text, or absent | The failure's own message, when the step failed, or when it took its default answer after its model request failed (`on_model_failure: default`): a provider's text for a model request, a handler's or an adapter's for an `auto` step, or Realm's own sentence when Realm failed the step (for example, when its answers were refused too often). It is the text as the record keeps it: for a handler, `Handler '<name>' threw: <its text>`; for a model request, the provider's status and text, such as `503 The server is overloaded`. A model request's message is the first 500 characters `realm agent` kept; a handler's or an adapter's text over 500 characters reads `‹N characters, not kept›`. Absent on every other step: read it with `\\| default` in a template. It is the failure's own text, so it can carry anything the failed request echoed back. |",
+      "| `message` | text, or absent | The failure's own message, when the step failed, or when it took its default answer after its model request failed (`on_model_failure: default`): a provider's text for a model request, a handler's or an adapter's for an `auto` step, or Realm's own sentence when Realm failed the step (for example, when its answers were refused too often). It is the text as the record keeps it: for a handler, `Handler '<name>' threw: <its text>`; for a model request, the provider's status and text, such as `503 The server is overloaded`. A model request's message is the first 500 characters `realm agent` kept; a handler's or an adapter's text over 500 characters reads `‹N characters, not kept›`. Absent on every other step: read it with `\\| default` in a template. It is the failure's own text, so it can carry anything the failed request echoed back. Under `realm mcp` or `realm serve` with `--failure-text hidden`, an assistant sees a copy of it in a prompt, an approval question, a gated step's instructions or a condition's value as its length only (see [What the assistant sees](../mcp/run-state-and-health.md#failure-text)). |",
     );
     // Executed by the loader's typo cells (a field outside the five is refused).
     claim('docs/reference/workflow/conditions.md', 'a `$settlement` field other than its five');
@@ -54,11 +54,12 @@ describe('gap 2 (iv-a1), check 9 — the words', () => {
 
   it('run-state-and-health.md and loader-diagnostics.md', () => {
     // Unit (iv-a2-i) replaced this unit's sentence (what it did not shape) with what `hidden` now
-    // shapes: executed by mcp-server's copies-hidden-iva2i.test.ts; the question's words by its
-    // checks 3 and 5.
+    // shapes: executed by mcp-server's copies-hidden-iva2i.test.ts. Unit (iv-a2-ii) made the question
+    // its length too: executed by mcp-server's question-hidden-iva2ii.test.ts (check 1) and the CLI's
+    // agent/question-hidden-agent-iva2ii.test.ts (people's words).
     claim(
       'docs/reference/mcp/run-state-and-health.md',
-      'An approval question that reads the message still shows its words to an assistant under `hidden`.',
+      "An approval question that reads the message shows it to an assistant as its length too (`gate.display`, `pending_gate.resolved_message`), and so to a person who reads the question in the assistant's chat. The question Realm stores keeps its words: a form the assistant's app shows, the Slack post, `realm agent` and `realm run inspect` show them.",
     );
     // Executed by validate's note cells (file mode, --json `notes`, --strict passes).
     claim(

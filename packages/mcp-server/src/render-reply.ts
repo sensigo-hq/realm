@@ -69,6 +69,7 @@ import {
   failureTextMarkOf,
   failureTextShape,
   holdsShapedFailureMessage,
+  holdsShapedQuestion,
   noteHidingFailureWords,
   withPreconditionHidingFailureText,
   shapeOf,
@@ -1561,6 +1562,7 @@ function withSwappedPreconditions(reply: EngineReply): EngineReply {
 /**
  * Gap 2, unit (iv-a2-i): `envelope` with the paths of the copies of a failure's message it shows as
  * their shape added for the receipt: the gated step's instructions core shaped (`gate.agent_hint`),
+ * the question core showed as its twin (`gate.display`, unit (iv-a2-ii)),
  * and the fields composed from a swapped precondition (`blocked_reason.suggestion`, `context_hint`)
  * while they hold its shaped value. A `run_step` entry's prompt is listed by `toolContentOf`.
  */
@@ -1573,6 +1575,10 @@ function withCopiesShaped(
   const paths = [
     ...(holdsShapedFailureMessage(reply.gate) && envelope.gate?.agent_hint !== undefined
       ? ['gate.agent_hint']
+      : []),
+    // Unit (iv-a2-ii): the question core showed as its twin, or as its whole shape.
+    ...(holdsShapedQuestion(reply.gate) && envelope.gate?.display !== undefined
+      ? ['gate.display']
       : []),
     ...(holds(envelope.blocked_reason?.suggestion) ? ['blocked_reason.suggestion'] : []),
     ...(holds(envelope.context_hint) ? ['context_hint'] : []),

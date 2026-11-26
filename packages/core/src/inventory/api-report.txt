@@ -2284,7 +2284,7 @@ LiteralNode · type · public
   };
 
 LoadBearingRunRecordField · type · public
-  type LoadBearingRunRecordField = 'capability_blocks' | 'workflow_context_snapshots' | 'extension_identity' | 'validation_rejections' | 'defaulted_steps' | 'settled' | 'finalizer_ledger' | 'sealed_by';
+  type LoadBearingRunRecordField = 'capability_blocks' | 'workflow_context_snapshots' | 'extension_identity' | 'validation_rejections' | 'defaulted_steps' | 'settled' | 'finalizer_ledger' | 'sealed_by' | 'pending_gate';
 
 LoadErrorCode · type · public
   type LoadErrorCode = ErrorCode | 'uncoded';
@@ -2711,6 +2711,7 @@ PendingGate · type · public
       owner?: string;
       answerers?: string[];
       resolved_message?: string;
+      resolved_message_shaped?: string;
       resolution_messages?: Record<string, string>;
       expires_at?: string;
       on_expiry?: 'settle_default' | 'abort';
@@ -4976,6 +4977,7 @@ heldStateOf · value · internal
 heldWordsStateOf · value · internal
 hidesFailureWords · value · internal
 holdsShapedFailureMessage · value · internal
+holdsShapedQuestion · value · internal
 identityRefusalLine · value · internal
 inboundMarkerWarning · value · internal
 instantText · value · internal
@@ -5141,6 +5143,7 @@ probeClassOf · value · internal
 probeClassToError · value · internal
 prohibitedKeysFor · value · internal
 propagateSkips · value · internal
+questionHidingFailureText · value · internal
 quoteStatedName · value · internal
 quotedCommand · value · internal
 quotedNames · value · internal
