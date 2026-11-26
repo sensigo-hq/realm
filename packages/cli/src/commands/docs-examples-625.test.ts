@@ -22,6 +22,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createTestHome } from '@sensigo/realm-testing';
 import { spawn, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
   chmodSync,
   existsSync,
@@ -29,6 +30,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -51,6 +53,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { resolveMcpServerEntry } from '../agent/test-support/mcp-server-entry.js';
 import { makeTempHome, type TempHome, runsOf } from '../test-support/temp-home.js';
 import { openRealmHome } from '@sensigo/realm-store-sqlite';
+import { joinSweeps, sweepFolder } from '@sensigo/realm-mcp/code-hashes';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 /** The exit of a `realm workflow run` whose run ends failed (measured; the page shows no code). */
@@ -99,6 +102,8 @@ const CELLS = {
   coreAdapter: 'core README: the adapter fragment serves a step through executeStep',
   embedded:
     'mcp-server README: the embedded server program serves 10 tools over stdio under the default',
+  stated:
+    "mcp-server README: projectSourceOf's program registers check_order with its module's source (#828 unit 2b)",
   provider: 'cli README: the custom provider module drives realm agent',
   db: 'realm-db: realm db backup makes its copy, then realm db migrate on that home (at this Realm’s version: no step, so no copy and no backups folder, #616 R1); then realm db check finds nothing; then realm db restore puts the copy back (#616 R1b)',
 } as const;
@@ -180,6 +185,7 @@ const TABLE: ReadonlyArray<readonly [Page, string, string, string, Cell]> = [
   ['packages/mcp-server/README.md', '# Standalone binary (for AI agent MCP config)', '-', 'EXCLUDED: the npm registry; the package is checked', 'installs'],
   ['packages/mcp-server/README.md', '{', 'json', 'client config: command started, listTools', 'clients'],
   ['packages/mcp-server/README.md', "import { createRealmMcpServerOnHome } from '@sensigo/realm-m", 'ts', 'program: run as a stdio server, listTools', 'embedded'],
+  ['packages/mcp-server/README.md', "import { createDefaultRegistry } from '@sensigo/realm';", 'ts', 'program: handlers.js beside it; the entry printed', 'stated'],
 ];
 
 interface Fence {
@@ -1284,6 +1290,50 @@ describe(
       // (a) red when the `realm-mcp` command the configurations start is not the server the package
       //     builds; (b) prints both paths.
       expect(binOf('mcp-server', 'realm-mcp')).toBe(resolveMcpServerEntry());
+    });
+
+    it(CELLS.stated, () => {
+      // #828 unit 2b: the block, as written, in a folder of its own beside the one file it names
+      // and never defines, handlers.js exporting checkOrder; then the entry it registered, printed.
+      const dir = join(nodeProject(), 'src');
+      mkdirSync(dir);
+      const handlers = join(dir, 'handlers.js');
+      writeFileSync(
+        handlers,
+        "export const checkOrder = { id: 'check_order', execute: async () => ({ data: {} }) };\n",
+      );
+      writeFileSync(
+        join(dir, 'main.ts'),
+        [
+          fence('packages/mcp-server/README.md', 'projectSourceOf(url)'),
+          "const entry = registry.entry('handler', 'check_order');",
+          'console.log(JSON.stringify({ source: entry?.source, replacesBuiltIn: entry?.replacesBuiltIn, same: entry?.impl === checkOrder }));',
+          '',
+        ].join('\n'),
+      );
+      const r = spawnSync(process.execPath, [join('src', 'main.ts')], {
+        cwd: project,
+        env: env({ HOME: programHome() }),
+        encoding: 'utf8',
+      });
+      // (a) red when the block does not run as written (projectSourceOf not on realm-mcp's main
+      //     entry, register refusing the source it returns), or the entry's source is not the
+      //     module's: its real path, via host_stated, its file's sha256 and its folder's tree; (b)
+      //     prints stderr.
+      expect([r.status, r.stdout], r.stderr).toEqual([
+        0,
+        `${JSON.stringify({
+          source: {
+            source: 'project',
+            declared: realpathSync(handlers),
+            via: 'host_stated',
+            entry_hash: createHash('sha256').update(readFileSync(handlers)).digest('hex'),
+            folder_tree_hash: joinSweeps([sweepFolder(realpathSync(dir))]).tree_hash,
+          },
+          replacesBuiltIn: false,
+          same: true,
+        })}\n`,
+      ]);
     });
 
     it(CELLS.provider, async () => {

@@ -879,6 +879,20 @@ Clock · type · public
   }
 
 ClockReadClass · type · internal
+CodeSource · type · beta
+  type CodeSource = {
+      readonly source: 'built_in';
+  } | {
+      readonly source: 'catalog';
+      readonly use: string;
+  } | ProjectSource | {
+      readonly source: 'host_registered';
+      readonly code_text_sha256: string;
+  } | {
+      readonly source: 'host_registered';
+      readonly absent: 'code_text_unavailable';
+  };
+
 CodeTag · type · internal
 ComposedWays · type · internal
 Cond · type · public
@@ -1339,7 +1353,7 @@ ErrorFactsByCode · type · public
   }
 
 ErrorFactsOf · type · internal
-EvidenceSnapshot · type · public
+EvidenceSnapshot · type · public (beta: code_source)
   interface EvidenceSnapshot {
       step_id: string;
       started_at: string;
@@ -1359,6 +1373,7 @@ EvidenceSnapshot · type · public
       client_prompt_requested?: true;
       principal?: Principal;
       output_source?: OutputSource;
+      code_source?: StepCodeSource;
       supplied_by?: SupplierRole;
       claim_proof?: GateClaimVerdict;
       admitted_by?: AdmittedBy;
@@ -1531,11 +1546,17 @@ ExtensionIdentityTree · type · public
 
 ExtensionManifest · type · internal
 ExtensionModuleRef · type · internal
-ExtensionRegistry · both · public
+ExtensionRegistry · both · public (beta: entry, entry.name, entry.type, register.source, register.source, register.source)
   class ExtensionRegistry {
-      register(type: 'adapter', name: string, impl: ServiceAdapter): void;
-      register(type: 'processor', name: string, impl: Processor): void;
-      register(type: 'handler', name: string, impl: StepHandler): void;
+      register(type: 'adapter', name: string, impl: ServiceAdapter, source?: CodeSource | null): void;
+      register(type: 'processor', name: string, impl: Processor, source?: CodeSource | null): void;
+      register(type: 'handler', name: string, impl: StepHandler, source?: CodeSource | null): void;
+      entry(type: 'adapter' | 'processor' | 'handler', name: string): {
+          readonly impl: ServiceAdapter | Processor | StepHandler;
+          readonly source: CodeSource;
+          readonly replacesBuiltIn: boolean;
+      } | undefined;
+      copyEntry(from: ExtensionRegistry, type: 'adapter' | 'processor' | 'handler', name: string): void;
       setIdentity(entry: ExtensionIdentityEntry): void;
       get identity(): ExtensionIdentityEntry | undefined;
       has(type: 'adapter' | 'processor' | 'handler', name: string): boolean;
@@ -2264,7 +2285,7 @@ LiteralNode · type · public
   };
 
 LoadBearingRunRecordField · type · public
-  type LoadBearingRunRecordField = 'capability_blocks' | 'workflow_context_snapshots' | 'extension_identity' | 'validation_rejections' | 'defaulted_steps' | 'settled' | 'finalizer_ledger' | 'sealed_by';
+  type LoadBearingRunRecordField = 'capability_blocks' | 'workflow_context_snapshots' | 'extension_identity' | 'validation_rejections' | 'defaulted_steps' | 'settled' | 'finalizer_ledger' | 'sealed_by' | 'pending_gate';
 
 LoadErrorCode · type · public
   type LoadErrorCode = ErrorCode | 'uncoded';
@@ -2272,7 +2293,7 @@ LoadErrorCode · type · public
 LoaderNote · type · public
   interface LoaderNote {
       step: string;
-      placement: 'prompt' | 'instructions';
+      placement: 'prompt' | 'instructions' | 'input_map';
       reads: string;
       message: string;
   }
@@ -2691,6 +2712,7 @@ PendingGate · type · public
       owner?: string;
       answerers?: string[];
       resolved_message?: string;
+      resolved_message_shaped?: string;
       resolution_messages?: Record<string, string>;
       expires_at?: string;
       on_expiry?: 'settle_default' | 'abort';
@@ -2850,6 +2872,20 @@ ProcessorOutput · type · public
 ProgramFit · type · internal
 ProgramIdentityFacts · type · internal
 ProgressVerb · type · internal
+ProjectSource · type · beta
+  type ProjectSource = {
+      readonly source: 'project';
+      readonly declared: string;
+      readonly via: 'manifest' | 'extensions_file' | 'override_flag' | 'host_stated';
+      readonly entry_hash: string;
+      readonly folder_tree_hash: string;
+  } | {
+      readonly source: 'project';
+      readonly declared: string;
+      readonly via: 'manifest' | 'extensions_file' | 'override_flag' | 'host_stated';
+      readonly absent: 'hashes_unavailable';
+  };
+
 PromptCacheSetting · type · internal
 ProtocolConfig · type · public
   interface ProtocolConfig {
@@ -3727,6 +3763,26 @@ StepCacheDetail · type · public
 
 StepCaller · type · public
   type StepCaller = (typeof ENTRY_CALLERS.executeStep)[number];
+
+StepCodeSource · type · beta
+  type StepCodeSource = {
+      readonly kind: 'handler' | 'adapter';
+      readonly name: string;
+      readonly service?: string;
+      readonly from: CodeSource;
+      readonly realm_version?: string;
+      readonly replaces_built_in?: true;
+  } | {
+      readonly absent: 'not_registered';
+      readonly kind: 'handler' | 'adapter';
+      readonly name: string;
+      readonly service?: string;
+  } | {
+      readonly absent: 'not_looked_up';
+      readonly kind: 'handler' | 'adapter';
+      readonly name?: string;
+      readonly service?: string;
+  };
 
 StepContext · type · public
   interface StepContext {
@@ -4730,6 +4786,7 @@ clockErrorSink · value · public
   function clockErrorSink(): ((err: unknown) => void) | undefined;
 
 closeModelAttempts · value · internal
+codeRequirementForStep · value · internal
 codeTextOf · value · internal
 collectManifestSecretRefs · value · internal
 compareCanonical · value · internal
@@ -4942,6 +4999,7 @@ heldStateOf · value · internal
 heldWordsStateOf · value · internal
 hidesFailureWords · value · internal
 holdsShapedFailureMessage · value · internal
+holdsShapedQuestion · value · internal
 identityRefusalLine · value · internal
 inboundMarkerWarning · value · internal
 instantText · value · internal
@@ -5107,6 +5165,7 @@ probeClassOf · value · internal
 probeClassToError · value · internal
 prohibitedKeysFor · value · internal
 propagateSkips · value · internal
+questionHidingFailureText · value · internal
 quoteStatedName · value · internal
 quotedCommand · value · internal
 quotedNames · value · internal
@@ -5168,6 +5227,7 @@ renderUnreadableStoredFile · value · public
   function renderUnreadableStoredFile(facts: UnreadableFileFacts): string;
 
 repairActFor · value · internal
+replacesBuiltIn · value · internal
 requirementForStep · value · internal
 resolveAgentProfiles · value · internal
 resolveCapMs · value · internal

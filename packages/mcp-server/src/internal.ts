@@ -33,6 +33,8 @@ export { JsonTraceBufferStore } from './json-trace-buffer-store.js';
 export { VERSION } from './version.js';
 // issue #600 caching PR P: the one loader of a host's prices (the economics file and the price list).
 export { loadPriceSource, readCacheEconomics } from './price-source.js';
+// #828 unit 2b: a host's own module's source, for `ExtensionRegistry.register`.
+export { projectSourceOf } from './project-source.js';
 // #627 W: the gate-answers value a server runs with (for an embedder's log), the bins' readings of
 // the two settings with their refusal texts, the form's named constants, and the door's route words.
 export {

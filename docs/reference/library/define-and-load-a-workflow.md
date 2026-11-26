@@ -23,7 +23,7 @@ Where the docs teach it: [Workflow file: top-level fields](../workflow/top-level
 | [`DedupConfig`](#dedupconfig) | interface | How a webhook trigger drops a repeated event: the dot-path to the event's id, how long an id is remembered, and what to do when the id cannot be read (`WebhookTrigger.dedup`). |
 | [`GateConfig`](#gateconfig) | interface | A gate's settings: its choices, who may answer, its messages, its timeout and what happens when it expires, and its reminders. |
 | [`JsonSchema`](#jsonschema) | interface | The JSON Schema object a workflow gives for a step's input and for a run's params (`StepDefinition.input_schema`, `WorkflowDefinition.params_schema`). |
-| [`LoaderNote`](#loadernote) | interface | Gap 2, unit (iv-a1): a placeholder that puts a step's failure message (`$settlement.<step>.message`, or a path that holds it) into a `prompt` or a gated step's `instructions`. |
+| [`LoaderNote`](#loadernote) | interface | A placeholder or an `input_map` leaf that puts a step's failure message (`$settlement.<step>.message`, or a path that holds it) into a `prompt`, a gated step's `instructions` or a step's `input_map`. |
 | [`McpServerConfig`](#mcpserverconfig) | interface | An MCP server a workflow's tool-enabled steps may call: its id and the command that starts it (`WorkflowDefinition.mcp_servers`). |
 | [`NotCheckedPath`](#notcheckedpath) | interface | An `input_map` path or a `when` condition that reads data the workflow declares no shape for (`validate --json`'s `not_checked`). |
 | [`ProtocolConfig`](#protocolconfig) | interface | A workflow's own words for the agent protocol: a quick-start paragraph that replaces the generated one, and rules added as they are written (`WorkflowDefinition.protocol`). |
@@ -77,8 +77,9 @@ alongside the definition.
 Opt-in for callers that want to surface warnings
 themselves (validate/register/watch/`--strict`) instead of the default console.warn behavior.
 `notChecked` (fix 1, unit 1) lists the `input_map` paths into data the workflow declares no
-shape for, which `validate` reports; `notes` (gap 2, unit (iv-a1)) the placeholders that put a
-step's failure message into a prompt or a gated step's instructions, which `validate` prints.
+shape for, which `validate` reports; `notes` (gap 2, unit (iv-a1)) the placeholders and
+`input_map` leaves that put a step's failure message into a prompt, a gated step's instructions
+or an `input_map`, which `validate` prints.
 
 ```ts
 function loadWorkflowFromFileWithDiagnostics(filePath: string, registry?: ExtensionRegistry, declared?: DeclaredNames): {
@@ -274,15 +275,15 @@ interface JsonSchema {
 
 interface · public
 
-Gap 2, unit (iv-a1): a placeholder that puts a step's failure message (`$settlement.<step>.message`,
-or a path that holds it) into a `prompt` or a gated step's `instructions`. Information for the
-author, never a warning: it moves no exit code and never counts toward `--strict`
-(`validate --json`'s `notes`).
+A placeholder or an `input_map` leaf that puts a step's failure message
+(`$settlement.<step>.message`, or a path that holds it) into a `prompt`, a gated step's
+`instructions` or a step's `input_map`. Information for the author, never a warning: it moves no
+exit code and never counts toward `--strict` (`validate --json`'s `notes`).
 
 ```ts
 interface LoaderNote {
     step: string;
-    placement: 'prompt' | 'instructions';
+    placement: 'prompt' | 'instructions' | 'input_map';
     reads: string;
     message: string;
 }
@@ -726,6 +727,7 @@ Names this job reaches whose entry is on another page.
 - [`AgentAction`](write-a-handler.md#agentaction): What an agent does next, decided by the engine (`WorkflowError.agentAction`).
 - [`AnswererMismatchFacts`](write-a-handler.md#answerermismatchfacts): The facts of an answer refused because its sender may not answer the question: the names that may, and the account the channel reported.
 - [`Base`](write-a-handler.md#base): What every way carries: its verb and the conditions it is offered with; each way type adds its own fields to it.
+- [`CodeSource`](run-and-drive-a-run.md#codesource): Where a registry entry's code came from: Realm's built-in, the built-in adapter catalog, a project's module, or the hosting program.
 - [`Cond`](run-and-drive-a-run.md#cond): A condition a way is offered with: a way offered with a condition is admitted only when the condition is met (`Base.conditions`).
 - [`COND_TAGS`](write-a-handler.md#cond_tags): Who discharges a condition outside Realm: `client`, the MCP client's own approval prompt.
 - [`CondTag`](write-a-handler.md#condtag): Who discharges a condition outside Realm; `client` is the MCP client's own approval prompt (`Cond`'s `client_prompt` member).
@@ -756,6 +758,7 @@ Names this job reaches whose entry is on another page.
 - [`Processor`](write-a-handler.md#processor): A program's step that changes content, registered under its `id` and run in order by `runPipeline`.
 - [`ProcessorInput`](write-a-handler.md#processorinput): The text and metadata a processor is given (`Processor.process`).
 - [`ProcessorOutput`](write-a-handler.md#processoroutput): The text and metadata a processor returns; the next processor in the pipeline is given it.
+- [`ProjectSource`](run-and-drive-a-run.md#projectsource): Where a project's module came from: how it was declared, and the hashes of its file and its folder, or a typed absence when they could not be read.
 - [`RateLimitConfig`](write-a-handler.md#ratelimitconfig): How fast Realm calls a service: requests per second, the burst it allows, and how long it waits after a 429 (`ServiceDefinition.rate_limit`).
 - [`RateLimiter`](write-a-handler.md#ratelimiter): Controls the rate at which requests are sent to an external service.
 - [`ReclaimWay`](run-and-drive-a-run.md#reclaimway): Free a held step so it can run again: a person's act, never an agent's.

@@ -72,6 +72,7 @@ Where the docs teach it: [Run record and export bundle format](../run-record-and
 | [`SealArm`](#sealarm) | type | Which code path sealed a run, named as a fact about the code, never a verdict on the run (`SealedBy.arm`). |
 | [`SealDoor`](#sealdoor) | type | The command or tool that ended a run on request: `realm_run_abandon`, `abandon_run` or `realm_run_cleanup` (`SealedBy.door`). |
 | [`SkipDetail`](#skipdetail) | type | Why a step was skipped, keyed by step name (`RunRecord.skip_details`). |
+| [`StepCodeSource`](#stepcodesource) | type | Which code Realm chose for one attempt of a step that runs a handler or an adapter, as its evidence entry records it (`EvidenceSnapshot.code_source`). |
 | [`SupplierAbsentCause`](#supplierabsentcause) | type | One of the words in `SUPPLIER_ABSENT_CAUSES`: why an evidence entry names no supplier (`readSupplier`'s `absent`). |
 | [`SupplierRole`](#supplierrole) | type | One of the words in `SUPPLIER_ROLES`: who supplied a step's input or output, as an evidence entry records it (`EvidenceSnapshot.supplied_by`). |
 | [`ADMITTED_BY_WORDS`](#admitted_by_words) | const | Every word an answer's `admitted_by` can hold, in the type's order. |
@@ -405,7 +406,7 @@ interface DriveFailuresField {
 
 ### EvidenceSnapshot
 
-interface · public
+interface · public (beta: code_source): those members may change in a minor release until they settle
 
 One evidence entry of a run's record (`RunRecord.evidence`): what one step run or one answered
 question recorded, with its times, its input and output, its status and its hash.
@@ -430,6 +431,7 @@ interface EvidenceSnapshot {
     client_prompt_requested?: true;
     principal?: Principal;
     output_source?: OutputSource;
+    code_source?: StepCodeSource;
     supplied_by?: SupplierRole;
     claim_proof?: GateClaimVerdict;
     admitted_by?: AdmittedBy;
@@ -514,6 +516,7 @@ interface PendingGate {
     owner?: string;
     answerers?: string[];
     resolved_message?: string;
+    resolved_message_shaped?: string;
     resolution_messages?: Record<string, string>;
     expires_at?: string;
     on_expiry?: 'settle_default' | 'abort';
@@ -1344,6 +1347,42 @@ type SkipDetail = {
 };
 ```
 
+### StepCodeSource
+
+type · beta: may change in a minor release until it settles
+
+Which code Realm chose for one attempt of a step that runs a handler or an adapter, as its evidence
+entry records it (`EvidenceSnapshot.code_source`).
+
+`@remarks` The first form is the code chosen at the attempt's lookup: its `kind` and `name`, the adapter
+step's `service`, where the code came from (`from`), Realm's `realm_version` when the code was
+Realm's own (`built_in`, or `catalog`) and replaced no built-in, and `replaces_built_in: true`
+when code other than that built-in was chosen under a built-in's name (never `false`). The other
+two say why no code was chosen: `not_registered` (the lookup found nothing under that name) and
+`not_looked_up` (the attempt failed before any code was chosen: an adapter step whose service is
+not declared, or whose service names no adapter). `name` is left out when it is not known.
+
+```ts
+type StepCodeSource = {
+    readonly kind: 'handler' | 'adapter';
+    readonly name: string;
+    readonly service?: string;
+    readonly from: CodeSource;
+    readonly realm_version?: string;
+    readonly replaces_built_in?: true;
+} | {
+    readonly absent: 'not_registered';
+    readonly kind: 'handler' | 'adapter';
+    readonly name: string;
+    readonly service?: string;
+} | {
+    readonly absent: 'not_looked_up';
+    readonly kind: 'handler' | 'adapter';
+    readonly name?: string;
+    readonly service?: string;
+};
+```
+
 ### SupplierAbsentCause
 
 type · public
@@ -1935,6 +1974,7 @@ Names this job reaches whose entry is on another page.
 - [`AuthSharedSecret`](define-and-load-a-workflow.md#authsharedsecret): Header-token auth — the request carries a user-configured header equal to a shared secret.
 - [`AuthStripe`](define-and-load-a-workflow.md#authstripe): Stripe timestamped HMAC body signature (header 'Stripe-Signature').
 - [`ClaimDeadlineAbsent`](implement-a-store.md#claimdeadlineabsent): Why a claim has no time limit, written on the claim when it is taken (`ClaimRecord.deadline_absent`).
+- [`CodeSource`](run-and-drive-a-run.md#codesource): Where a registry entry's code came from: Realm's built-in, the built-in adapter catalog, a project's module, or the hosting program.
 - [`ContextWrapperFormat`](define-and-load-a-workflow.md#contextwrapperformat): The wrapper format Realm puts around a `{{ workflow.context.<name> }}` reference in a template (`WorkflowDefinition.context_wrapper`).
 - [`DedupConfig`](define-and-load-a-workflow.md#dedupconfig): How a webhook trigger drops a repeated event: the dot-path to the event's id, how long an id is remembered, and what to do when the id cannot be read (`WebhookTrigger.dedup`).
 - [`deriveRunPhase`](run-and-drive-a-run.md#deriverunphase): Derives the `run_phase` from the run record's fields.
@@ -1953,6 +1993,7 @@ Names this job reaches whose entry is on another page.
 - [`JsonSchema`](define-and-load-a-workflow.md#jsonschema): The JSON Schema object a workflow gives for a step's input and for a run's params (`StepDefinition.input_schema`, `WorkflowDefinition.params_schema`).
 - [`LiteralNode`](define-and-load-a-workflow.md#literalnode): A node in an input_map tree.
 - [`McpServerConfig`](define-and-load-a-workflow.md#mcpserverconfig): An MCP server a workflow's tool-enabled steps may call: its id and the command that starts it (`WorkflowDefinition.mcp_servers`).
+- [`ProjectSource`](run-and-drive-a-run.md#projectsource): Where a project's module came from: how it was declared, and the hashes of its file and its folder, or a typed absence when they could not be read.
 - [`ProtocolConfig`](define-and-load-a-workflow.md#protocolconfig): A workflow's own words for the agent protocol: a quick-start paragraph that replaces the generated one, and rules added as they are written (`WorkflowDefinition.protocol`).
 - [`RateLimitConfig`](write-a-handler.md#ratelimitconfig): How fast Realm calls a service: requests per second, the burst it allows, and how long it waits after a 429 (`ServiceDefinition.rate_limit`).
 - [`RetryConfig`](define-and-load-a-workflow.md#retryconfig): How a step is tried again after a failure: the most attempts, the backoff and its delays (`StepDefinition.retry`).

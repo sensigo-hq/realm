@@ -3,8 +3,16 @@
 // Which text is a failure's words is judged by the run's seal arm (the recorded one, or the legacy
 // classifier's for a run sealed before arms were recorded), never by reading the reason. Read only:
 // the record is never changed; a caller shows what these return in place of the record's text.
-import { SEAL_ARMS, type RunRecord, type SealArm } from '../types/run-record.js';
-import { classifyLegacySeal } from './eligibility.js';
+import {
+  SEAL_ARMS,
+  type ListedRecord,
+  type PendingGate,
+  type RunRecord,
+  type SealArm,
+} from '../types/run-record.js';
+import { buildSettlementNamespace, classifyLegacySeal } from './eligibility.js';
+import { persistsField } from '../store/store-fidelity.js';
+import type { RunStore } from '../store/store-interface.js';
 import {
   failureMessagesFromEvidence,
   handlerAbortReason,
@@ -299,4 +307,41 @@ export function withPreconditionHidingFailureText<
     refusal: shaped.refusal,
     precondition: { ...entry.precondition!, value: shaped.value },
   };
+}
+
+/** Gap 2, unit (iv-a2-ii): the replies' gates whose question core served as its twin (or its whole
+ *  shape) to a door's `hidden` set, so the door lists `gate.display` (the mark above on a gate means
+ *  `gate.agent_hint`). */
+const SHAPED_QUESTIONS = new WeakSet<object>();
+
+/** Marks `gate` as carrying a question shown with each failure message as its shape. */
+export function noteShapedQuestion<T extends object>(gate: T): T {
+  SHAPED_QUESTIONS.add(gate);
+  return gate;
+}
+
+/** Whether core marked `gate` with {@link noteShapedQuestion}. */
+export function holdsShapedQuestion(gate: unknown): boolean {
+  return typeof gate === 'object' && gate !== null && SHAPED_QUESTIONS.has(gate);
+}
+
+/**
+ * Gap 2, unit (iv-a2-ii): the question an assistant reads of a stored `gate` under a door's `hidden`
+ * set. Its twin when it has one, on any store. When it has none, on a store that does not declare
+ * `'pending_gate'` (the twin may have been dropped), and `run` holds a failure message (a step's
+ * `$settlement` message that is text and not the not-kept marker, the test the twin's render counts):
+ * the whole question as its shape, N the stored question's length. Else `undefined`: the stored
+ * question as it is (on a declaring store, a gate with no twin read no message).
+ */
+export function questionHidingFailureText(
+  gate: Pick<PendingGate, 'resolved_message' | 'resolved_message_shaped'>,
+  run: ListedRecord,
+  store: Pick<RunStore, 'persistedRunRecordFields'>,
+): string | undefined {
+  if (gate.resolved_message_shaped !== undefined) return gate.resolved_message_shaped;
+  if (gate.resolved_message === undefined || persistsField(store, 'pending_gate')) return undefined;
+  const holds = Object.values(buildSettlementNamespace(run)).some(
+    (entry) => typeof entry.message === 'string' && !WHOLE_NAMED_MARKER.test(entry.message),
+  );
+  return holds ? failureTextShape(gate.resolved_message) : undefined;
 }

@@ -9,7 +9,9 @@
 //
 // Issue #923 (PR0-CONTRACT Amendment 26): the names come from `built-in-requirements.ts`, the one
 // table of the built-ins, so the table and this registry cannot name different things.
-import { ExtensionRegistry } from './registry.js';
+// #828 unit 2b: each is recorded as `built_in`, through the core-only path the public `register`
+// does not offer.
+import { ExtensionRegistry, registerBuiltIn } from './registry.js';
 import { FileSystemAdapter } from '../adapters/file-adapter.js';
 import { CheckQuotesHandler } from '../handlers/check-quotes.js';
 import {
@@ -32,7 +34,7 @@ export function createDefaultRegistry(): ExtensionRegistry {
   const r = new ExtensionRegistry();
   const fs = BUILT_IN_FILESYSTEM_ADAPTER;
   const quotes = BUILT_IN_CHECK_QUOTES_HANDLER;
-  r.register(fs.kind, fs.name, new FileSystemAdapter(fs.name));
-  r.register(quotes.kind, quotes.name, new CheckQuotesHandler());
+  registerBuiltIn(r, fs.kind, fs.name, new FileSystemAdapter(fs.name));
+  registerBuiltIn(r, quotes.kind, quotes.name, new CheckQuotesHandler());
   return r;
 }

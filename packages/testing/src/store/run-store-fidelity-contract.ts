@@ -1103,6 +1103,16 @@ const SAMPLE_VALUES: {
   // (nothing writes these until PR-B), but real/valid ones per their own RunRecord doc.
   settled: { 'tck-step': { token: 'tck-fidelity-token', outcome: 'complete' } },
   finalizer_ledger: { 'tck-finalizer': { status: 'pending', rank: 0 } },
+  // Gap 2, unit (iv-a2-ii): a stored gate whose question read a failure message, its twin beside it.
+  pending_gate: {
+    gate_id: 'tck-gate',
+    step_name: 'tck-step',
+    preview: { ok: true },
+    choices: ['approve', 'reject'],
+    opened_at: '2026-01-01T00:00:00.000Z',
+    resolved_message: 'Why: upstream said no',
+    resolved_message_shaped: 'Why: ‹string, 16 characters›',
+  },
 };
 
 /**

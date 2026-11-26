@@ -406,7 +406,7 @@ export function makeServeCommand(options: { keys?: boolean } = {}): Command {
     )
     .option(
       '--failure-text <value>',
-      "Whether the assistant sees a failure's words in get_run_state and in the replies to its own calls: shown (the default) or hidden. The most restrictive of this flag and REALM_MCP_FAILURE_TEXT wins.",
+      "Whether the assistant sees a failure's words in get_run_state and in the replies to its own calls: shown (the default) or hidden (a copy a step writes into its own output still shows). The most restrictive of this flag and REALM_MCP_FAILURE_TEXT wins.",
     )
     .option(
       '--check',

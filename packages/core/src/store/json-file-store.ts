@@ -216,6 +216,8 @@ export class JsonFileStore implements PerRunArtifactStore {
     'settled',
     'finalizer_ledger',
     'sealed_by',
+    // Gap 2, unit (iv-a2-ii): the whole record is written, so the stored gate keeps every key.
+    'pending_gate',
   ]);
 
   /**

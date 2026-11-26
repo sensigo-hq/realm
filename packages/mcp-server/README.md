@@ -60,6 +60,20 @@ This opens Realm's home (`~/.realm`, or the `home` you pass) and its SQLite stor
 | `effectiveGateAnswers(options?)`                 | The gate-answers value a server built with these options runs with (`asked`, `permitted` or `withheld`), where it came from, and every other value set — for an embedder's log. Added after version 0.47.0.                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | `routePhraseOf(route)`, `renderOutcome(outcome)` | The MCP door's words for an answer's route, and for how a question was settled. Added after version 0.47.0.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 
+## A module your program loads itself: `projectSourceOf(module)`
+
+`projectSourceOf(module)` returns where a module your program imports itself came from, for `ExtensionRegistry.register`'s fourth argument: `{ source: 'project', declared, via: 'host_stated', entry_hash, folder_tree_hash }`. `declared` is the module's real path, `entry_hash` the sha256 of its file, and `folder_tree_hash` the hash Realm takes of its folder. `module` is a path, a `URL` or a `file:` URL string; a relative path is from the working directory, not from the file that calls it. The hashes are of the files as they are at its first call for that path, and later calls return the same result, so call it right after importing the module. It throws (`RESOURCE_FETCH_FAILED`) on a missing file, a folder or a file it cannot read. Added after version 0.50.0.
+
+```ts
+import { createDefaultRegistry } from '@sensigo/realm';
+import { projectSourceOf } from '@sensigo/realm-mcp';
+
+const url = new URL('./handlers.js', import.meta.url);
+const { checkOrder } = await import(url.href);
+const registry = createDefaultRegistry();
+registry.register('handler', 'check_order', checkOrder, projectSourceOf(url));
+```
+
 ## MCP tools exposed
 
 - `list_workflows` — list registered workflows

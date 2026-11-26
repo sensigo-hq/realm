@@ -818,6 +818,8 @@ export type {
 export type { GateDueState } from './engine/gate-timing.js';
 export {
   requirementForStep,
+  // #828 unit 2c: what a step that runs code runs, the one predicate the step's record reads.
+  codeRequirementForStep,
   unmetCapabilities,
   findCapabilityBlockedSteps,
   capabilityWarning,
@@ -897,7 +899,14 @@ export type { Processor, ProcessorInput, ProcessorOutput } from './extensions/pr
 export { ExtensionRegistry } from './extensions/registry.js';
 export { codeTextOf } from './extensions/code-text.js';
 export { createDefaultRegistry } from './extensions/default-registry.js';
-export { BUILT_IN_REQUIREMENTS, isBuiltInRequirement } from './extensions/built-in-requirements.js';
+export {
+  BUILT_IN_REQUIREMENTS,
+  isBuiltInRequirement,
+  // #828 unit 2b: whether an entry replaces a built-in, the one rule (the CLI loader reads it in unit 4).
+  replacesBuiltIn,
+} from './extensions/built-in-requirements.js';
+// #828 unit 2b: where a registry entry's code came from; unit 2c: which code a step's attempt chose.
+export type { CodeSource, ProjectSource, StepCodeSource } from './types/code-source.js';
 export type { ExtensionManifest, ExtensionModuleRef } from './extensions/manifest.js';
 export {
   validateDeploymentManifest,
@@ -1395,6 +1404,10 @@ export {
   holdsShapedFailureMessage,
   conditionValueHidingFailureText,
   withPreconditionHidingFailureText,
+  // Gap 2, unit (iv-a2-ii): the mark on a reply's gate whose question core showed as its twin, and
+  // the question a stored gate is shown as under `hidden`.
+  holdsShapedQuestion,
+  questionHidingFailureText,
 } from './engine/failure-text.js';
 export type { FailureTextMark } from './engine/failure-text.js';
 

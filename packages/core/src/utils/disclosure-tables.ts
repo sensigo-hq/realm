@@ -6,6 +6,7 @@
 import type { Attributed } from '../engine/holder.js';
 import type { GateInfo } from '../types/response-envelope.js';
 import type { ExtensionIdentityEntry } from '../types/extension-identity.js';
+import type { CodeSource, ProjectSource, StepCodeSource } from '../types/code-source.js';
 import type {
   CapabilityBlock,
   ClaimRecord,
@@ -67,6 +68,8 @@ export const PENDING_GATE_TABLE = {
   owner: 'fact',
   answerers: 'fact',
   resolved_message: 'question',
+  // Gap 2, unit (iv-a2-ii): the question's twin, for an assistant under `hidden`.
+  resolved_message_shaped: 'question',
   resolution_messages: 'question',
   expires_at: 'fact',
   on_expiry: 'fact',
@@ -292,6 +295,93 @@ const MODEL_ATTEMPT_TABLE = {
   then: 'fact',
 } as const satisfies Row<ModelAttempt>;
 
+// #828 unit 2c: which code an attempt chose (`code_source`). Every key is a fact: closed words, names
+// realm resolved, hashes of files the record does not hold, and the path the identity also records.
+// One table per form, picked by the value, each with its own producer registry below.
+type ChosenCode = Extract<StepCodeSource, { from: CodeSource }>;
+type NotRegisteredCode = Extract<StepCodeSource, { absent: 'not_registered' }>;
+type NotLookedUpCode = Extract<StepCodeSource, { absent: 'not_looked_up' }>;
+type ProjectHashes = Extract<ProjectSource, { entry_hash: string }>;
+type ProjectUnavailable = Extract<ProjectSource, { absent: 'hashes_unavailable' }>;
+type HostFingerprint = Extract<CodeSource, { code_text_sha256: string }>;
+type HostUnavailable = Extract<CodeSource, { absent: 'code_text_unavailable' }>;
+
+/** One table per form of `CodeSource`. */
+const CODE_FROM_TABLES = {
+  built_in: { source: 'fact' } satisfies Row<Extract<CodeSource, { source: 'built_in' }>>,
+  catalog: { source: 'fact', use: 'fact' } satisfies Row<
+    Extract<CodeSource, { source: 'catalog' }>
+  >,
+  project: {
+    source: 'fact',
+    declared: 'fact',
+    via: 'fact',
+    entry_hash: 'fact',
+    folder_tree_hash: 'fact',
+  } satisfies Row<ProjectHashes>,
+  project_unavailable: {
+    source: 'fact',
+    declared: 'fact',
+    via: 'fact',
+    absent: 'fact',
+  } satisfies Row<ProjectUnavailable>,
+  host_registered: { source: 'fact', code_text_sha256: 'fact' } satisfies Row<HostFingerprint>,
+  host_registered_unavailable: { source: 'fact', absent: 'fact' } satisfies Row<HostUnavailable>,
+} as const;
+
+/** A `code_source.from`'s table, by its `source` and whether it holds a typed absence. */
+function codeFromTable(value: unknown): ClassTable {
+  if (value === null || typeof value !== 'object') return UNKNOWN_KIND_TABLE;
+  const absent = 'absent' in value;
+  switch ((value as { source?: unknown }).source) {
+    case 'built_in':
+      return CODE_FROM_TABLES.built_in;
+    case 'catalog':
+      return CODE_FROM_TABLES.catalog;
+    case 'project':
+      return absent ? CODE_FROM_TABLES.project_unavailable : CODE_FROM_TABLES.project;
+    case 'host_registered':
+      return absent
+        ? CODE_FROM_TABLES.host_registered_unavailable
+        : CODE_FROM_TABLES.host_registered;
+    default:
+      return UNKNOWN_KIND_TABLE;
+  }
+}
+
+/** One table per form of `code_source`: the code chosen, and the two absences. */
+const CODE_SOURCE_TABLES = {
+  chosen: {
+    kind: 'fact',
+    name: 'fact',
+    service: 'fact',
+    from: { nested: codeFromTable },
+    realm_version: 'fact',
+    replaces_built_in: 'fact',
+  } satisfies Row<ChosenCode>,
+  not_registered: {
+    absent: 'fact',
+    kind: 'fact',
+    name: 'fact',
+    service: 'fact',
+  } satisfies Row<NotRegisteredCode>,
+  not_looked_up: {
+    absent: 'fact',
+    kind: 'fact',
+    name: 'fact',
+    service: 'fact',
+  } satisfies Row<NotLookedUpCode>,
+} as const;
+
+/** A `code_source`'s table: the chosen code's without `absent`, else its absence's. */
+function codeSourceTable(value: unknown): ClassTable {
+  if (value === null || typeof value !== 'object') return UNKNOWN_KIND_TABLE;
+  if (!('absent' in value)) return CODE_SOURCE_TABLES.chosen;
+  const absent = (value as { absent?: unknown }).absent;
+  if (absent === 'not_registered') return CODE_SOURCE_TABLES.not_registered;
+  return absent === 'not_looked_up' ? CODE_SOURCE_TABLES.not_looked_up : UNKNOWN_KIND_TABLE;
+}
+
 /** One evidence snapshot: its inputs and outputs are values, its error a diagnostic copy, the gate
  *  message the question it asked. #729 PR-3 correction 4 (I-9): a digest of value content is a value
  *  (`evidence_hash` of the output, `trace_digest` of the trace) — a short value's digest would
@@ -312,6 +402,7 @@ export const EVIDENCE_TABLE = {
   responded_by: 'fact',
   driven_by: { nested: ATTRIBUTED_TABLE },
   output_source: 'fact',
+  code_source: { nested: codeSourceTable },
   supplied_by: 'fact',
   claim_proof: 'fact',
   admitted_by: 'fact',
@@ -732,6 +823,62 @@ export const EVIDENCE_FACTS = {
   answer: 'id',
   principal: 'id',
 } as const satisfies FactProducers<typeof EVIDENCE_TABLE, EvidenceSnapshot>;
+
+/** #828 unit 2c: per form, as `SKIP_DETAIL_FACTS`: over the union nothing would be forced. */
+export const CODE_SOURCE_FACTS = {
+  chosen: {
+    kind: 'enum',
+    name: 'id',
+    service: 'id',
+    realm_version: 'id',
+  } satisfies FactProducers<typeof CODE_SOURCE_TABLES.chosen, ChosenCode>,
+  not_registered: {
+    absent: 'enum',
+    kind: 'enum',
+    name: 'id',
+    service: 'id',
+  } satisfies FactProducers<typeof CODE_SOURCE_TABLES.not_registered, NotRegisteredCode>,
+  not_looked_up: {
+    absent: 'enum',
+    kind: 'enum',
+    name: 'id',
+    service: 'id',
+  } satisfies FactProducers<typeof CODE_SOURCE_TABLES.not_looked_up, NotLookedUpCode>,
+} as const;
+
+/** #828 unit 2c: per form of `code_source.from`. `declared` is the path the identity's
+ *  `modules[].declared` also holds, so it is produced the same way. */
+export const CODE_FROM_FACTS = {
+  built_in: { source: 'enum' } satisfies FactProducers<
+    typeof CODE_FROM_TABLES.built_in,
+    Extract<CodeSource, { source: 'built_in' }>
+  >,
+  catalog: { source: 'enum', use: 'id' } satisfies FactProducers<
+    typeof CODE_FROM_TABLES.catalog,
+    Extract<CodeSource, { source: 'catalog' }>
+  >,
+  project: {
+    source: 'enum',
+    declared: 'path_fact',
+    via: 'enum',
+    entry_hash: 'hash',
+    folder_tree_hash: 'hash',
+  } satisfies FactProducers<typeof CODE_FROM_TABLES.project, ProjectHashes>,
+  project_unavailable: {
+    source: 'enum',
+    declared: 'path_fact',
+    via: 'enum',
+    absent: 'enum',
+  } satisfies FactProducers<typeof CODE_FROM_TABLES.project_unavailable, ProjectUnavailable>,
+  host_registered: { source: 'enum', code_text_sha256: 'hash' } satisfies FactProducers<
+    typeof CODE_FROM_TABLES.host_registered,
+    HostFingerprint
+  >,
+  host_registered_unavailable: { source: 'enum', absent: 'enum' } satisfies FactProducers<
+    typeof CODE_FROM_TABLES.host_registered_unavailable,
+    HostUnavailable
+  >,
+} as const;
 
 export const WHEN_FALSE_LEAF_FACTS = {
   leaf: 'author_literal',

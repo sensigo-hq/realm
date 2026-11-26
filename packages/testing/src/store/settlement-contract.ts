@@ -1999,7 +1999,67 @@ function transformFidelityCases(adapter: SettlementContractAdapter): SettlementC
     }
   }
 
+  // Gap 2, unit (iv-a2-ii): opening a gate keeps every key of the gate it was given (the question's
+  // twin, and a key this Realm does not know) on a store that declares `'pending_gate'`; a store that
+  // does not is skipped by name (it gets `--failure-text hidden`'s fallback instead).
+  const gateKeys =
+    'opening a gate keeps every key of the gate it was given, its twin and a key Realm does not know included — returned and re-read';
+  const keepsGateKeys: SettlementContractCase =
+    adapter.store.persistedRunRecordFields?.has('pending_gate') === true
+      ? {
+          law: 'TRANSFORM_FIDELITY',
+          name: `[${adapter.storeName}] ${gateKeys}`,
+          run: async () => {
+            const def = minimalDefinition(['gated']);
+            const { run, token } = await createClaimed(adapter.store, def, 'gated');
+            const given = {
+              ...makePendingGate('gated'),
+              resolved_message: 'Why: upstream said no',
+              resolved_message_shaped: 'Why: ‹string, 16 characters›',
+              tck_unknown_key: { kept: true },
+            } as OpeningGate;
+            const opened = await settleStep(
+              run.id,
+              {
+                kind: 'open_gate',
+                step: 'gated',
+                claimToken: token,
+                pendingGate: given,
+                evidence: [],
+              },
+              def,
+            );
+            assertApplied(opened, 'open_gate');
+            const { record: reread } = await adapter.store.get(run.id);
+            const gates = [
+              ['returned', opened.run.pending_gate],
+              ['re-read', reread.pending_gate],
+            ] as const;
+            for (const [where, gate] of gates) {
+              for (const [key, value] of Object.entries(given)) {
+                const kept = JSON.stringify((gate as Record<string, unknown> | undefined)?.[key]);
+                if (kept !== JSON.stringify(value)) {
+                  throw new Error(
+                    `a store declaring 'pending_gate' must keep every key of the gate it opened ` +
+                      `(gap 2, unit (iv-a2-ii)): the ${where} gate's '${key}' is ${kept ?? 'absent'}, ` +
+                      `it was given ${JSON.stringify(value)}`,
+                  );
+                }
+              }
+            }
+          },
+        }
+      : {
+          law: 'TRANSFORM_FIDELITY',
+          name: `SKIPPED — store does not declare 'pending_gate' in persistedRunRecordFields: [${adapter.storeName}] ${gateKeys}`,
+          skipped: true,
+          run: async () => {
+            // Intentional no-op — see the case name for why.
+          },
+        };
+
   return [
+    keepsGateKeys,
     {
       law: 'TRANSFORM_FIDELITY',
       name: `[${adapter.storeName}] settleStep's persisted output matches applySettlement's own output exactly (modulo version; updated_at is the settle's own reading) — complete outcome`,

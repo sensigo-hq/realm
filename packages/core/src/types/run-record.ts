@@ -1,6 +1,7 @@
 // Types for an active or historical workflow run record stored on disk.
 import type { ToolCallRecord } from './mcp-types.js';
 import type { ExtensionIdentityEntry } from './extension-identity.js';
+import type { StepCodeSource } from './code-source.js';
 import type { TriggerRule } from './workflow-definition.js';
 import type { Attributed, GateClaimVerdict } from '../engine/holder.js';
 import type { ClaimDeadlineAbsent } from '../engine/claim-liveness.js';
@@ -1186,6 +1187,17 @@ export interface EvidenceSnapshot {
    */
   output_source?: OutputSource;
   /**
+   * Which code Realm chose for this attempt at its lookup: the handler's or adapter's kind and name,
+   * the adapter's service, where the code came from (`from`), Realm's version when the code was
+   * Realm's own and replaced no built-in, and `replaces_built_in` when code other than that built-in
+   * was chosen under a built-in's name. When the attempt failed after the choice, its error says why
+   * it failed; a `STEP_TIMEOUT` does not say whether the code had started. Entries of steps that run
+   * no code carry none; an attempt that found no code says why (`absent`: `not_registered`,
+   * `not_looked_up`).
+   * @beta
+   */
+  code_source?: StepCodeSource;
+  /**
    * issue #729 PR-0 (T-17 (ii); §5 E1): who supplied this entry's input or output — the PARTY of
    * the door the call came through, beside `driven_by` (the program). `agent`: an agent step's answer.
    * (i) Written only at its mint, on the entry of an agent step's own attempt; (ii) absent on every
@@ -1433,6 +1445,12 @@ export interface PendingGate {
    * Preserved into EvidenceSnapshot.gate_message at gate resolution for audit purposes.
    */
   resolved_message?: string;
+  /**
+   * The gate's question with each failure message it read as its length (`‹string, N characters›`),
+   * for an assistant under `--failure-text hidden`. Present only when the question read one. Added
+   * after version 0.50.0.
+   */
+  resolved_message_shaped?: string;
   /**
    * Per-choice messages for Slack thread resolution confirmation.
    * Copied verbatim from gate.resolution_messages on the step definition.

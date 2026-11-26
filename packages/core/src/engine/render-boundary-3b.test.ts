@@ -189,7 +189,7 @@ describe('caching 3-B A2 — one derivation, never at the gate mint', () => {
     });
   });
 
-  it('D4.4-2 (b): both gate-mint renders build their options inline, without the observer', () => {
+  it("D4.4-2 (b): the three gate-mint renders (the question's, its water-fill, and gap 2 (iv-a2-ii)'s twin) build their options inline, without the observer", () => {
     const source = readFileSync(new URL('./execution-loop.ts', import.meta.url), 'utf8');
     // Each `renderTemplate(` call with `strict: true` is a mint render; its options are the third
     // argument, an object literal written at the call.
@@ -208,13 +208,14 @@ describe('caching 3-B A2 — one derivation, never at the gate mint', () => {
       const call = source.slice(i, j + 1);
       if (call.includes('strict: true')) calls.push(call);
     }
-    // (a) red when a mint render attaches an observer, or the boundary render is used at the mint;
-    //     (b) prints the calls' count and which carry the observer.
+    // (a) red when a mint render attaches an observer, or the boundary render is used at the mint,
+    //     or a mint render is added or removed (gap 2 (iv-a2-ii) added the question's twin, the
+    //     third); (b) prints the calls' count and which carry the observer.
     expect({
       mintRenders: calls.length,
       withObserver: calls.filter((c) => c.includes('onPlaceholder')).length,
       boundaryRenderInLoop: source.includes('renderTemplateWithBoundary'),
-    }).toEqual({ mintRenders: 2, withObserver: 0, boundaryRenderInLoop: false });
+    }).toEqual({ mintRenders: 3, withObserver: 0, boundaryRenderInLoop: false });
   });
 });
 

@@ -7,6 +7,7 @@ import type {
   OutputSource,
   ModelText,
 } from '../types/run-record.js';
+import type { StepCodeSource } from '../types/code-source.js';
 import { closeModelAttempts } from '../engine/model-failure.js';
 import type { ToolCallRecord } from '../types/mcp-types.js';
 import type { Attributed } from '../engine/holder.js';
@@ -68,6 +69,9 @@ export interface CaptureEvidenceParams {
   drivenBy?: Attributed;
   /** Issue #625 PR-2a: a bare auto step's output source — written as `output_source`. */
   outputSource?: OutputSource;
+  /** #828 unit 2c: the code the attempt chose at its lookup, or why none — written as `code_source`.
+   *  Passed on the entries of an attempt of a step that runs code, and nowhere else. Not hashed. */
+  codeSource?: StepCodeSource;
   /** Gap 1, unit A1: the attempt's model call texts, or why there are none — written as
    *  `model_text`. Not hashed. */
   modelText?: ModelText;
@@ -134,6 +138,7 @@ export function captureEvidence(params: CaptureEvidenceParams): EvidenceSnapshot
     ...(params.clippedToMs !== undefined ? { clipped_to_ms: params.clippedToMs } : {}),
     ...(params.drivenBy !== undefined ? { driven_by: params.drivenBy } : {}),
     ...(params.outputSource !== undefined ? { output_source: params.outputSource } : {}),
+    ...(params.codeSource !== undefined ? { code_source: params.codeSource } : {}),
     ...traceEntry,
   };
 }
