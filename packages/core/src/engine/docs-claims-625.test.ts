@@ -1869,7 +1869,7 @@ describe('#760 correction 1 — handlers.md, sentence by sentence (05)', () => {
     // Correction 2 (03): the skip rule's sentences, run below (`skipMidSentence`, `skipToLine`).
     expect(stateRow('stitched')).toContain(
       // Correction 3 (03, D2): rule rev 3, run by locate-quote.test.ts's "correction 3, 01" cells.
-      'After each skip, the next piece starts where the document starts a sentence, a clause (after `;` or `:`, but not a `:` between two digits, even across a line break) or a line. A line counts only after a line that ends a sentence, a clause or a table row (a line that ends with `|` and holds another `|`), or after a blank line; after a blank line that follows a line ending none of those, the next piece begins with a capital letter or an opening mark, or with a clause number or a list mark whose item begins with one, or starts right after an opening mark; a clause number (`6.2`, `12.`, `(a)`, never bare digits such as `12`) or a list mark with a blank after it is skipped only at such a line start, and a clause number only before a capital letter or an opening mark (an opening mark, below). After a full stop, `!` or `?`, on the same line or at the end of the line before, the next piece begins with a capital letter or an opening mark (an opening mark, below), or starts right after one in the document; at a new line that counts, other than after a blank line under a line that ends none of those, an item after a list mark (a list mark, below) may open with any word, and a line quoted with its own clause number before a capital letter (`2. Send…`) passes. The piece before a skip may end mid-sentence. A `.` ends a sentence only when the word before it holds a letter or a digit (a spacing accent is neither): `2024. The` does, `§. Keep` and `ͺ. Keep` do not.',
+      "After each skip, the next piece starts where the document starts a sentence, a clause (after `;` or `:`, but not a `:` between two digits, even across a line break) or a line. A line counts only after a line that ends a sentence, a clause or a table row (a line that ends with `|` and holds another `|`), or after a blank line; after a blank line that follows a line ending none of those, the next piece's first word, past any opening marks and one clause number or list mark at the line's start, begins with a capital letter; a clause number (`6.2`, `12.`, `(a)`, never bare digits such as `12`) or a list mark with a blank after it is skipped only at such a line start, and a clause number only before a capital letter or an opening mark (an opening mark, below). After a full stop, `!` or `?`, on the same line or at the end of the line before, the next piece begins with a capital letter or an opening mark (an opening mark, below), or starts right after one in the document; at a new line that counts, other than after a blank line under a line that ends none of those, an item after a list mark (a list mark, below) may open with any word, and a line quoted with its own clause number before a capital letter (`2. Send…`) passes. The piece before a skip may end mid-sentence. A `.` ends a sentence only when the word before it holds a letter or a digit (a spacing accent is neither): `2024. The` does, `§. Keep` and `ͺ. Keep` do not; after a blank line under a line that ends none of those, the `.` that closes the line's first word, when that is a clause number or a word of up to four letters (`2.`, `b.`, `IV.`), ends a sentence only before a capital letter, past any opening marks.",
     );
     // Correction 2 (03): the exact row's edges, run below (`exactMidWord`); correction 3 (03, D2):
     // the invisible character, run below (`exactInvisible`); the follow-up (§1): a format character
@@ -2103,7 +2103,7 @@ describe('#760 correction 1 — handlers.md, sentence by sentence (05)', () => {
     );
     claimOn(
       HANDLERS,
-      "3. `stitched`: the quote's pieces, split where it breaks (`…` or `...`, a sentence end, `;`, a `:` not between two digits, a double quotation mark or a line break), are each found whole, at word edges, and in order; pieces next to each other in `source` count as one part, and every part is at least `options.minPartChars` long (default `20`, at least `4`). After each skip, the next piece starts where the document starts a sentence, a clause (after `;` or `:`, but not a `:` between two digits, even across a line break) or a line. A line counts only after a line that ends a sentence, a clause or a table row (a line that ends with `|` and holds another `|`), or after a blank line; after a blank line that follows a line ending none of those, the next piece begins with a capital letter or an opening mark, or with a clause number or a list mark whose item begins with one, or starts right after an opening mark; a clause number (`6.2`, `12.`, `(a)`, never bare digits such as `12`) or a list mark with a blank after it is skipped only at such a line start, and a clause number only before a capital letter or an opening mark (an opening mark, as the glossary above defines it). After a full stop, `!` or `?`, on the same line or at the end of the line before, the next piece begins with a capital letter or an opening mark (an opening mark, as the glossary above defines it), or starts right after one in the document; at a new line that counts, other than after a blank line under a line that ends none of those, an item after a list mark (a list mark, as the glossary above defines it) may open with any word, and a line quoted with its own clause number before a capital letter (`2. Send…`) passes. The piece before a skip may end mid-sentence. A `.` ends a sentence only when the word before it holds a letter or a digit (a spacing accent is neither): `2024. The` does, `§. Keep` and `ͺ. Keep` do not. A quote with no break is never stitched.",
+      "3. `stitched`: the quote's pieces, split where it breaks (`…` or `...`, a sentence end, `;`, a `:` not between two digits, a double quotation mark or a line break), are each found whole, at word edges, and in order; pieces next to each other in `source` count as one part, and every part is at least `options.minPartChars` long (default `20`, at least `4`). After each skip, the next piece starts where the document starts a sentence, a clause (after `;` or `:`, but not a `:` between two digits, even across a line break) or a line. A line counts only after a line that ends a sentence, a clause or a table row (a line that ends with `|` and holds another `|`), or after a blank line; after a blank line that follows a line ending none of those, the next piece's first word, past any opening marks and one clause number or list mark at the line's start, begins with a capital letter; a clause number (`6.2`, `12.`, `(a)`, never bare digits such as `12`) or a list mark with a blank after it is skipped only at such a line start, and a clause number only before a capital letter or an opening mark (an opening mark, as the glossary above defines it). After a full stop, `!` or `?`, on the same line or at the end of the line before, the next piece begins with a capital letter or an opening mark (an opening mark, as the glossary above defines it), or starts right after one in the document; at a new line that counts, other than after a blank line under a line that ends none of those, an item after a list mark (a list mark, as the glossary above defines it) may open with any word, and a line quoted with its own clause number before a capital letter (`2. Send…`) passes. The piece before a skip may end mid-sentence. A `.` ends a sentence only when the word before it holds a letter or a digit (a spacing accent is neither): `2024. The` does, `§. Keep` and `ͺ. Keep` do not; after a blank line under a line that ends none of those, the `.` that closes the line's first word, when that is a clause number or a word of up to four letters (`2.`, `b.`, `IV.`), ends a sentence only before a capital letter, past any opening marks. A quote with no break is never stitched.",
     );
     claimOn(HANDLERS, '4. `stitched_out_of_order`: the same, with the parts in another order.');
     // #866 correction 1 (C2): only the longest piece is read, and Arabic and Hebrew are read bare —
@@ -2545,10 +2545,10 @@ describe('#760 follow-up — the words and tests: each changed sentence quoted, 
     });
   });
 
-  it('§2 can still read found: a blank line inside a sentence, or a header between blank lines, before a capital letter or an opening mark, or a clause number or a list mark whose item begins with one; also on a lowercase word right after an opening mark, or after a line’s first word and its `.`', () => {
+  it('§2 can still read found: a blank line inside a sentence, or a header between blank lines, before a word that begins with a capital letter, past any opening marks and one clause number or list mark (#845 1b-i-n: no longer a lowercase word after an opening mark or a short first word’s `.`)', () => {
     claimOn(
       HANDLERS,
-      "A blank line inside a sentence, or a header between blank lines, counts as a line start, as at a PDF page break, before a capital letter or an opening mark, or a clause number or a list mark whose item begins with one: a skip may land there, also on a lowercase word right after an opening mark (`…the Tenant shall`, a blank line, `(subject to clause 5) not be responsible…`, or `“not be…`) or after a line's first word and its `.` (`2. “not be…`).",
+      'A blank line inside a sentence, or a header between blank lines, counts as a line start, as at a PDF page break, before a word that begins with a capital letter, past any opening marks and one clause number or list mark: a skip may land there.',
     );
     const Rest =
       'The Landlord is not responsible for repairs to the structure, roof, foundations or exterior';
@@ -2556,10 +2556,15 @@ describe('#760 follow-up — the words and tests: each changed sentence quoted, 
       `${F} for its full reinstatement cost. The Tenant shall${between}${after}.`;
     const header = '\n\nLease of Office Premises — page 4\n\n';
     const lower = 'not be responsible for repairs to the structure, roof, foundations or exterior';
+    const withCause = (quote: string, source: string) => {
+      const c = locateQuote(quote, source);
+      return `${c.state}${c.cause === undefined ? '' : `+${c.cause}`}`;
+    };
     // #845 1b-i (B3) re-pin: main let a skip land on any word after such a blank line; now only on
-    // what the bullet names. (a) red when the gap closes for one of them (the bullet would then be
-    // false), or a lowercase word with no opening mark before it is admitted again; (b) prints the
-    // states.
+    // what the bullet names. #845 1b-i-n re-pin: a lowercase word after an opening mark, or after a
+    // short first word's `.`, is refused there too, with `cause` (main: `stitched`). (a) red when
+    // the gap closes for one of the found ones (the bullet would then be false), or a lowercase
+    // word, with or without an opening mark before it, is admitted again; (b) prints the states.
     expect({
       capital: state(`${F} … ${Rest}`, doc('\n\n', Rest)),
       header: state(`${F} … ${Rest}`, doc(header, Rest)),
@@ -2568,15 +2573,15 @@ describe('#760 follow-up — the words and tests: each changed sentence quoted, 
       listMark: state(`${F} … ${Rest}`, doc('\n\n', `- ${Rest}`)),
       lowercase: state(`${F} … ${Rest.toLowerCase()}`, doc('\n\n', Rest.toLowerCase())),
       formFeed: state(`${F} … ${Rest}`, doc('\f', Rest)),
-      // the "also": a lowercase word right after an opening mark, the mark quoted or not, and after
-      // a line's first word and its `.` (the label skipped)
-      afterBracket: state(
+      // 1b-i's "also", now refused: a lowercase word right after an opening mark, the mark quoted
+      // or not, and after a line's first word and its `.` (the label skipped)
+      afterBracket: withCause(
         `${F} … (subject to clause 5) ${lower}`,
         doc('\n\n', `(subject to clause 5) ${lower}`),
       ),
-      afterQuoteMarkKept: state(`${F} … “${lower}`, doc('\n\n', `“${lower}”`)),
-      afterQuoteMarkDropped: state(`${F} … ${lower}`, doc('\n\n', `“${lower}”`)),
-      afterFirstWordAndStop: state(`${F} … “${lower}`, doc('\n\n', `2. “${lower}”`)),
+      afterQuoteMarkKept: withCause(`${F} … “${lower}`, doc('\n\n', `“${lower}”`)),
+      afterQuoteMarkDropped: withCause(`${F} … ${lower}`, doc('\n\n', `“${lower}”`)),
+      afterFirstWordAndStop: withCause(`${F} … “${lower}`, doc('\n\n', `2. “${lower}”`)),
     }).toEqual({
       capital: 'stitched',
       header: 'stitched',
@@ -2585,10 +2590,10 @@ describe('#760 follow-up — the words and tests: each changed sentence quoted, 
       listMark: 'stitched',
       lowercase: 'not_found',
       formFeed: 'not_found',
-      afterBracket: 'stitched',
-      afterQuoteMarkKept: 'stitched',
-      afterQuoteMarkDropped: 'stitched',
-      afterFirstWordAndStop: 'stitched',
+      afterBracket: 'not_found+blank_line_join',
+      afterQuoteMarkKept: 'not_found+blank_line_join',
+      afterQuoteMarkDropped: 'not_found+blank_line_join',
+      afterFirstWordAndStop: 'not_found+blank_line_join',
     });
   });
 
@@ -4272,6 +4277,14 @@ describe("#855's correction: each sentence's members", () => {
           : opensWith(lb, digit) && (opensWith(item, capital) || opensWith(item, open))
             ? 'stitched'
             : 'not_found';
+      // #845 1b-i-n: after a blank line under a line that ends nothing, the sentence's clause
+      // number (`6.2`, `12.`, `(a)`, never bare digits; `a)`, `A)` and `A.` are none) is passed and
+      // the word after it decides; any other label is itself the first word.
+      const CLAUSE_NUMBER = /^(?:\([\p{L}\p{N}]{1,4}\)|\p{N}+(?:\.\p{N}+)+\.?|\p{N}+[.)])$/u;
+      const blankRule = (lb: string, item: string): string =>
+        (CLAUSE_NUMBER.test(lb) ? opensWith(item, capital) : opensWith(lb, capital))
+          ? 'stitched'
+          : 'not_found';
       const name = (lb: string, item: string) =>
         `${[...lb].map((c) => hex(cp(c))).join(' ')} before ${item.slice(0, 4)}`;
       const afterStop: Array<[string, string]> = [
@@ -4316,18 +4329,18 @@ describe("#855's correction: each sentence's members", () => {
             'stitched',
           ]),
         ),
-        // #845 1b-i (B3): after a blank line under a line that ends nothing, the piece begins as a
-        // sentence does after a full stop (the stitched row's new sentence), so a label counts as
-        // after a sentence (`rule`): one that opens with an opening mark or a capital letter does;
-        // any other before a lowercase item is refused (the new bullet: "A lowercase label or list
-        // item after a blank line under a line that ends no sentence, clause or table row …").
+        // #845 1b-i-n (re-pinning 1b-i's B3 block): after a blank line under a line that ends
+        // nothing, the piece's first word, past opening marks and one clause number or list mark at
+        // the line's start, begins with a capital letter (the stitched row's sentence; `blankRule`).
+        // A clause number is passed, so the lowercase item decides: `(b)` and `(iv)` are now refused
+        // (1b-i: `stitched`, by their opening `(`). A label that is no clause number is the word.
         ...['(b)', '(iv)', '2.', '12.', '2)', '6.2', 'b.', 'a)', 'A)'].map((lb): Row => [
           `${name(lb, keep)} after a blank line under a line that ends nothing`,
           state(
             `The Tenant shall pay the Rent on the usual … ${lb} ${keep}`,
             `The Tenant shall pay the Rent on the usual quarter days\n\n${lb} ${keep} at all times.`,
           ),
-          rule(lb, keep),
+          blankRule(lb, keep),
         ]),
       ];
       // (1) red when the code and the sentence part, for a label the sentence names; (2) prints each
@@ -4903,14 +4916,14 @@ describe('#845 1b-i — the words of rules 1 and 2 (B3, a blank line inside a se
     expect(added.includes('- `QuoteCheck` gains `cause` and `join_at`:')).toBe(true);
   });
 
-  it('the two new honest refusals: a `…` skip over a page header onto a lowercase word, or one that keeps only the line break; a `…` skip onto a lowercase word, or a list mark or a number before one, after a blank line under a line that ends nothing; past a label, `nearest` and no `cause`', () => {
+  it('the two new honest refusals: a `…` skip over a page header onto a lowercase word, or one that keeps only the line break; a `…` skip onto a piece whose first word, past opening marks and one label, does not begin with a capital letter, after a blank line under a line that ends nothing; straight past a label, `nearest` and no `cause`; with an opening mark between, `cause` (#845 1b-i-n)', () => {
     claimOn(
       HANDLERS,
       '- A `…` skip over a page header onto a lowercase word, or one that keeps only the line break (`…shall`, a blank line, `Page 3`, a blank line, `pay the rent…`): it joins text across a blank line. Quote each part separately.',
     );
     claimOn(
       HANDLERS,
-      '- A `…` skip that lands, after a blank line under a line that ends no sentence, clause or table row, on a lowercase word, or on a list mark or a number such as `2.` before one (`The Tenant shall pay the rent on the usual quarter days`, a blank line, `- keep the Premises in good repair…`, quoted `The Tenant shall pay the rent … keep the Premises in good repair`; also `2. keep…` and `b. keep…` quoted with their label): refused the same way. A skip that also passes a label onto the lowercase word (`(b)`, `2.`, `b.`, `IV.`) reads `not_found` with its nearest match and no `cause`.',
+      '- A `…` skip that lands, after a blank line under a line that ends no sentence, clause or table row, on a piece whose first word, past any opening marks and one clause number or list mark, does not begin with a capital letter (`The Tenant shall pay the rent on the usual quarter days`, a blank line, `- keep the Premises in good repair…`, quoted `The Tenant shall pay the rent … keep the Premises in good repair`; also `2. keep…`, `b. keep…`, `(b) keep…`, `(a) 30 days…` and `(subject to clause 5) not…` quoted as written, and `“the Landlord…`): refused the same way. A skip that also passes a label straight onto the lowercase word (`(b)`, `2.`, `b.`, `IV.`, then `keep…`) reads `not_found` with its nearest match and no `cause`; with an opening mark between (`2. “not be…`, `b. (subject to clause 5) not…`), it is refused the same way.',
     );
     const A = 'The Landlord says that the Tenant shall';
     const B = 'pay the rent quarterly in advance';
@@ -4922,6 +4935,12 @@ describe('#845 1b-i — the words of rules 1 and 2 (B3, a blank line inside a se
     const R = 'The Tenant shall pay the rent';
     const K = 'keep the Premises in good repair';
     const rent = (label: string) => `${R} on the usual quarter days\n\n${label}${K} at all times.`;
+    // #845 1b-i-n: the new examples, each on its own line after the blank line
+    const line = (text: string) => `${R} on the usual quarter days\n\n${text} at all times.`;
+    const NOT = 'not be responsible for repairs';
+    const SUB = `(subject to clause 5) ${NOT}`;
+    const DAYS = '(a) 30 days after the date of the invoice';
+    const LL = 'the Landlord shall keep the structure in repair';
     const read = (quote: string, source: string) => {
       const c = locateQuote(quote, source);
       return `${c.state}${c.cause === undefined ? '' : `+${c.cause}${JSON.stringify(c.join_at)}`}${c.nearest === undefined ? '' : '+nearest'}`;
@@ -4939,6 +4958,12 @@ describe('#845 1b-i — the words of rules 1 and 2 (B3, a blank line inside a se
       pastNumber: read(`${R} … ${K}`, rent('2. ')),
       pastLetter: read(`${R} … ${K}`, rent('b. ')),
       pastRoman: read(`${R} … ${K}`, rent('IV. ')),
+      bracketQuoted: read(`${R} … (b) ${K}`, rent('(b) ')),
+      daysQuoted: read(`${R} … ${DAYS}`, line(DAYS)),
+      subjectQuoted: read(`${R} … ${SUB}`, line(SUB)),
+      openingMarkSkipped: read(`${R} … ${LL}`, line(`“${LL}`)),
+      numberThenMarkSkipped: read(`${R} … ${NOT}`, line(`2. “${NOT}`)),
+      letterThenMarkSkipped: read(`${R} … ${SUB}`, line(`b. ${SUB}`)),
     }).toEqual({
       headerSkipped: 'blank_line_join',
       lineBreakKept: 'blank_line_join',
@@ -4950,6 +4975,12 @@ describe('#845 1b-i — the words of rules 1 and 2 (B3, a blank line inside a se
       pastNumber: 'not_found+nearest',
       pastLetter: 'not_found+nearest',
       pastRoman: 'not_found+nearest',
+      bracketQuoted: `not_found+blank_line_join[${R.length + 2}]`,
+      daysQuoted: `not_found+blank_line_join[${R.length + 2}]`,
+      subjectQuoted: `not_found+blank_line_join[${R.length + 2}]`,
+      openingMarkSkipped: `not_found+blank_line_join[${R.length + 2}]`,
+      numberThenMarkSkipped: `not_found+blank_line_join[${R.length + 2}]`,
+      letterThenMarkSkipped: `not_found+blank_line_join[${R.length + 2}]`,
     });
   });
 
@@ -5074,7 +5105,7 @@ describe('#845 1b-i — the words of rule 6 (item 14, a `.` after a word with no
   it('the `stitched` row and item 3: a `.` ends a sentence only when the word before it holds a letter or a digit; the new honest refusal: a stop after a sign set apart by a space', () => {
     claimOn(
       HANDLERS,
-      'A `.` ends a sentence only when the word before it holds a letter or a digit (a spacing accent is neither): `2024. The` does, `§. Keep` and `\u{37a}. Keep` do not.',
+      "A `.` ends a sentence only when the word before it holds a letter or a digit (a spacing accent is neither): `2024. The` does, `§. Keep` and `\u{37a}. Keep` do not; after a blank line under a line that ends none of those, the `.` that closes the line's first word, when that is a clause number or a word of up to four letters (`2.`, `b.`, `IV.`), ends a sentence only before a capital letter, past any opening marks.",
     );
     claimOn(
       HANDLERS,
@@ -5083,17 +5114,28 @@ describe('#845 1b-i — the words of rule 6 (item 14, a `.` after a word with no
     const keep = 'Keep the Premises in good and substantial repair';
     const tenant = 'The Tenant shall pay the insurance rent';
     // (a) red when one of the examples reads otherwise (a sentence would then end, or not, against
-    //     the sentence); (b) prints the four states.
+    //     the sentence); (b) prints the six states.
     expect({
       year: locateQuote(`${F} … ${tenant}`, `${F} signed in 2024. ${tenant} at once.`).state,
       section: locateQuote(`${F} … ${keep}`, `${F} for its cost.\n\u{a7}. ${keep} at once.`).state,
       accent: locateQuote(`${F} … ${keep}`, `${F} for its cost.\n\u{37a}. ${keep} at once.`).state,
       degree: locateQuote(`${F} … ${tenant}`, `${F} at 20 \u{b0}. ${tenant} at once.`).state,
+      // #845 1b-i-n: after a blank line under a line that ends nothing, a short first word's `.`
+      blankLineStop: locateQuote(
+        `${F} … (subject to clause 5) not be responsible for repairs`,
+        `${F} for its full reinstatement cost and the Tenant shall\n\nb. (subject to clause 5) not be responsible for repairs.`,
+      ).state,
+      blankLineStopCapital: locateQuote(
+        `${F} … ${tenant}`,
+        `${F} for its full reinstatement cost and the Tenant shall\n\nb. \u{201c}${tenant} at once.`,
+      ).state,
     }).toEqual({
       year: 'stitched',
       section: 'not_found',
       accent: 'not_found',
       degree: 'not_found',
+      blankLineStop: 'not_found',
+      blankLineStopCapital: 'stitched',
     });
   });
 });
@@ -5136,20 +5178,26 @@ describe('#845 1b-i — the words of rule 7 (walk M8) and the CHANGELOG’s Chan
   it('the CHANGELOG’s Changed line: each skip it names reads not_found, and a part found in two places is placed where its sentence ends', () => {
     claimOn(
       CL,
-      'check_quotes reads more skips as not_found, on purpose: one across a blank line under a line that does not end a sentence, a clause or a table row, onto a piece that neither begins with a capital letter or an opening mark (or a clause number or a list mark before one) nor starts right after an opening mark; an item whose list mark has no blank after it (`-the`); a `|` that ends a prose line; a `:` between two digits across a line break; and a `.` after a word with no letter or digit (`§. Keep`). A stitched part found in two places is placed where its sentence ends when the rest of the quote still follows it, so fewer quotes are marked `cut_short` (#845).',
+      'check_quotes reads more skips as not_found, on purpose: one across a blank line under a line that does not end a sentence, a clause or a table row, onto a piece whose first word, past any opening marks and one clause number or list mark, does not begin with a capital letter; an item whose list mark has no blank after it (`-the`); a `|` that ends a prose line; a `:` between two digits across a line break; and a `.` after a word with no letter or digit (`§. Keep`). A stitched part found in two places is placed where its sentence ends when the rest of the quote still follows it, so fewer quotes are marked `cut_short` (#845).',
     );
     const item = 'the Tenant shall pay the insurance rent';
     const Keep = 'Keep the Premises in good and substantial repair';
     const skip = (between: string, second = item) =>
       read(`${F} … ${second}`, `${F} for its full reinstatement cost${between}${second} at once.`);
-    // (a) red when one of these reads found (the line would then be false), the two the line excepts
-    //     are refused, or the stitched part is still cut short; (b) prints the states.
+    // (a) red when one of these reads found (the line would then be false), the ones the line excepts
+    //     (a first word that begins with a capital letter, past an opening mark too) are refused, or
+    //     the stitched part is still cut short; (b) prints the states. #845 1b-i-n re-pin: a piece
+    //     right after an opening mark, on a lowercase word, is no longer excepted (main: `stitched`).
     expect({
       blankLine: skip('\n\n'),
       blankLineCapital: skip('\n\n', `T${item.slice(1)}`),
       blankLineAfterMark: read(
         `${F} … ${item}`,
         `${F} for its full reinstatement cost\n\n“${item}” at once.`,
+      ),
+      blankLineAfterMarkCapital: read(
+        `${F} … T${item.slice(1)}`,
+        `${F} for its full reinstatement cost\n\n“T${item.slice(1)}” at once.`,
       ),
       listMark: skip(':\n-'),
       prosePipe: skip(' or |\n'),
@@ -5165,7 +5213,8 @@ describe('#845 1b-i — the words of rule 7 (walk M8) and the CHANGELOG’s Chan
     }).toEqual({
       blankLine: 'not_found',
       blankLineCapital: 'stitched',
-      blankLineAfterMark: 'stitched',
+      blankLineAfterMark: 'not_found',
+      blankLineAfterMarkCapital: 'stitched',
       listMark: 'not_found',
       prosePipe: 'not_found',
       colon: 'not_found',
