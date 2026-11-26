@@ -53,8 +53,10 @@ import {
   noteRealmProvider,
 } from '@sensigo/realm';
 import type {
+  CodeSource,
   LoaderWarning,
   PriceSource,
+  ProjectSource,
   DeploymentManifest,
   ExtensionFactory,
   ExtensionManifest,
@@ -71,7 +73,11 @@ import {
   sha256HexOf,
 } from './extension-identity.js';
 // #828 unit 1: the per-process map of the code's hashes, taken just before the code first loads.
-import { beginCodeHashLoad, clearCodeHashes } from '@sensigo/realm-mcp/code-hashes';
+import {
+  beginCodeHashLoad,
+  clearCodeHashes,
+  type CodeHashLoad,
+} from '@sensigo/realm-mcp/code-hashes';
 import { resolveManifestSecrets, type SecretMode } from './manifest-secrets.js';
 import { namesSlackAccount } from '../agent/gate/slack-accounts.js';
 import {
@@ -498,6 +504,10 @@ export async function loadProjectExtensions(
   };
 
   const moduleFormats = new Map<string, 'esm' | 'cjs' | 'ts-jiti'>();
+  // #828 unit 2b: how these modules were declared, for each entry's source (`--extensions-module`
+  // replaces the workflow's `extensions:` list whole, so one load has one or the other).
+  const moduleVia: ProjectSource['via'] =
+    opts?.overrideModule !== undefined ? 'override_flag' : 'extensions_file';
   for (const ref of moduleRefs ?? []) {
     const { namespace, format } = await importTracked(ref.resolved, ref.declared);
     moduleFormats.set(ref.resolved, format);
@@ -508,6 +518,7 @@ export async function loadProjectExtensions(
       builtinNames,
       claimedBy,
       manifest,
+      moduleSourceOf(ref.declared, ref.resolved, moduleVia, hashes),
     );
   }
   // U1b correction 1 (C1): in a relay's worker, what these modules' top-level code put into the
@@ -534,6 +545,7 @@ export async function loadProjectExtensions(
       manifestCtx,
       useModuleRefs,
       importTracked,
+      hashes,
       registry,
       builtinNames,
       claimedBy,
@@ -683,6 +695,7 @@ async function applyDeploymentManifest(
   ctx: ManifestContext,
   useModuleRefs: Map<string, string>,
   importModule: ImportModule,
+  hashes: CodeHashLoad,
   registry: ExtensionRegistry,
   builtinNames: Record<'adapter' | 'handler' | 'processor', Set<string>>,
   claimedBy: Map<string, string>,
@@ -818,7 +831,12 @@ async function applyDeploymentManifest(
           `[realm] manifest ${section.type} '${name}' overrides the built-in ${section.type} '${name}'.`,
         );
       }
-      registry.register(section.type as 'adapter', name, instance as never);
+      registry.register(
+        section.type as 'adapter',
+        name,
+        instance as never,
+        manifestEntrySource(entry.use!, useModuleRefs, hashes),
+      );
       manifest[section.key].push(name);
     }
   }
@@ -857,6 +875,45 @@ async function applyDeploymentManifest(
       : Object.freeze([...new Set(Object.values(resolved.values))].filter((v) => v.length >= 4)),
     useFormats,
   };
+}
+
+/**
+ * #828 unit 2b: a project module's source, with its hashes from this load's map, the values the run's
+ * identity reads: its own file's, and its own folder's tree (the identity's tree joins every module's
+ * folder). When the map has no hash for the file, or never swept its folder, the hashes are absent.
+ */
+function moduleSourceOf(
+  declared: string,
+  resolved: string,
+  via: ProjectSource['via'],
+  hashes: CodeHashLoad,
+): ProjectSource {
+  const entryHash = hashes.entryHash(resolved);
+  let folderTreeHash: string | undefined;
+  try {
+    folderTreeHash = hashes.tree([dirname(resolved)]).tree_hash;
+  } catch {
+    folderTreeHash = undefined;
+  }
+  return entryHash !== undefined && folderTreeHash !== undefined
+    ? { source: 'project', declared, via, entry_hash: entryHash, folder_tree_hash: folderTreeHash }
+    : { source: 'project', declared, via, absent: 'hashes_unavailable' };
+}
+
+/**
+ * #828 unit 2b: a manifest entry's source: the catalog's entry for a catalog name, else the module's,
+ * declared as the whole `use:` text (the identity's `declared` for it).
+ */
+function manifestEntrySource(
+  use: string,
+  useModuleRefs: Map<string, string>,
+  hashes: CodeHashLoad,
+): CodeSource {
+  if (!isModuleRef(use)) return { source: 'catalog', use };
+  const real = useModuleRefs.get(use) ?? useModuleRefs.get(use.split('#')[0]!);
+  return real !== undefined
+    ? moduleSourceOf(use, real, 'manifest', hashes)
+    : { source: 'project', declared: use, via: 'manifest', absent: 'hashes_unavailable' };
 }
 
 /** Resolves an entry's factory: catalog name (adapters only) or module ref `#Export`. */
@@ -1162,6 +1219,7 @@ function applyModule(
   builtinNames: Record<'adapter' | 'handler' | 'processor', Set<string>>,
   claimedBy: Map<string, string>,
   manifest: ExtensionManifest,
+  source: ProjectSource,
 ): void {
   const context = `Extension module '${ref.declared}'`;
   if (typeof exported !== 'object' || exported === null || Array.isArray(exported)) {
@@ -1223,7 +1281,7 @@ function applyModule(
       }
 
       // Safe: probeShape validated the minimal distinguishing members of each interface.
-      registry.register(surface.type as 'adapter', name, impl as never);
+      registry.register(surface.type as 'adapter', name, impl as never, source);
       manifest[surface.mapKey].push(name);
     }
   }

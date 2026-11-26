@@ -89,6 +89,7 @@ Where the docs teach it: [Core library: run a workflow from your own program](..
 | [`ChainCaller`](#chaincaller) | type | The names a call to `executeChain` can give for where it came from (`ExecuteChainOptions.caller`). |
 | [`ClaimableErrorClass`](#claimableerrorclass) | type | An `error_class` word a provider or a program may claim: every word but `startup_failure`, which only `realm agent`'s and `realm listen`'s own startup writers mint. |
 | [`ClaimState`](#claimstate) | type | How alive a single in-progress claim is: `healthy`, `claim_stale` or `claim_unknown_age`. |
+| [`CodeSource`](#codesource) | type | Where a registry entry's code came from: Realm's built-in, the built-in adapter catalog, a project's module, or the hosting program. |
 | [`Cond`](#cond) | type | A condition a way is offered with: a way offered with a condition is admitted only when the condition is met (`Base.conditions`). |
 | [`DisclosureTier`](#disclosuretier) | type | `declared` hides declared members only (question text, private terminals); `all` adds the environment members and the patterns. |
 | [`DriveClaim`](#driveclaim) | type | What `claimStepForDrive` answers, keyed by `kind`. |
@@ -105,6 +106,7 @@ Where the docs teach it: [Core library: run a workflow from your own program](..
 | [`Party`](#party) | type | Who can take a way on a run: the operator, the agent, or the person a question is asked of (`WAY_PARTIES`, `ForWay.for`). |
 | [`PreClaimRefusal`](#preclaimrefusal) | type | The checks that refuse a step before it is claimed: its trust, its precondition, its input schema, its capability. |
 | [`PresentWay`](#presentway) | type | Show the open question again, as a form in the agent's own call: the MCP door's `present_question`. |
+| [`ProjectSource`](#projectsource) | type | Where a project's module came from: how it was declared, and the hashes of its file and its folder, or a typed absence when they could not be read. |
 | [`RaceStopKind`](#racestopkind) | type | The six race kinds: another program got there first, and the loop goes on with what is left. |
 | [`ReclaimOutcome`](#reclaimoutcome) | type | What `reclaimStep` did: moved the claim out, so the step can run again; nothing, as the step was already settled or held no claim; or left a claim another program had just taken. |
 | [`ReclaimWay`](#reclaimway) | type | Free a held step so it can run again: a person's act, never an agent's. |
@@ -779,16 +781,22 @@ function withLibraryWords<Host>(partial: PartialWayRenderer<Host>): WayRenderer<
 
 ### ExtensionRegistry
 
-class · public
+class · public (beta: entry, entry.name, entry.type, register.source, register.source, register.source): those members may change in a minor release until they settle
 
 The handlers, service adapters and processors a program registers by name; the engine looks a
 step's handler or adapter up in it.
 
 ```ts
 class ExtensionRegistry {
-    register(type: 'adapter', name: string, impl: ServiceAdapter): void;
-    register(type: 'processor', name: string, impl: Processor): void;
-    register(type: 'handler', name: string, impl: StepHandler): void;
+    register(type: 'adapter', name: string, impl: ServiceAdapter, source?: CodeSource | null): void;
+    register(type: 'processor', name: string, impl: Processor, source?: CodeSource | null): void;
+    register(type: 'handler', name: string, impl: StepHandler, source?: CodeSource | null): void;
+    entry(type: 'adapter' | 'processor' | 'handler', name: string): {
+        readonly impl: ServiceAdapter | Processor | StepHandler;
+        readonly source: CodeSource;
+        readonly replacesBuiltIn: boolean;
+    } | undefined;
+    copyEntry(from: ExtensionRegistry, type: 'adapter' | 'processor' | 'handler', name: string): void;
     setIdentity(entry: ExtensionIdentityEntry): void;
     get identity(): ExtensionIdentityEntry | undefined;
     has(type: 'adapter' | 'processor' | 'handler', name: string): boolean;
@@ -1855,6 +1863,35 @@ states:
 type ClaimState = 'healthy' | 'claim_stale' | 'claim_unknown_age';
 ```
 
+### CodeSource
+
+type · beta: may change in a minor release until it settles
+
+Where a registry entry's code came from: Realm's built-in, the built-in adapter catalog, a
+project's module, or the hosting program.
+
+`@remarks` `built_in`: one of Realm's own built-ins, registered by `createDefaultRegistry()`. `catalog`: an
+adapter the deployment manifest builds from Realm's catalog, `use` naming the catalog entry.
+`project`: see `ProjectSource`. `host_registered`: an object the hosting program registered
+with no stated source, with the sha256 of its code's text taken at registration, or
+`code_text_unavailable` when that text cannot be read (a bound or native function, a callable
+Proxy, a read that throws).
+
+```ts
+type CodeSource = {
+    readonly source: 'built_in';
+} | {
+    readonly source: 'catalog';
+    readonly use: string;
+} | ProjectSource | {
+    readonly source: 'host_registered';
+    readonly code_text_sha256: string;
+} | {
+    readonly source: 'host_registered';
+    readonly absent: 'code_text_unavailable';
+};
+```
+
 ### Cond
 
 type · public
@@ -2121,6 +2158,36 @@ answer. No `step`: a renderer reads the step from the reply it already holds.
 type PresentWay = Base<'present'> & {
     run_id: string;
     gate_id: string;
+};
+```
+
+### ProjectSource
+
+type · beta: may change in a minor release until it settles
+
+Where a project's module came from: how it was declared, and the hashes of its file and its
+folder, or a typed absence when they could not be read.
+
+`@remarks` `declared` is exactly what the run's identity entry holds in `modules[].declared`: the
+`extensions:` entry, the `--extensions-module` path, or the manifest's whole `use:` text; for
+`projectSourceOf`, the module's real path. `via` says which: `manifest`, `extensions_file`,
+`override_flag` or `host_stated`. `entry_hash` is the sha256 of the module's own file, the value
+the identity's `modules[].entry_hash` holds. `folder_tree_hash` is the dir_tree_v1 hash of the
+module's own folder; the identity's `tree.tree_hash` joins every module's folder, so the two
+differ once a project has modules in two folders. Each hash is 64 lowercase hex characters.
+
+```ts
+type ProjectSource = {
+    readonly source: 'project';
+    readonly declared: string;
+    readonly via: 'manifest' | 'extensions_file' | 'override_flag' | 'host_stated';
+    readonly entry_hash: string;
+    readonly folder_tree_hash: string;
+} | {
+    readonly source: 'project';
+    readonly declared: string;
+    readonly via: 'manifest' | 'extensions_file' | 'override_flag' | 'host_stated';
+    readonly absent: 'hashes_unavailable';
 };
 ```
 

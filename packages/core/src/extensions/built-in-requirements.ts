@@ -5,7 +5,9 @@
 // different things. Every Realm door builds its registry from `createDefaultRegistry()` (the CLI's
 // loader, `load-project-extensions.ts`; core's own fallback when a caller passes none), so a built-in
 // is never code a project must supply: an observer's `advance` way (`ways.ts`, decision C33) does not
-// make it a condition. Data only.
+// make it a condition. Data, and the one predicate that says whether an entry replaces a built-in
+// (#828 unit 2b).
+import type { CodeSource } from '../types/code-source.js';
 
 /** Adapter `filesystem`: reads files from the local filesystem; needs no configuration. */
 export const BUILT_IN_FILESYSTEM_ADAPTER = { kind: 'adapter', name: 'filesystem' } as const;
@@ -22,4 +24,20 @@ export const BUILT_IN_REQUIREMENTS: readonly {
 /** Whether `kind` `name` is one of Realm's built-ins (in every program's registry). */
 export function isBuiltInRequirement(kind: 'handler' | 'adapter', name: string): boolean {
   return BUILT_IN_REQUIREMENTS.some((r) => r.kind === kind && r.name === name);
+}
+
+/**
+ * Whether a registry entry under `kind` `name` with `source` replaces one of Realm's built-ins: the
+ * name is a built-in's, and the code is neither Realm's own (`built_in`) nor the catalog's entry of
+ * that name. It decides from the name and the source, never from what the registry held before. No
+ * processor is a built-in (#828 unit 2b; R13: the one rule, which the CLI's loader also uses).
+ */
+export function replacesBuiltIn(
+  kind: 'handler' | 'adapter' | 'processor',
+  name: string,
+  source: CodeSource,
+): boolean {
+  if (kind === 'processor' || !isBuiltInRequirement(kind, name)) return false;
+  if (source.source === 'built_in') return false;
+  return !(source.source === 'catalog' && source.use === name);
 }

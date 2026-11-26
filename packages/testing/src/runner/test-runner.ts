@@ -116,16 +116,14 @@ export function buildFixtureRegistries(
   let fallbackRegistry = options.registry;
   if (options.extensions !== undefined) {
     const ext = options.extensions;
-    // Preserve any caller-provided fallback entries underneath the extension material.
+    // Preserve any caller-provided fallback entries underneath the extension material. #828 unit 2b:
+    // each is copied with its source (`built_in` included), never re-registered as the runner's own.
     const extFallback = new ExtensionRegistry();
     if (options.registry !== undefined) {
       const caller = options.registry;
-      for (const n of caller.names('adapter'))
-        extFallback.register('adapter', n, caller.getAdapter(n)!);
-      for (const n of caller.names('handler'))
-        extFallback.register('handler', n, caller.getHandler(n)!);
-      for (const n of caller.names('processor'))
-        extFallback.register('processor', n, caller.getProcessor(n)!);
+      for (const n of caller.names('adapter')) extFallback.copyEntry(caller, 'adapter', n);
+      for (const n of caller.names('handler')) extFallback.copyEntry(caller, 'handler', n);
+      for (const n of caller.names('processor')) extFallback.copyEntry(caller, 'processor', n);
     }
     // Real extension handlers/processors merge in — testing them is the point.
     // EXCEPT secret-bearing handlers (manifest config contains ${secret:} refs): they were
@@ -147,10 +145,9 @@ export function buildFixtureRegistries(
         extFallback.register('handler', name, poisoned);
         continue;
       }
-      const handler = ext.registry.getHandler(name);
-      if (handler !== undefined) {
-        fixtureRegistry.register('handler', name, handler);
-        extFallback.register('handler', name, handler);
+      if (ext.registry.has('handler', name)) {
+        fixtureRegistry.copyEntry(ext.registry, 'handler', name);
+        extFallback.copyEntry(ext.registry, 'handler', name);
       }
     }
     const secretBearingProcessors = new Set(ext.manifest.secret_bearing_processors ?? []);
@@ -169,10 +166,9 @@ export function buildFixtureRegistries(
         extFallback.register('processor', name, poisoned);
         continue;
       }
-      const processor = ext.registry.getProcessor(name);
-      if (processor !== undefined) {
-        fixtureRegistry.register('processor', name, processor);
-        extFallback.register('processor', name, processor);
+      if (ext.registry.has('processor', name)) {
+        fixtureRegistry.copyEntry(ext.registry, 'processor', name);
+        extFallback.copyEntry(ext.registry, 'processor', name);
       }
     }
     // Fail-if-unmocked: every extension-provided adapter name without a fixture mock trips

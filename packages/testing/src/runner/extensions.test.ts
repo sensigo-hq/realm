@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createDefaultRegistry, CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
 import type {
+  CodeSource,
   ExtensionIdentityEntry,
   WorkflowDefinition,
   ServiceAdapter,
@@ -442,5 +443,40 @@ describe('secret-bearing processors (v0.14 symmetric guard)', () => {
       .getProcessor('pure_proc')!
       .process({ text: 'hello', metadata: {} }, {});
     expect(out.text).toBe('hello');
+  });
+});
+
+// #828 unit 2b (prompt feat-828-u2b-registry-source.md rev 2.1, check 8): the runner copies a caller's
+// entries and the extensions' with their sources (`copyEntry`), never re-registering them as its own.
+describe('#828 unit 2b check 8 — the runner keeps each copied entry’s source', () => {
+  // (1) red when the copy goes through `register` (a built_in refused, or host_registered recorded);
+  //     (2) prints each copied entry's source in both registries.
+  it("a caller's createDefaultRegistry() passes through with built_in kept, and an extension's project source too", () => {
+    const project: CodeSource = {
+      source: 'project',
+      declared: '../../dist/registry.js',
+      via: 'extensions_file',
+      entry_hash: 'a'.repeat(64),
+      folder_tree_hash: 'b'.repeat(64),
+    };
+    const extensions = makeExtensions();
+    extensions.registry.register('handler', 'my_custom_handler', realHandler, project);
+    const { fixtureRegistry, fallbackRegistry } = buildFixtureRegistries(
+      makeFixture(),
+      SERVICE_DEFINITION,
+      { registry: createDefaultRegistry(), extensions },
+    );
+    expect({
+      callerFilesystem: fallbackRegistry?.entry('adapter', 'filesystem')?.source,
+      callerCheckQuotes: fallbackRegistry?.entry('handler', 'check_quotes')?.source,
+      extension: [
+        fixtureRegistry.entry('handler', 'my_custom_handler')?.source,
+        fallbackRegistry?.entry('handler', 'my_custom_handler')?.source,
+      ],
+    }).toEqual({
+      callerFilesystem: { source: 'built_in' },
+      callerCheckQuotes: { source: 'built_in' },
+      extension: [project, project],
+    });
   });
 });
