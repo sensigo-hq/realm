@@ -21,6 +21,7 @@ import type {
 import { markersIn } from '../utils/redaction.js';
 import { isRememberBlock } from '../workflow/remember-block.js';
 import { resolveInputMap } from './input-map.js';
+import { parseStamp } from './instants.js';
 
 /** The most a remembered value may hold, as JSON in UTF-8 bytes; recall's cap reuses it (unit 3). */
 export const REMEMBER_VALUE_MAX_BYTES = 32_768;
@@ -132,8 +133,8 @@ export function rememberedStampOf(
   if (Buffer.byteLength(JSON.stringify(item) ?? '', 'utf8') > REMEMBER_VALUE_MAX_BYTES) {
     return { as, not_remembered: 'value_too_large' };
   }
-  const completedAt = Date.parse(entry.completed_at);
-  if (!Number.isFinite(completedAt)) return undefined;
+  const completedAt = parseStamp(entry.completed_at);
+  if (completedAt === undefined) return undefined;
   const choice = entry.kind === 'gate_response' ? entry.input_summary['choice'] : undefined;
   return {
     as,
