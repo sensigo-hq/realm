@@ -473,7 +473,8 @@ export function createRealmMcpServer(options: RealmMcpServerOptions): McpServer 
   const effectiveWorkflowStore = options.workflowStore;
 
   // #729 PR-3 (M-3): every reply's set comes from one door disclosure, per reply.
-  const doorDisclosure: DoorDisclosure = doorDisclosureOf(options);
+  // Gap 2, unit (iv-a2-i): under `hidden`, the door hands core its own marked copy of each set.
+  const doorDisclosure: DoorDisclosure = doorDisclosureOf(options, door.failureText.value);
   // #627 W: the door rides every tool's stores; on stdio a form is sent through this server's own
   // `elicitInput` (bound per call, so a test client's capabilities are read at the call). #729 PR-3
   // (M-5, F8): the raw elicit leaves only through `elicitDisclosedWith`, which walks the request by
