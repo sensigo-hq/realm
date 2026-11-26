@@ -4,7 +4,7 @@
 // a number), check 6 (the sets, read in the Basic Multilingual Plane) and check 7 (the spacing
 // accent). Unit 1a-ii adds checks 3, 4 and 5 and the sets' reads outside the BMP (check 6's other
 // half) here; check 8 is in locate-quote.test.ts. Every input is written as code points.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import {
@@ -803,7 +803,9 @@ describe('#845 check 3: every walk over raw text steps over invisible characters
     });
   }, 60_000);
 
-  it('E4, the class that turns until 1b: a list mark directly before a word after `:` and a line break, with no blank or only invisible characters between, reads `stitched`; `2.`+U+200B+`Send` does not', () => {
+  it('E4, closed by 1b-i (M8r): a list mark directly before a word after `:` and a line break, with no blank or only invisible characters between, reads `not_found`; so does `2.`+U+200B+`Send`', () => {
+    // #845 1b-i (M8r) re-pin: a list mark counts only with a blank after it; 1a's E4 read these
+    // `stitched` until 1b-i (check 7 sweeps the class at every counted line start).
     const lc = 'the Tenant shall pay the insurance rent';
     const marks = [
       ...codePoints(/^\p{Pd}$/u),
@@ -836,11 +838,11 @@ describe('#845 check 3: every walk over raw text steps over invisible characters
     ];
     const rows: Row[] = [
       ...marks.flatMap((m): Row[] => [
-        [`${hex(m)}the`, skipOver(` for its full reinstatement cost:\n${ch(m)}`, lc), 'stitched'],
+        [`${hex(m)}the`, skipOver(` for its full reinstatement cost:\n${ch(m)}`, lc), 'not_found'],
         [
           `${hex(m)}+U+200B+the (extra2 row 123's class)`,
           skipOver(` for its full reinstatement cost:\n${ch(m)}\u{200b}`, lc),
-          'stitched',
+          'not_found',
         ],
       ]),
       [
@@ -852,8 +854,8 @@ describe('#845 check 3: every walk over raw text steps over invisible characters
         'not_found',
       ],
     ];
-    // (1) red when E4's class changes before 1b closes it (a mark glued to its word is refused, or
-    //     `2.`+U+200B+`Send` opens a part); (2) prints the count and each differing row.
+    // (1) red when a mark glued to its word, or with only U+200B after it, opens an item again, or
+    //     `2.`+U+200B+`Send` opens a part; (2) prints the count and each differing row.
     expect({ marks: marks.length, misses: misses(rows) }).toEqual({
       marks: marks.length,
       misses: [],
@@ -1244,4 +1246,611 @@ describe('#845 1a-ii correction 1, check 2 (GROUNDING, not acceptance): the read
     //     after 30 of them); (2) prints each case whose result moved, with dfda322b's beside it.
     expect(moved).toEqual([]);
   }, 120_000);
+});
+
+// ---------------------------------------------------------------------------------------------------
+// #845 unit 1b-i (`prompts/fix-845-1b-i-lines-and-joins.md`): line starts, list items, and the
+// blank-line join the quote check refuses (rules 1–7, checks 1–9).
+
+/** The quote check's result, with its refusal's fields when it has them. */
+const lq = (quote: string, source: string, minPartChars?: number) => {
+  releaseQuoteCache();
+  return locateQuote(quote, source, minPartChars === undefined ? undefined : { minPartChars });
+};
+const SHALL_F = 'The Landlord shall insure the Building';
+const SHALL_REST =
+  'not be responsible for repairs to the structure, roof, foundations or exterior of the Building';
+/** extra2's document: SHALL_F's sentence, `The Tenant shall`, then `between`, then `rest`. */
+const shallDoc = (between: string, rest = SHALL_REST) =>
+  `${SHALL_F} for its full reinstatement cost. The Tenant shall${between}${rest}.`;
+
+/** The re-check's extra2 rows 1–31 (Q-C), built as `extra2.mjs` builds them: [row, quote, doc]. */
+const QC_ROWS: ReadonlyArray<readonly [row: number, quote: string, doc: string]> = (() => {
+  const F = SHALL_F;
+  const rest = SHALL_REST;
+  const A = `${F} for its full reinstatement cost. The Tenant shall`;
+  const r2 = 'not be responsible for repairs to the structure';
+  const H = 'Lease of Office Premises — page 4';
+  const P = 'The Tenant shall pay the Rent on the usual';
+  const before = 'The Tenant shall pay the Rent on the usual quarter days\n\n';
+  const keep = 'keep the Premises in good and substantial repair';
+  const rows: Array<readonly [string, string]> = [
+    [`${F} … ${rest}`, shallDoc('\n\n')],
+    [`${F} … ${rest}`, shallDoc(`\n\n${H}\n\n`)],
+    [`${F} … ${rest}`, shallDoc('\n\n- ')],
+    [`${F} … - ${rest}`, shallDoc('\n\n- ')],
+    [`${F}. ${rest}`, shallDoc('\n\n')],
+    [
+      `As agreed, The Landlord shall insure the Building … ${r2}`,
+      `As agreed, The Landlord shall insure the Building\nat its own cost and the Tenant shall\n\n${r2}.`,
+    ],
+    [
+      `As agreed, The Landlord shall insure the Building … ${r2}`,
+      `As agreed, The Landlord shall insure the Building\nat its own cost.\n\nThe Tenant shall keep it clean and\n\n${r2}.`,
+    ],
+    [
+      `As agreed, The Landlord shall insure the Building … ${r2}`,
+      `As agreed, The Landlord shall insure the Building\n\nThe Tenant shall keep it clean and\n\n${r2}.`,
+    ],
+    [`${A} … ${r2}`, `${A}\n\n${r2}.`],
+    [`${A} … ${r2}`, `${A}\n\n${H}\n\n${r2}.`],
+    [`${A}\n${r2}`, `${A}\n\n${H}\n\n${r2}.`],
+    [`${A} … ${r2}`, `${A}\n${H}\n\n${r2}.`],
+    [`${A}\n${r2}`, `${A}\n${H}\n\n${r2}.`],
+    ...['2.', '12.', '2)', '6.2', 'b.', 'a)', '3.4.1'].map(
+      (l) => [`${P} … ${l} ${keep}`, `${before}${l} ${keep} at all times.`] as const,
+    ),
+    ...['b.', 'a)'].map(
+      (l) =>
+        [
+          `${P} … ${l} Keep the Premises in good and substantial repair`,
+          `${before}${l} Keep the Premises in good and substantial repair at all times.`,
+        ] as const,
+    ),
+    ...['b.', 'a)'].map(
+      (l) =>
+        [
+          `${P} … ${l} (the Premises) in good and substantial repair`,
+          `${before}${l} (the Premises) in good and substantial repair at all times.`,
+        ] as const,
+    ),
+    ...['+', '%', '\u{20ac}', '='].map(
+      (m) => [`${P} … ${m} ${keep}`, `${before}${m} ${keep} at all times.`] as const,
+    ),
+    [`${P} … ${keep}`, `${before}- ${keep} at all times.`],
+    [
+      `${F} … The Landlord shall insure the Premises against loss`,
+      `${F} for its full reinstatement cost.\n\n6. INSURANCE\n\n6.1 The Landlord shall insure the Premises against loss.`,
+    ],
+    [
+      `${F} … The Tenant shall pay the insurance rent`,
+      `${F} for its full reinstatement cost.\n\nINSURANCE\n\nThe Tenant shall pay the insurance rent.`,
+    ],
+  ];
+  return rows.map(([q, s], i) => [i + 1, q, s] as const);
+})();
+/** A quote's one join: the break it replaces (`…`, else a line break, else a stop and a space). */
+const breakOf = (quote: string): string => ['…', '\n', '. '].find((b) => quote.includes(b)) ?? '';
+/** Where a quote's one join sits: the first code unit after its break. */
+const joinOf = (quote: string): number => quote.indexOf(breakOf(quote)) + 1;
+/** The two parts of a quote with one join, each quoted alone (a stop before the join kept off). */
+const partsOf = (quote: string): string[] => {
+  const at = quote.indexOf(breakOf(quote));
+  return [quote.slice(0, at).trimEnd(), quote.slice(at + breakOf(quote).length).trimStart()];
+};
+const FOUND_STATES: readonly string[] = [
+  'exact',
+  'reformatted',
+  'stitched',
+  'stitched_out_of_order',
+];
+
+describe('#845 1b-i check 1: the refusal (Q-C) — `not_found` with `cause` and `join_at`, only when rule 1 alone refused the quote', () => {
+  it('extra2 rows 1–8 and 10–29 read `not_found` with `cause` and `join_at` at the refused join, each part quoted alone found; rows 9, 30 and 31 keep their states, with no field', () => {
+    const want = (row: number) =>
+      row === 9 ? 'reformatted' : row >= 30 ? 'stitched' : `not_found@${row}`;
+    const rows = QC_ROWS.map(([row, quote, doc]) => {
+      const c = lq(quote, doc);
+      const fields = 'cause' in c || 'join_at' in c;
+      const read =
+        c.state === 'not_found' && c.cause === 'blank_line_join'
+          ? JSON.stringify(c.join_at) === JSON.stringify([joinOf(quote)])
+            ? `not_found@${row}`
+            : `not_found join_at ${JSON.stringify(c.join_at)}`
+          : `${c.state}${fields ? ' with a field' : ''}`;
+      const alone =
+        row === 9 || row >= 30
+          ? []
+          : partsOf(quote).filter((p) => !FOUND_STATES.includes(lq(p, doc).state));
+      return { row, read, alone };
+    });
+    // (1) red when a refused row loses `cause`, its `join_at` is not the quote offset after its break,
+    //     a part alone is refused, or a kept row gains a field or moves; (2) prints each row's read
+    //     and the parts refused alone.
+    expect(rows).toEqual(QC_ROWS.map(([row]) => ({ row, read: want(row), alone: [] })));
+  });
+
+  it('the probes: a made-up third piece (Q1) and a part under the floor (R3) are ordinary `not_found`; two joins (Q2) give two offsets; no out-of-order placement after the refusal (Q3); an accepted candidate wins (R1); the out-of-order placement takes no held-back one (R2)', () => {
+    const F = SHALL_F;
+    const rest = SHALL_REST;
+    const q1 = `${F} … ${rest} … The Tenant shall pay a deposit of twenty-four thousand euro`;
+    const q2 = `${F} … not be responsible for repairs to the structure … keep the Premises insured at all times`;
+    const two = `${F} for its full reinstatement cost. The Tenant shall\n\nnot be responsible for repairs to the structure, and the Landlord shall\n\nkeep the Premises insured at all times.`;
+    const q3 = `${F} … not be responsible for repairs to the structure`;
+    const ooo = `Not be responsible for repairs to the structure is the rule. ${F} for its full reinstatement cost. The Tenant shall\n\nnot be responsible for repairs to the structure.`;
+    const r1 = `${F} … not be responsible for repairs; the roof is excluded from the lease`;
+    const d1 = `${F} for its cost. Not be responsible for repairs is the rule here. The Tenant shall\n\nnot be responsible for repairs; the roof is excluded from the lease.`;
+    const C = 'The Tenant shall keep the Premises in good and substantial repair';
+    const d2 = `${C} at all times. ${F} for its full reinstatement cost. The Tenant shall\n\n${rest}.`;
+    const read = (quote: string, doc: string) => {
+      const c = lq(quote, doc);
+      return {
+        state: c.state,
+        cause: c.cause ?? null,
+        join_at: c.join_at ?? null,
+        nearest: c.nearest ?? null,
+      };
+    };
+    // (1) red when the refusal is returned before every piece is tried (Q1), names one join only (Q2),
+    //     falls through to the out-of-order placement (Q3), prefers a held-back candidate of greater
+    //     `last` to an accepted one (R1: refused, or found with the part moved past the blank line),
+    //     lets the out-of-order placement take a held-back candidate (R2), or skips the floor on a
+    //     held-back completion (R3); (2) prints each record.
+    expect({
+      Q1: read(q1, shallDoc('\n\n')),
+      Q2: read(q2, two),
+      Q3: read(q3, ooo),
+      R1: ((c) => ({ state: c.state, parts: c.parts.map((p) => p.start) }))(lq(r1, d1)),
+      R2: read(`${F} … ${rest} … ${C}`, d2),
+      R3: read(`${F} … not be liable`, shallDoc('\n\n', 'not be liable for repairs')),
+    }).toEqual({
+      Q1: { state: 'not_found', cause: null, join_at: null, nearest: { start: 90, end: 184 } },
+      Q2: {
+        state: 'not_found',
+        cause: 'blank_line_join',
+        join_at: [q2.indexOf('…') + 1, q2.lastIndexOf('…') + 1],
+        nearest: null,
+      },
+      Q3: {
+        state: 'not_found',
+        cause: 'blank_line_join',
+        join_at: [q3.indexOf('…') + 1],
+        nearest: null,
+      },
+      // the middle part at the accepted `Not be…`, not at the held-back `not be…` after the blank line
+      R1: { state: 'stitched', parts: [0, d1.indexOf('Not be'), d1.indexOf('the roof')] },
+      R2: { state: 'not_found', cause: null, join_at: null, nearest: { start: 170, end: 264 } },
+      R3: { state: 'not_found', cause: null, join_at: null, nearest: { start: 0, end: 38 } },
+    });
+  });
+});
+
+describe('#845 1b-i check 2: the refusal re-places nothing', () => {
+  it('extra2 rows 1–8: the substring searches are at most those for the same quote against the document with a `.` ending the line before the refused blank line (the same canonical text, read `stitched`), plus one', () => {
+    const searches = (quote: string, doc: string) => {
+      releaseQuoteCache();
+      const spies = (['includes', 'indexOf', 'startsWith'] as const).map((m) =>
+        vi.spyOn(String.prototype, m),
+      );
+      let state: string;
+      let n: number;
+      try {
+        state = locateQuote(quote, doc).state;
+        // Counted before the spies are restored: restoring one clears its record of calls.
+        n = spies.reduce((sum, spy) => sum + spy.mock.calls.length, 0);
+      } finally {
+        for (const spy of spies) spy.mockRestore();
+      }
+      return { state, n };
+    };
+    const rows = QC_ROWS.filter(([row]) => row <= 8).map(([row, quote, doc]) => {
+      const at = doc.lastIndexOf('\n\n');
+      const legal = `${doc.slice(0, at)}.${doc.slice(at)}`;
+      const refused = searches(quote, doc);
+      const control = searches(quote, legal);
+      return {
+        row,
+        sameCanonical: canonicalForm(doc) === canonicalForm(legal),
+        legal: control.state,
+        counted: refused.n > 0 && control.n > 0,
+        within: refused.n <= control.n + 1 ? 'within' : `${refused.n} > ${control.n} + 1`,
+      };
+    });
+    // (1) red when the refusal re-places the parts with the rule relaxed (about 2×), or falls through
+    //     to the out-of-order placement and the tiling (about 5×), or when the counter saw no search
+    //     (a counter that reads 0 makes every bound hold); (2) prints each row's counts.
+    expect(rows).toEqual(
+      QC_ROWS.filter(([row]) => row <= 8).map(([row]) => ({
+        row,
+        sameCanonical: true,
+        legal: 'stitched',
+        counted: true,
+        within: 'within',
+      })),
+    );
+  });
+});
+
+describe('#845 1b-i check 4: B3, a blank line inside a sentence', () => {
+  it('items3 rows 47–50; T1 across every blank-line form; a blank line after a `.`, a `;` or a table row keeps main’s start', () => {
+    const F = SHALL_F;
+    const rest = SHALL_REST;
+    const T1 = `${F} … ${rest}`;
+    const tail =
+      'not be responsible for repairs to the structure, roof, foundations or exterior of the Building';
+    const forms: Record<string, string> = {
+      'LF LF': '\n\n',
+      'CR LF CR LF': '\r\n\r\n',
+      'LF, spaces and a tab, LF': '\n  \t\n',
+      'LF, U+00A0, LF': '\n\u{a0}\n',
+      'LF, U+200B, LF': '\n\u{200b}\n',
+      'four LF': '\n\n\n\n',
+      'LF FF': '\n\u{c}',
+      'LF FF LF': '\n\u{c}\n',
+      'U+2029 U+2029': '\u{2029}\u{2029}',
+      'CR LF, spaces, CR LF': '\r\n   \r\n',
+    };
+    const cause = (quote: string, doc: string) => {
+      const c = lq(quote, doc);
+      return `${c.state}${c.cause === undefined ? '' : `+${c.cause}`}`;
+    };
+    const rows: Row[] = [
+      ['items3 47', cause(T1, shallDoc('\n\n')), 'not_found+blank_line_join'],
+      ['items3 48', cause(T1, shallDoc('\n\n- ')), 'not_found+blank_line_join'],
+      [
+        'items3 49',
+        cause(
+          `${F} … The Tenant shall pay the insurance rent`,
+          `${F} for its full reinstatement cost.\n\nINSURANCE\n\nThe Tenant shall pay the insurance rent at the end of each year.`,
+        ),
+        'stitched',
+      ],
+      [
+        'items3 50',
+        cause(
+          `${F} … The Landlord shall insure the Premises against loss`,
+          `${F} for its full reinstatement cost.\n\n6. INSURANCE\n\n6.1 The Landlord shall insure the Premises against loss.`,
+        ),
+        'stitched',
+      ],
+      ...Object.entries(forms).map(([name, between]): Row => [
+        `T1, ${name}`,
+        cause(T1, shallDoc(between)),
+        'not_found+blank_line_join',
+      ]),
+      [
+        'K1: a `;` line, a blank line, a lowercase line',
+        cause(`${F} … ${tail}`, `${F} for its cost; the Tenant shall pay;\n\n${tail}.`),
+        'stitched',
+      ],
+      [
+        'K2: a `.` line, a blank line, a lowercase line',
+        cause(`${F} … ${tail}`, `${F} for its full reinstatement cost.\n\n${tail}.`),
+        'stitched',
+      ],
+      [
+        'K3: a table row, a blank line, a lowercase line',
+        cause(`${F} … ${tail}`, `| ${F} for its cost | x |\n\n${tail}.`),
+        'stitched',
+      ],
+    ];
+    // (1) red when rule 1 is removed, the walk back stops after one line or reads only `\n\n`, or the
+    //     line before the blank line is read as ending nothing whatever it ends; (2) prints each
+    //     differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it('the conjunct controls stay `stitched`: a list mark with a capital item after such a blank line, skipped onto and quoted with its mark; an opening mark before a lowercase word', () => {
+    const A = 'The Tenant covenants with the Landlord as set out below';
+    const rows: Row[] = [
+      [
+        'a list mark, a capital item, the mark skipped',
+        lq(
+          `${A} … To pay the rent on the usual quarter days`,
+          `${A} in this clause\n\n- To pay the rent on the usual quarter days.`,
+        ).state,
+        'stitched',
+      ],
+      [
+        'a list mark, a capital item, the mark quoted',
+        lq(
+          `${A} … - To pay the rent on the usual quarter days`,
+          `${A} in this clause\n\n- To pay the rent on the usual quarter days.`,
+        ).state,
+        'stitched',
+      ],
+      [
+        'an opening mark before a capital word',
+        lq(
+          `${A} … \u{201c}The Premises\u{201d} means the whole of the Building`,
+          `${A} in this clause\n\n\u{201c}The Premises\u{201d} means the whole of the Building.`,
+        ).state,
+        'stitched',
+      ],
+      [
+        'an opening mark before a lowercase word',
+        lq(
+          `${A} … \u{201c}the Premises\u{201d} means the whole of the Building`,
+          `${A} in this clause\n\n\u{201c}the Premises\u{201d} means the whole of the Building.`,
+        ).state,
+        'stitched',
+      ],
+    ];
+    // (1) red when every list mark is refused after such a blank line, or the opening-mark allowance
+    //     is removed; (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+});
+
+describe('#845 1b-i check 5: M6w — a `|` ends a table row only when its line holds another `|`', () => {
+  it('items3 rows 62 and 63: a prose line ending a lone `|` is no line start; a table row is', () => {
+    const F = SHALL_F;
+    const second = 'the Tenant shall pay the insurance rent';
+    const rows: Row[] = [
+      [
+        'items3 62: a prose line ending a lone `|`',
+        lq(
+          `${F} … ${second}`,
+          `${F} for its full reinstatement cost or |\n${second} at the end of each year.`,
+        ).state,
+        'not_found',
+      ],
+      [
+        'items3 63: a table row `| … | x |`',
+        lq(
+          `${F} … ${second}`,
+          `| ${F} for its full reinstatement cost | x |\n${second} at the end of each year.`,
+        ).state,
+        'stitched',
+      ],
+    ];
+    // (1) red when the condition is removed (a lone `|` ends a line again) or a table row stops
+    //     ending one; (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+});
+
+describe('#845 1b-i check 6: Outside-b — a `:` at a line’s end ends a clause only when it is not between two digits', () => {
+  it('items3 rows 38 and 39; `9:`, a blank line, `30` is refused with the cause; a `:` with a digit on one side only still ends a clause', () => {
+    const F = SHALL_F;
+    const A = 'The Tenant covenants with the Landlord as set out below';
+    const thirty = '30 minutes before the Tenant arrives at the Building';
+    const read = (quote: string, doc: string) => {
+      const c = lq(quote, doc);
+      return `${c.state}${c.cause === undefined ? '' : `+${c.cause}`}`;
+    };
+    const rows: Row[] = [
+      [
+        'items3 38: `at 9:`, a line break, `30`',
+        read(`${F} … ${thirty}`, `${F} for its cost at 9:\n${thirty}.`),
+        'not_found',
+      ],
+      [
+        'items3 39: `:`, a line break, a list (no digits)',
+        read(
+          `${F} … The Tenant shall pay the insurance rent`,
+          `${F} for its full reinstatement cost:\nThe Tenant shall pay the insurance rent at the end of each year.`,
+        ),
+        'stitched',
+      ],
+      [
+        '`9:`, a blank line, `30` (B3 applies)',
+        read(`${F} … ${thirty}`, `${F} for its cost at 9:\n\n${thirty}.`),
+        'not_found+blank_line_join',
+      ],
+      [
+        '`as follows:`, a line break, `1. The Tenant…` quoted with its label',
+        read(
+          `${A} … 1. The Tenant shall pay the rent quarterly`,
+          `${A} as follows:\n1. The Tenant shall pay the rent quarterly.`,
+        ),
+        'stitched',
+      ],
+      [
+        '`as follows:`, a blank line, `1. The Tenant…` quoted with its label',
+        read(
+          `${A} … 1. The Tenant shall pay the rent quarterly`,
+          `${A} as follows:\n\n1. The Tenant shall pay the rent quarterly.`,
+        ),
+        'stitched',
+      ],
+      [
+        '`under Clause 9:`, a line break, `the Tenant…`',
+        read(
+          `${A} … the Tenant shall pay the rent quarterly`,
+          `${A} under Clause 9:\nthe Tenant shall pay the rent quarterly.`,
+        ),
+        'stitched',
+      ],
+    ];
+    // (1) red when the condition is removed, or only the digit after (or only the digit before) is
+    //     read; (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+});
+
+describe('#845 1b-i check 1 (with M8r): an occurrence M8r refuses too is no candidate of either kind', () => {
+  it('`-` directly before the part after a blank line under a line with no stop reads `not_found` with no `cause`', () => {
+    const c = lq(`${SHALL_F} … ${SHALL_REST}`, shallDoc('\n\n-'));
+    // (1) red when M8r is left out of the held-back test (the occurrence would be held back, and the
+    //     quote refused with the cause); (2) prints the record's state and cause.
+    expect({ state: c.state, cause: c.cause ?? null }).toEqual({ state: 'not_found', cause: null });
+  });
+});
+
+describe('#845 1b-i check 7: M8r — a list mark counts only with at least one blank after it', () => {
+  it('every list mark, `#` and `##` included, at four counted line starts: directly before the word or with U+200B between `not_found`; with a space or U+00A0 between `stitched`; `-“the` refused and `- “the` kept', () => {
+    const lc = 'the Tenant shall pay the insurance rent';
+    const marks = [
+      ...codePoints(/^\p{Pd}$/u),
+      0x2212,
+      0x2796,
+      0x02d7,
+      0x2a,
+      0x2b,
+      0x3e,
+      0x7c,
+      0x2022,
+      0x2023,
+      0x2043,
+      0x204c,
+      0x204d,
+      0x2219,
+      0x25d8,
+      0x25e6,
+      0x29be,
+      0x29bf,
+      0x2619,
+      0x2765,
+      0x2767,
+      0x25cb,
+      0x25cf,
+      0x25a0,
+      0x25aa,
+      0xb7,
+      0xf0b7,
+    ].map((m) => ch(m));
+    const all = [...marks, '#', '##'];
+    const starts: Record<string, string> = {
+      'after `:`': ' for its full reinstatement cost:\n',
+      'after `;`': ' for its full reinstatement cost;\n',
+      'after a sentence': ' for its full reinstatement cost.\n',
+      'after a blank line under a sentence': ' for its full reinstatement cost.\n\n',
+    };
+    const between: Record<string, string> = {
+      'no blank': '',
+      'U+200B': '\u{200b}',
+      'a space': ' ',
+      'U+00A0': '\u{a0}',
+    };
+    const rows: Row[] = [];
+    for (const [where, line] of Object.entries(starts)) {
+      for (const m of all) {
+        for (const [gap, g] of Object.entries(between)) {
+          const name = `${[...m].map((c) => hex(c.codePointAt(0)!)).join('')} ${gap} ${where}`;
+          const want = gap === 'a space' || gap === 'U+00A0' ? 'stitched' : 'not_found';
+          rows.push([name, skipOver(`${line}${m}${g}`, lc), want]);
+        }
+      }
+    }
+    rows.push(
+      [
+        '-“the after `:`',
+        skipOver(' for its full reinstatement cost:\n-\u{201c}', `${lc}\u{201d}`),
+        'not_found',
+      ],
+      [
+        '- “the after `:`',
+        skipOver(' for its full reinstatement cost:\n- \u{201c}', `${lc}\u{201d}`),
+        'stitched',
+      ],
+    );
+    // (1) red when M8r is removed (a mark glued to its word, or with only U+200B after it, opens an
+    //     item again), or a blank after the mark stops counting; (2) prints the count and each
+    //     differing row.
+    expect({ marks: all.length, misses: misses(rows) }).toEqual({ marks: 55, misses: [] });
+  });
+});
+
+describe('#845 1b-i check 8: item 14 — a `.` ends a sentence only when the word before it holds a letter or a digit', () => {
+  it('items3 rows 106–113 and extra2 rows 125–128: a stop after `²` `ͺ` `§` `*` `½` `‿` or a sign set apart is no sentence end; after `2024`, `(see above)`, `5%`, `m²` it is', () => {
+    const F = SHALL_F;
+    const keep = 'Keep the Premises in good and substantial repair';
+    const tenant = 'The Tenant shall pay the insurance rent';
+    const onKeep = (label: string) =>
+      lq(
+        `${F} … ${keep}`,
+        `${F} for its full reinstatement cost.\n${label}. ${keep} at the end of each year.`,
+      ).state;
+    const onTenant = (before: string) =>
+      lq(`${F} … ${tenant}`, `${F} ${before}${tenant} at the end of each year.`).state;
+    const rows: Row[] = [
+      ['items3 106: `.`⏎`². Keep`', onKeep('\u{b2}'), 'not_found'],
+      [
+        'items3 107: `.`⏎U+037A`. Keep` (a spacing accent is no letter)',
+        onKeep('\u{37a}'),
+        'not_found',
+      ],
+      ['items3 108: `.`⏎`§. Keep`', onKeep('\u{a7}'), 'not_found'],
+      ['items3 109: `.`⏎`*. Keep`', onKeep('*'), 'not_found'],
+      ['items3 110: `.`⏎`½. Keep`', onKeep('\u{bd}'), 'not_found'],
+      ['items3 111: `.`⏎`‿. Keep`', onKeep('\u{203f}'), 'not_found'],
+      ['items3 112: `2024. The`', onTenant('for its cost, signed on 1 May 2024. '), 'stitched'],
+      ['items3 113: `(see above). The`', onTenant('for its cost (see above). '), 'stitched'],
+      ['extra2 125: `20 °. The` (a stated tightening)', onTenant('at 20 \u{b0}. '), 'not_found'],
+      ['extra2 126: `5%. The`', onTenant('at 5%. '), 'stitched'],
+      ['extra2 127: `m². The`', onTenant('of 40 m\u{b2}. '), 'stitched'],
+      ['extra2 128: `5%.`⏎`The`', onTenant('at 5%.\n'), 'stitched'],
+    ];
+    // (1) red when the condition is removed, or a spacing accent is counted as a letter (row 107);
+    //     (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+});
+
+describe('#845 1b-i check 9: walk M8 — a part found in two places that fit equally is placed where its sentence ends, if the rest still follows', () => {
+  it('items3 row 64 reads `stitched` uncut; probes M1 and R4 keep first-fit’s `stitched+cs[75]`, and so does a second placement with as many cut-short ends or a part under the floor; when the searches run out, first-fit stands', () => {
+    const read = (quote: string, doc: string) => {
+      const c = lq(quote, doc);
+      return `${c.state}${c.cut_short === true ? `+cs${JSON.stringify(c.cut_short_at)}` : ''}${c.cause === undefined ? '' : `+${c.cause}`}`;
+    };
+    const quote =
+      'The Tenant shall pay the rent … The Landlord shall repair the roof. The Tenant may assign the lease';
+    const m1 =
+      'The Tenant shall pay the rent quarterly. The Landlord shall repair the roof and walls. The Tenant may assign the lease with consent. The Landlord shall repair the roof.';
+    const r4 = `${m1} It is agreed that\n\nthe Tenant may assign the lease freely.`;
+    // The second placement returns, uncut in the middle, but the last piece is then cut short where
+    // first-fit's was not: as many cut-short ends, so first-fit stands.
+    const asMany =
+      'The Tenant shall pay the rent quarterly. The Landlord shall repair the roof and walls. The Tenant may assign the lease. The Landlord shall repair the roof. It is agreed. The Tenant may assign the lease with consent.';
+    // The second placement returns uncut, but `Rent is due` (11 characters) then stands alone, under
+    // the floor of 20; first-fit joins it to the next piece, so first-fit stands.
+    const floorQuote =
+      'The Tenant shall pay the rent … The Landlord shall repair the roof. Rent is due. The Tenant may assign the lease';
+    const underFloor =
+      'The Tenant shall pay the rent quarterly. The Landlord shall repair the roof and walls. Rent is due. The Tenant may assign the lease. The Landlord shall repair the roof. It is agreed. Rent is due. It is agreed. The Tenant may assign the lease.';
+    // The budget: the first piece 200 times over, which both placements walk, then the middle piece
+    // cut short 400 times and uncut only at the end. The second placement alone fits in the budget;
+    // after the first, the searches run out before the uncut place.
+    const P1 = 'The Tenant shall pay the rent quarterly';
+    const P2 = 'The Landlord shall repair the roof.';
+    const lead = `${P1} and the service charge. `;
+    const many = `${lead.repeat(200)}${`${P2.slice(0, -1)}, and more. `.repeat(400)}${P2}`;
+    const rows: Row[] = [
+      [
+        'items3 64: `a.m.` first, the uncut place last',
+        read(
+          'The Tenant shall pay … Monday rent is waived.',
+          'The Tenant shall pay by 9 a.m. Monday rent is waived on holidays only. Monday rent is waived.',
+        ),
+        'stitched',
+      ],
+      ['M1: the uncut place sits after the next part', read(quote, m1), 'stitched+cs[75]'],
+      [
+        'R4: after the uncut place, the next part only at a blank-line join',
+        read(quote, r4),
+        'stitched+cs[75]',
+      ],
+      [
+        'the second placement with as many cut-short ends',
+        read(`${quote}.`, asMany),
+        'stitched+cs[75]',
+      ],
+      [
+        'the second placement with a part under the floor',
+        read(floorQuote, underFloor),
+        'stitched+cs[75]',
+      ],
+      [
+        'the searches run out before the uncut place',
+        read(`${P1} … ${P2}`, many),
+        `stitched+cs[${200 * lead.length + P2.length - 1}]`,
+      ],
+    ];
+    // (1) red when the preference is removed (row 64), the second placement is adopted whenever it
+    //     returns, or without fewer cut-short ends (as many), or with a part under the floor, takes a
+    //     held-back candidate (R4), or runs on a budget of its own (the last row); (2) prints each
+    //     differing row.
+    expect(misses(rows)).toEqual([]);
+  });
 });
