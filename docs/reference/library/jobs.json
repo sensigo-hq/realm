@@ -253,7 +253,7 @@
       "precedence": 3,
       "title": "Read a run's record or export from a program",
       "description": "The run record's types, the evidence entry's, and the functions that read a run's phase and an entry's sources.",
-      "purpose": "A run's record (`RunRecord`) is one object that holds everything Realm knows about the run, and `realm run export` writes all of it into a bundle. `deriveRunPhase` gives a run's phase from its record, and `outputSourceOf` and `readSupplier` say where an evidence entry's output and supplier came from. A record written before Realm recorded how a run ended has no `sealed_by`: `classifyLegacySeal` gives the arm it would have carried, and `armToOutcome` the outcome an arm means. This page lists the record's types, the evidence entry's, and those functions.",
+      "purpose": "A run's record (`RunRecord`) is one object that holds everything Realm knows about the run, and `realm run export` writes all of it into a bundle. `deriveRunPhase` gives a run's phase from its record, and `outputSourceOf`, `codeSourceOf` and `readSupplier` say where an evidence entry's output, code and supplier came from. A record written before Realm recorded how a run ended has no `sealed_by`: `classifyLegacySeal` gives the arm it would have carried, and `armToOutcome` the outcome an arm means. This page lists the record's types, the evidence entry's, and those functions.",
       "handPages": [
         {
           "title": "Run record and export bundle format",
@@ -263,6 +263,7 @@
       "entryPoints": [
         "deriveRunPhase",
         "outputSourceOf",
+        "codeSourceOf",
         "readSupplier",
         "armToOutcome",
         "classifyLegacySeal",

@@ -71,6 +71,15 @@ export type CodeSource =
  * two say why no code was chosen: `not_registered` (the lookup found nothing under that name) and
  * `not_looked_up` (the attempt failed before any code was chosen: an adapter step whose service is
  * not declared, or whose service names no adapter). `name` is left out when it is not known.
+ *
+ * The writer rule, for later Realms: `codeSourceOf` reads only these forms, member by member, and
+ * answers `unreadable` for any member, word or form it does not declare, never a guess. A later Realm
+ * that adds even an informative member accepts that older readers say `unreadable` for those entries;
+ * one that changes what the other members mean writes a new form, never an added member, so a reader
+ * that skips unknown members is not misled either. A new kind of entry no code made, on a step that
+ * runs code, carries a `code_source` form this reader does not read (so older readers say
+ * `unreadable`), never a new marker alone; the field then also appears on an entry that is not an
+ * attempt, and such a form names no code.
  * @beta
  */
 export type StepCodeSource =

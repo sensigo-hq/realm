@@ -33,7 +33,7 @@ export interface Requirement {
 export function requirementForStep(
   step: string,
   stepDef: StepDefinition,
-  definition: WorkflowDefinition,
+  definition: Pick<WorkflowDefinition, 'services'>,
 ): Requirement | undefined {
   if (stepDef.execution !== 'auto') return undefined;
   if (stepDef.uses_service !== undefined) {
@@ -59,7 +59,7 @@ export function requirementForStep(
 export function codeRequirementForStep(
   step: string,
   stepDef: StepDefinition,
-  definition: WorkflowDefinition,
+  definition: Pick<WorkflowDefinition, 'services'>,
 ):
   | { step: string; kind: 'handler'; name: string }
   | { step: string; kind: 'adapter'; name?: string; service: string }

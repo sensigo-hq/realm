@@ -241,6 +241,9 @@ export {
   outputSourceOf,
 } from './engine/output-source.js';
 export type { OutputSourceAbsentCause } from './engine/output-source.js';
+// #828 unit 2d: which code made an evidence entry — its code source, or why the record has none.
+export { CODE_SOURCE_ABSENT_CAUSES, codeSourceOf } from './engine/code-source.js';
+export type { CodeSourceAbsentCause } from './engine/code-source.js';
 // issue #729 PR-0: the ways on — one vocabulary judged once in core (PR0-CONTRACT §1–§4): the verbs,
 // the parties, the codes and their facts, the one input contract per verb, the composer, the one
 // admission, the narrowing for a door, the one derivation of an agent's action word, and (T-1) the

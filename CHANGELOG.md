@@ -61,6 +61,7 @@ All notable changes to this project are documented here.
 - `QuoteCheck` gains `cause` and `join_at`: a quote that check_quotes refuses for joining text across a blank line is `not_found` with `cause: 'blank_line_join'` and the quote's offsets of each refused join, and its warning says to quote each part separately (#845).
 - Every registry entry records where its code came from (#828): the new types `CodeSource` and `ProjectSource`; `ExtensionRegistry`: `register` takes an optional source, `entry(kind, name)` returns it, and `copyEntry(from, kind, name)` copies an entry with its source; `@sensigo/realm-mcp` exports `projectSourceOf` (`projectSourceOf(module)`).
 - Each attempt's evidence entry of a step that runs a handler or an adapter records which code Realm chose for it, as `code_source` on `EvidenceSnapshot` (beta), typed `StepCodeSource`: Realm's built-in with Realm's version, a catalog adapter, the project's own module with its fingerprints or why they could not be read, or code a host registered, and whether it replaced a built-in; or why no code was chosen. `realm run export` and a library reply's `evidence` entries carry it; `inspect` and the MCP replies show it in a later release (#828).
+- `codeSourceOf` (beta), as `codeSourceOf(entry, definition)`, reads an evidence entry's `code_source`, or why it has none, as `CODE_SOURCE_ABSENT_CAUSES` (beta; its type `CodeSourceAbsentCause`) lists: `unreadable`, `not_a_code_entry`, `definition_unavailable`, `not_a_code_step`, `predates_code_source` (#828).
 
 ### Changed
 

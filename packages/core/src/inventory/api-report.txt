@@ -440,6 +440,15 @@ CLOCK_READ_CLASSES · value · public
   };
 
 CLOCK_SKEW_EPSILON_MS · value · internal
+CODE_SOURCE_ABSENT_CAUSES · value · beta
+  const CODE_SOURCE_ABSENT_CAUSES: readonly [
+      "unreadable",
+      "not_a_code_entry",
+      "definition_unavailable",
+      "not_a_code_step",
+      "predates_code_source"
+  ];
+
 CODE_TAGS · value · internal
 COND_TAGS · value · public
   const COND_TAGS: readonly [
@@ -892,6 +901,9 @@ CodeSource · type · beta
       readonly source: 'host_registered';
       readonly absent: 'code_text_unavailable';
   };
+
+CodeSourceAbsentCause · type · beta
+  type CodeSourceAbsentCause = (typeof CODE_SOURCE_ABSENT_CAUSES)[number];
 
 CodeTag · type · internal
 ComposedWays · type · internal
@@ -4788,6 +4800,13 @@ clockErrorSink · value · public
 
 closeModelAttempts · value · internal
 codeRequirementForStep · value · internal
+codeSourceOf · value · beta
+  function codeSourceOf(entry: Pick<EvidenceSnapshot, 'step_id' | 'kind' | 'output_summary' | 'diagnostics' | 'code_source'>, definition: Pick<WorkflowDefinition, 'steps' | 'services'> | undefined): {
+      source: StepCodeSource;
+  } | {
+      absent_cause: CodeSourceAbsentCause;
+  };
+
 codeTextOf · value · internal
 collectManifestSecretRefs · value · internal
 compareCanonical · value · internal
