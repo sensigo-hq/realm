@@ -87,7 +87,6 @@ import {
   renderReply,
   renderWaysOf,
   replyPlanOf,
-  safeTool,
   toolContentWithTwinOf,
   type WithDoorDisclosure,
   type McpAlsoEntry,
@@ -102,6 +101,7 @@ import {
   setForSubject,
   SAFE_TOOL_CONSTANT_RUNLESS,
 } from '../render-reply.js';
+import { limitedTool } from './caller-limits.js';
 import {
   assertToolStores,
   isReleaseLineRefusal,
@@ -1843,7 +1843,9 @@ export function registerGetRunState(
       // the object its JSON text serializes, checked against this before it leaves.
       outputSchema: runStateWireSchema(),
     },
-    safeTool(
+    limitedTool(
+      'get_run_state',
+      opts,
       async (args) => {
         const result = await handleGetRunState(args, opts);
         return toolContentWithTwinOf(
@@ -1904,6 +1906,8 @@ export function registerGetRunState(
         );
       },
       SAFE_TOOL_CONSTANT_RUNLESS,
+      // #625 named keys unit 2: a limits refusal carries its twin too (the schema's refusal arm).
+      runStateWireFloor,
     ),
   );
 }

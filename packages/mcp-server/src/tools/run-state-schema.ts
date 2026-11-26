@@ -106,7 +106,11 @@ export const RUN_STATE_FIRST_PUBLISHED = '0.50.0';
 export const RUN_STATE_ADDED_AFTER: Record<
   'ok' | 'refusal',
   { fields: Record<string, string>; words: Record<string, Record<string, string>> }
-> = { ok: { fields: {}, words: {} }, refusal: { fields: {}, words: {} } };
+> = {
+  // #625 named keys unit 2: the code of a call outside the caller's limits.
+  ok: { fields: {}, words: { 'basis.enactor.error_code': { CALL_OUTSIDE_LIMITS: '0.50.0' } } },
+  refusal: { fields: {}, words: { error_code: { CALL_OUTSIDE_LIMITS: '0.50.0' } } },
+};
 
 const receipt = z.looseObject({
   declared: openWord(DECLARED_STATES),

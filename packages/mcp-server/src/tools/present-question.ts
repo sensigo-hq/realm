@@ -30,7 +30,6 @@ import {
   mcpReplyOf,
   renderReply,
   replySubject,
-  safeTool,
   setForSubject,
   toolContentOf,
   MCP_ENVELOPE_TABLE,
@@ -39,6 +38,7 @@ import {
   type WithDoorDisclosure,
   type WithPersonBlock,
 } from '../render-reply.js';
+import { limitedTool } from './caller-limits.js';
 import { toolMeta } from '../tool-annotations.js';
 import { assertToolStores, markServedByTool, registryRole } from './assert-tool-stores.js';
 import { boundedRefusal } from './refusal-format.js';
@@ -256,7 +256,9 @@ export function registerPresentQuestion(
     },
     // #729 PR-3: inside safeTool, and every reply leaves through the door's walk with the set for
     // the run it names (M-1, F11).
-    safeTool(
+    limitedTool(
+      'present_question',
+      opts,
       async (args, extra) => {
         const call = formCallOf(opts, extra);
         const result = await handlePresentQuestion(args, opts, call);
