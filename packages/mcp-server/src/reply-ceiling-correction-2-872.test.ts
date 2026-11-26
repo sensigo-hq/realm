@@ -51,6 +51,17 @@ vi.mock('./render-reply.js', async (importOriginal) => {
       });
       return result;
     },
+    // CP-2: get_run_state's result sites compose through the twin's entry; the same record.
+    toolContentWithTwinOf: (...args: Parameters<typeof real.toolContentWithTwinOf>) => {
+      const result = real.toolContentWithTwinOf(...args);
+      handed.push({
+        reply: args[0],
+        disclosure: args[1],
+        ...(args[2] !== undefined ? { plan: args[2] } : {}),
+        text: result.content[0]!.text,
+      });
+      return result;
+    },
   };
 });
 
