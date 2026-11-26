@@ -3,7 +3,8 @@
 // `realm serve` its own key, cut one off, and show them.
 //
 // The keys live in `<home>/serve-keys.json` (`lib/serve-keys.ts`), which holds each key's SHA-256 and
-// never its text. `add` prints the new key once: stdout is exactly the key's text and one newline;
+// never its text. Unit 2: `add` also takes a key's limits (`--read-only`, `--allow <tools>`,
+// `--workflows <ids>`), and `list` shows them. `add` prints the new key once: stdout is exactly the key's text and one newline;
 // everything else goes to stderr. Exit 0 on success, 1 on every refusal, as `realm callback key`.
 // `add` and `remove` hold the home's `serve-keys.lock` (`takeServeKeysLock`) for their whole
 // read–change–write, so no change of two commands at once is lost. `add` and `list` read the home's
@@ -31,10 +32,12 @@ import {
   keyPath,
   newServeKey,
   readServeKeys,
+  SERVE_KEY_TOOLS,
   serveKeysPath,
   ServeKeysWriteRefused,
   writeServeKeys,
   type ServeKeyEntry,
+  type ServeKeyLimits,
   type ServeKeysRead,
 } from '../lib/serve-keys.js';
 
@@ -72,6 +75,65 @@ function parseExpires(value: string | undefined): Expires | undefined {
     }
   }
   return undefined;
+}
+
+/** What `add`'s limit options gave (unit 2); each list as typed, comma-separated. */
+export interface ServeKeyLimitFlags {
+  readonly readOnly?: boolean;
+  readonly allow?: string;
+  readonly workflows?: string;
+}
+
+/** A comma-separated option's items, each trimmed, or `null` when one is empty. */
+function itemsOf(value: string): string[] | null {
+  const items = value.split(',').map((item) => item.trim());
+  return items.some((item) => item === '') ? null : items;
+}
+
+/** The limits the options give (none: `{}`), or the refusal line. */
+function limitsOfFlags(
+  flags: ServeKeyLimitFlags,
+): { limits?: ServeKeyLimits } | { refusal: string } {
+  const readOnly = flags.readOnly === true;
+  if (readOnly && flags.allow !== undefined) {
+    return { refusal: `Error: --read-only and --allow cannot be used together. ${NOTHING}` };
+  }
+  const tools = flags.allow === undefined ? undefined : itemsOf(flags.allow);
+  if (tools === null) return { refusal: `Error: --allow has an empty item. ${NOTHING}` };
+  const workflows = flags.workflows === undefined ? undefined : itemsOf(flags.workflows);
+  if (workflows === null) return { refusal: `Error: --workflows has an empty item. ${NOTHING}` };
+  const unknown = tools?.find((tool) => !SERVE_KEY_TOOLS.includes(tool));
+  if (unknown !== undefined) {
+    return {
+      refusal: `Error: --allow names '${escapedKeyName(unknown)}', which is not a tool realm serve offers. ${NOTHING} Its tools: ${SERVE_KEY_TOOLS.join(', ')}.`,
+    };
+  }
+  // A key that could never call what its list names (the call is refused under --workflows).
+  if (tools?.includes('create_workflow') === true && workflows !== undefined) {
+    return {
+      refusal: `Error: --allow names create_workflow, which a key with --workflows cannot use. ${NOTHING}`,
+    };
+  }
+  if (!readOnly && tools === undefined && workflows === undefined) return {};
+  return {
+    limits: {
+      ...(readOnly ? { read_only: true as const } : {}),
+      ...(tools !== undefined ? { tools } : {}),
+      ...(workflows !== undefined ? { workflows } : {}),
+    },
+  };
+}
+
+/** A key's limits as `list` prints them: `limits: read-only; workflows invoices`. */
+function limitsWords(limits: ServeKeyLimits): string {
+  const parts = [
+    ...(limits.read_only === true ? ['read-only'] : []),
+    ...(limits.tools !== undefined ? [`tools ${limits.tools.join(', ')}`] : []),
+    ...(limits.workflows !== undefined
+      ? [`workflows ${limits.workflows.map(escapedKeyName).join(', ')}`]
+      : []),
+  ];
+  return `limits: ${parts.join('; ')}`;
 }
 
 /** The refusal for a key file that cannot be used (`list`'s form has no "No key was changed."). */
@@ -140,6 +202,7 @@ export async function serveKeyAdd(
   name: string,
   expiresFlag: string | undefined,
   deps: ServeKeyDeps = SERVE_KEY_DEPS,
+  limitFlags: ServeKeyLimitFlags = {},
 ): Promise<0 | 1> {
   if (!isKeyName(name)) {
     console.error(
@@ -152,6 +215,12 @@ export async function serveKeyAdd(
   const badExpires = `Error: --expires takes a number of days from 1 to ${MAX_DAYS}, a date after today and at most ${MAX_DAYS} days ahead (YYYY-MM-DD) or 'never'. ${NOTHING}`;
   if (expires === undefined) {
     console.error(badExpires);
+    warnHomeFileIfOpen(deps);
+    return 1;
+  }
+  const limited = limitsOfFlags(limitFlags);
+  if ('refusal' in limited) {
+    console.error(limited.refusal);
     warnHomeFileIfOpen(deps);
     return 1;
   }
@@ -206,6 +275,7 @@ export async function serveKeyAdd(
             : 'through' in expires
               ? new Date(Date.parse(`${expires.through}T00:00:00.000Z`) + DAY_MS).toISOString()
               : null,
+        ...(limited.limits !== undefined ? { limits: limited.limits } : {}),
       };
       try {
         writeServeKeys(home.path, [...keys, entry]);
@@ -255,7 +325,8 @@ export async function serveKeyList(deps: ServeKeyDeps = SERVE_KEY_DEPS): Promise
           key.expires_at === null
             ? 'does not end'
             : `works until ${keyInstant(key.expires_at)}${keyEnded(key, now) ? ' (ended)' : ''}`;
-        console.log(`${key.name}  made ${keyInstant(key.created_at)}  ${end}`);
+        const limits = key.limits !== undefined ? `  ${limitsWords(key.limits)}` : '';
+        console.log(`${key.name}  made ${keyInstant(key.created_at)}  ${end}${limits}`);
       }
     }
     warnIfOpen(path, read);
@@ -329,12 +400,28 @@ export function addServeKeyCommands(serve: Command): void {
       '--expires <when>',
       "when the key ends: a number of days (1 to 3650), a last day (YYYY-MM-DD) or 'never' (the default)",
     )
-    .action(async (name: string, opts: { expires?: string }) => {
-      if ((await serveKeyAdd(name, opts.expires)) === 1) process.exit(1);
-    });
+    .option('--read-only', 'the key may call only the reading tools')
+    .option('--allow <tools>', 'the key may call only these tools (comma-separated)')
+    .option(
+      '--workflows <ids>',
+      'the key may reach only these workflows and their runs (comma-separated)',
+    )
+    .action(
+      async (
+        name: string,
+        opts: { expires?: string; readOnly?: boolean; allow?: string; workflows?: string },
+      ) => {
+        const flags: ServeKeyLimitFlags = {
+          ...(opts.readOnly === true ? { readOnly: true } : {}),
+          ...(opts.allow !== undefined ? { allow: opts.allow } : {}),
+          ...(opts.workflows !== undefined ? { workflows: opts.workflows } : {}),
+        };
+        if ((await serveKeyAdd(name, opts.expires, SERVE_KEY_DEPS, flags)) === 1) process.exit(1);
+      },
+    );
   key
     .command('list')
-    .description('Show each key: its name, when it was made and when it ends')
+    .description('Show each key: its name, when it was made, when it ends and its limits')
     .action(async () => {
       if ((await serveKeyList()) === 1) process.exit(1);
     });
