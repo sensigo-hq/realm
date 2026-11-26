@@ -74,14 +74,17 @@ function platformFunctions(): ReadonlySet<unknown> {
     }
   };
   addOwn(globalThis, true);
-  const proc = read(() => (globalThis as { process?: { getBuiltinModule?: unknown } }).process);
-  const getBuiltinModule = read(() => proc?.getBuiltinModule);
-  if (typeof getBuiltinModule === 'function') {
-    for (const id of ['node:events', 'node:stream']) {
-      const exported: unknown = read(() => Reflect.apply(getBuiltinModule, proc, [id]));
-      if (typeof exported === 'function') found.add(exported);
-      if (isObject(exported)) addOwn(exported, false);
-    }
+  // Node's built-in-module loader, where this Node has one (22.3 and later): each call names its
+  // module as a literal, so the #616 one-loader scan can tell it never loads SQLite. Without the
+  // loader, or when it is not a function, the call gives nothing (its throw is caught).
+  const proc = read(() => globalThis.process);
+  const modules: unknown[] = [
+    read(() => proc?.getBuiltinModule?.('node:events')),
+    read(() => proc?.getBuiltinModule?.('node:stream')),
+  ];
+  for (const exported of modules) {
+    if (typeof exported === 'function') found.add(exported);
+    if (isObject(exported)) addOwn(exported, false);
   }
   for (const fn of [...found]) {
     let proto: unknown = read(() => (fn as { prototype?: unknown }).prototype);
