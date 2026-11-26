@@ -1214,33 +1214,46 @@ const admitsString = (nodes: readonly Json[]): boolean =>
   alternatives(nodes).some(
     (n) =>
       (typesOf(n).length === 0 || typesOf(n).includes('string')) &&
-      !['const', 'enum', 'pattern', 'format', 'maxLength', 'not'].some((k) => k in n),
+      !['const', 'enum', 'pattern', 'format', 'minLength', 'maxLength', 'not'].some((k) => k in n),
   );
-const SHAPED_TYPES = ['number', 'integer', 'boolean'];
+const NUMBER_OR_BOOLEAN = ['number', 'integer', 'boolean'];
+/** The kind of leaf the door shapes at a path, from its alternatives: a number or true/false when
+ *  one is there (even with a string beside it), else a string; none when no alternative is a leaf
+ *  (`null` stays `null`: `shapeOf`). */
+const leafKind = (walked: readonly Json[]): 'numberOrBoolean' | 'string' | undefined =>
+  walked.some((n) => typesOf(n).some((t) => NUMBER_OR_BOOLEAN.includes(t)))
+    ? 'numberOrBoolean'
+    : walked.some((n) => typesOf(n).includes('string'))
+      ? 'string'
+      : undefined;
+const isLeaf = (n: Json): boolean => leafKind([n]) !== undefined;
+const LEAF_WORDS = { numberOrBoolean: 'a number or true/false', string: 'a string' } as const;
 
 /**
  * Where the door writes a string when it withholds values (disclosure-walk.ts, `walkRow`), checked
  * against one arm of the schema: a `question` row's whole child becomes one sentence; under a
- * `value`, `bounded` or `choose` row every number and true/false leaf becomes its shape; a table's
- * or a map's node that is not the object it describes is walked as a value. Two rules the door
- * imposes: (a) a key no table classes is walked as a value — the receipt `disclosure` is attached
- * after the walk, so it is skipped by name at the root, and any other such key is a finding; (b) a
- * table chosen by its value is resolved for every value it can be chosen by.
+ * `value`, `bounded` or `choose` row every leaf (a number, a true/false or a string) becomes its
+ * shape, such as `‹number›` or `‹string, N characters›`; a table's or a map's node that is not the
+ * object it describes is walked as a value. Two rules the door imposes: (a) a key no table classes
+ * is walked as a value — the receipt `disclosure` is attached after the walk, so it is skipped by
+ * name at the root, and any other such key is a finding; (b) a table chosen by its value is
+ * resolved for every value it can be chosen by.
  */
 function doorAgainstSchema(table: ClassTable, arm: Json) {
   const findings = new Set<string>();
   const skipped: string[] = [];
   const rows = new Map<string, Set<string>>();
-  const shapedLeaves = new Set<string>();
+  const shapedLeaves = { numberOrBoolean: new Set<string>(), string: new Set<string>() };
   const met = (cls: string, path: string) => rows.set(cls, (rows.get(cls) ?? new Set()).add(path));
   const at = (path: string, key: string) => (path === '' ? key : `${path}.${key}`);
-  const shaped = (n: Json) => typesOf(n).some((t) => SHAPED_TYPES.includes(t));
-  /** Every number and true/false leaf of `walked` (alternatives at `path`) and below, as `walkValue`
-   *  shapes them; a string is admitted when any alternative at the path (`all`) admits one. */
+  /** Every leaf of `walked` (alternatives at `path`) and below — a number, a true/false or a
+   *  string — as `walkValue` shapes them; the shape is admitted when any alternative at the path
+   *  (`all`) admits a plain string. */
   const leaves = (walked: readonly Json[], path: string, all: readonly Json[] = walked): void => {
-    if (walked.some(shaped)) shapedLeaves.add(path);
-    if (walked.some(shaped) && !admitsString(all)) {
-      findings.add(`${path}: a number or true/false with no string beside it`);
+    const kind = leafKind(walked);
+    if (kind !== undefined) shapedLeaves[kind].add(path);
+    if (kind !== undefined && !admitsString(all)) {
+      findings.add(`${path}: ${LEAF_WORDS[kind]} with no plain string beside it`);
     }
     for (const n of walked) {
       for (const [key, child] of Object.entries((n['properties'] as Json | undefined) ?? {})) {
@@ -1285,8 +1298,8 @@ function doorAgainstSchema(table: ClassTable, arm: Json) {
   /** A node a table describes (`walkTable`): its entries when an array, its keys when an object. */
   const described = (tables: readonly ClassTable[], nodes: readonly Json[], path: string): void => {
     const alts = alternatives(nodes);
-    // Not the object the table describes (a number or true/false beside it): walked as a value.
-    leaves(alts.filter(shaped), path, alts);
+    // Not the object the table describes (a number, true/false or string beside it): walked as a value.
+    leaves(alts.filter(isLeaf), path, alts);
     for (const n of alts) {
       if (isNode(n['items'])) described(tables, [n['items']], `${path}[]`);
       for (const [key, child] of Object.entries((n['properties'] as Json | undefined) ?? {})) {
@@ -1336,7 +1349,10 @@ function doorAgainstSchema(table: ClassTable, arm: Json) {
     findings: [...findings].sort(),
     skipped,
     met: Object.fromEntries([...rows].map(([cls, paths]) => [cls, paths.size])),
-    shapedLeaves: shapedLeaves.size,
+    shapedLeaves: {
+      numberOrBoolean: shapedLeaves.numberOrBoolean.size,
+      string: shapedLeaves.string.size,
+    },
     questions: [...(rows.get('question') ?? [])].sort(),
   };
 }
@@ -1692,9 +1708,10 @@ describe('Q1 (#592) d2a — the published schema of get_run_state', () => {
 
   it('(e)(iv) d2c: wherever the door writes a string when it withholds values, the schema admits one — every row of both tables that is not a fact', () => {
     const [ok, refusal] = runStateSchemaFile()['anyOf'] as Json[];
-    // (a) red when a row the door withholds as a string — a question's sentence, a number or
-    //     true/false shown as its shape — is described with no string beside it, when a key no table
-    //     classes appears, or when a table chosen by its value meets no rule; (b) prints each path.
+    // (a) red when a row the door withholds as a string — a question's sentence, a number, a
+    //     true/false or a string shown as its shape — is described with no plain string beside it,
+    //     when a key no table classes appears, or when a table chosen by its value meets no rule;
+    //     (b) prints each path.
     expect({
       ok: doorAgainstSchema(RUN_STATE_SUMMARY_TABLE, ok!),
       refusal: doorAgainstSchema(MCP_ENVELOPE_TABLE, refusal!),
@@ -1706,17 +1723,18 @@ describe('Q1 (#592) d2a — the published schema of get_run_state', () => {
           'run_health[].evidence: a record of unknowns, which admits anything — no walk needed',
           'disclosure: the receipt, attached after the walk (never shaped)',
         ],
-        // What the cell met, so a zero is not a blind one: the rows by class, and the number and
-        // true/false leaves below them — every path where the file gives such a leaf a string.
+        // What the cell met, so a zero is not a blind one: the rows by class, and the leaves below
+        // them, by kind — the numbers and true/false (every path where the file gives such a leaf a
+        // string) and the strings.
         met: { value: 12, bounded: 12, choose: 7, question: 2 },
-        shapedLeaves: 135,
+        shapedLeaves: { numberOrBoolean: 135, string: 122 },
         questions: ['pending_gate.resolution_messages', 'pending_gate.resolved_message'],
       },
       refusal: {
         findings: [],
         skipped: ['disclosure: the receipt, attached after the walk (never shaped)'],
         met: { value: 2, bounded: 4 },
-        shapedLeaves: 0,
+        shapedLeaves: { numberOrBoolean: 0, string: 4 },
         questions: [],
       },
     });
