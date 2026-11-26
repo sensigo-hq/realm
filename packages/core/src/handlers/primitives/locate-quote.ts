@@ -1281,9 +1281,10 @@ const isKeptSign = (c: string | undefined): boolean => !isDash(c) && isNumberSym
 
 /** #845 (1b-i-n): where the label at `at` ends, or -1. A clause number as read 2 reads one: `(` with
  *  1–4 letters or digits and `)` (`(a)`, `(iv)`), or digits joined by `.` or closed by `.` or `)`
- *  with a blank after them (`6.2`, `12.`, never bare digits); or a list mark the canonical form
- *  drops (a run of `#` too) with a blank after it (#845, M8r). */
-function headLabelEnd(source: string, at: number): number {
+ *  with a blank after them (`6.2`, `12.`, never bare digits); or a list mark with a blank after it
+ *  (a run of `#` too; #845, M8r). A list mark that is also a kept sign (`+`, `>`, `|` …) is a label
+ *  only when it ends by `start`, where the part begins: the quote skipped it (correction 1). */
+function headLabelEnd(source: string, at: number, start: number): number {
   const first = stepOn(source, at);
   if (first.c === '(') {
     let n = 0;
@@ -1309,7 +1310,7 @@ function headLabelEnd(source: string, at: number): number {
     if (closed) j = close.at;
     return (dotted || closed) && isBlank(stepOn(source, j).c) ? j : -1;
   }
-  if (first.c === '#' || (isListMark(first.c) && !isKeptSign(first.c))) {
+  if (first.c === '#' || (isListMark(first.c) && (!isKeptSign(first.c) || first.at <= start))) {
     let j = first.at;
     if (first.c === '#')
       for (let p = stepOn(source, j); p.c === '#'; p = stepOn(source, j)) j = p.at;
@@ -1322,9 +1323,10 @@ function headLabelEnd(source: string, at: number): number {
  *  letter (`isCapital`, past invisible characters). From `from`, where the line begins, the walk
  *  passes blanks and invisible characters anywhere, opening marks, and at most one label
  *  (`headLabelEnd`). A `(` that opens a clause number is part of it, never an opening mark; a kept
- *  sign (`isKeptSign`) begins the first word. A second label, or a first word that begins with a
- *  lowercase letter, a digit, a kept sign or an uncased letter, does not hold. */
-function blankHeadHolds(source: string, from: number): boolean {
+ *  sign (`isKeptSign`) begins the first word, unless it is a list mark the quote skipped (the part
+ *  begins at `start`, after it). A second label, or a first word that begins with a lowercase
+ *  letter, a digit, a kept sign or an uncased letter, does not hold. */
+function blankHeadHolds(source: string, from: number, start: number): boolean {
   let labels = 0;
   let at = from;
   for (;;) {
@@ -1333,7 +1335,7 @@ function blankHeadHolds(source: string, from: number): boolean {
       at = p.at;
       continue;
     }
-    const label = headLabelEnd(source, at);
+    const label = headLabelEnd(source, at, start);
     if (label >= 0) {
       labels++;
       at = label;
@@ -1451,14 +1453,15 @@ function countedLineStart(source: string, at: number, strict: boolean): LineStar
  *  letter or an opening mark). At a line break that counts only because the line before ends a
  *  sentence, the same capital condition holds, or `numbered` (the part opens with a clause number
  *  and a capital). After a blank line under a line that ends nothing (#845, B3), the line's first
- *  word decides (#845 1b-i-n, `blankHeadHolds`); there the `.` that closes a short first word ends
- *  a sentence only before a capital letter (`stopsBlankLineWord`). */
+ *  word decides (#845 1b-i-n, `blankHeadHolds`, the part beginning at `start`); there the `.` that
+ *  closes a short first word ends a sentence only before a capital letter (`stopsBlankLineWord`). */
 function acceptedBefore(
   source: string,
   at: number,
   opening: boolean,
   numbered: boolean,
   strict: boolean,
+  start: number,
 ): boolean {
   // #845 (R-C2, R-A2): read back by code point, past invisible characters
   let p = stepBack(source, blanksBack(source, at));
@@ -1468,7 +1471,7 @@ function acceptedBefore(
   if (isLineBreak(c)) {
     const kind = lineStart(source, p.at, strict);
     // #845 (1b-i-n): after a blank line inside a sentence, the line's first word decides
-    if (kind === 'blank') return blankHeadHolds(source, p.at + c.length);
+    if (kind === 'blank') return blankHeadHolds(source, p.at + c.length, start);
     return kind === 'free' || (kind !== undefined && (opening || numbered));
   }
   if (c === ';') return true;
@@ -1513,8 +1516,10 @@ function partStartHolds(source: string, start: number, strict: boolean): boolean
   const openingMark = stepBack(source, first);
   const beforeMark = isOpeningMark(openingMark.c) ? blanksBack(source, openingMark.at) : -1;
   // Read 1.
-  if (acceptedBefore(source, first, opening, numbered, strict)) return true;
-  if (beforeMark >= 0 && acceptedBefore(source, beforeMark, true, numbered, strict)) return true;
+  if (acceptedBefore(source, first, opening, numbered, strict, start)) return true;
+  if (beforeMark >= 0 && acceptedBefore(source, beforeMark, true, numbered, strict, start)) {
+    return true;
+  }
   // Reads 2 and 3, the label ending right before the part, or before its opening mark.
   for (const end of beforeMark >= 0 ? [first, beforeMark] : [first]) {
     const after = end === first ? own : openingMark.c;
@@ -1524,7 +1529,7 @@ function partStartHolds(source: string, start: number, strict: boolean): boolean
       const kind = countedLineStart(source, label, strict);
       if (
         kind === 'blank'
-          ? blankHeadHolds(source, blanksBack(source, label))
+          ? blankHeadHolds(source, blanksBack(source, label), start)
           : kind !== undefined && isSentenceOpening(after)
       ) {
         return true;
@@ -1534,7 +1539,9 @@ function partStartHolds(source: string, start: number, strict: boolean): boolean
     if (mark >= 0 && blankAfterMark(source, mark, end === first ? start : openingMark.at)) {
       const kind = countedLineStart(source, mark, strict);
       if (
-        kind === 'blank' ? blankHeadHolds(source, blanksBack(source, mark)) : kind !== undefined
+        kind === 'blank'
+          ? blankHeadHolds(source, blanksBack(source, mark), start)
+          : kind !== undefined
       ) {
         return true;
       }

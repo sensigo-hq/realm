@@ -2016,7 +2016,8 @@ describe('#845 1b-i-n check 1: after a blank line inside a sentence, a piece who
       ['row 10: `= The…` with the sign', `${N_Q}= ${N_TT}`, nHead(`= ${N_TT}`)],
     ]);
     // GROUNDING for the routes (both read the same at ce898697). (1) `+ Keep…` is red when a list
-    //     mark the canonical form keeps is passed as a label; (2) prints each differing row.
+    //     mark the canonical form keeps is passed as a label though the quote includes it
+    //     (correction 1: it is passed only when the quote skips it); (2) prints each differing row.
     expect(misses(rows)).toEqual([]);
   });
 });
@@ -2217,6 +2218,43 @@ describe('#845 1b-i-n check 4: unchanged after a full stop', () => {
       ['`“not…`', N_Q + N_NR, `${END} pay. \u{201c}${N_NR}.`],
     ]);
     // GROUNDING: nothing in this unit can turn these red. (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------
+// #845 1b-i-n correction 1 (`prompts/fix-845-1b-i-n-correction-1.md`): a list mark the canonical form
+// keeps (`+`, `>`, `|` …), with a blank after it, at a blank line start: passed as the line's one list
+// mark when the quote skips it, as `-` is; the first word when the quote includes it.
+
+const N_KEEP_CAPITAL = 'Keep the Premises in good and substantial repair';
+const N_LANDLORD_LOWER = 'the Landlord shall keep the structure in good repair';
+
+describe('#845 1b-i-n correction 1: a kept-sign list mark after a blank line inside a sentence', () => {
+  it('C1-a: skipped onto a capital item, `> The Landlord…`, `+ Keep…` and `| Keep…` stay `stitched`; skipped onto a lowercase one, `> the Landlord…` is refused with `cause`', () => {
+    const rows = [
+      ...nStitched([
+        ['`> The Landlord…`, mark skipped', N_Q + N_LANDLORD, nMid(`> ${N_LANDLORD}`)],
+        ['`+ Keep…`, mark skipped', N_Q + N_KEEP_CAPITAL, nMid(`+ ${N_KEEP_CAPITAL}`)],
+        ['`| Keep…`, mark skipped', N_Q + N_KEEP_CAPITAL, nMid(`| ${N_KEEP_CAPITAL}`)],
+      ]),
+      ...nRefused([
+        ['`> the Landlord…`, mark skipped', N_Q + N_LANDLORD_LOWER, nMid(`> ${N_LANDLORD_LOWER}`)],
+      ]),
+    ];
+    // (1) red when a kept sign is never passed, as at 408a0073 (the three capital items then read
+    //     `not_found` with `cause`); (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it('C1-b: quoted with the sign, `> The Landlord…`, `+ Keep…` and `| Keep…` are refused with `cause`, as at 408a0073', () => {
+    const rows = nRefused([
+      ['`> The Landlord…` with the sign', `${N_Q}> ${N_LANDLORD}`, nMid(`> ${N_LANDLORD}`)],
+      ['`+ Keep…` with the sign', `${N_Q}+ ${N_KEEP_CAPITAL}`, nMid(`+ ${N_KEEP_CAPITAL}`)],
+      ['`| Keep…` with the sign', `${N_Q}| ${N_KEEP_CAPITAL}`, nMid(`| ${N_KEEP_CAPITAL}`)],
+    ]);
+    // (1) red when a kept sign is passed whether or not the quote includes it (each then reads
+    //     `stitched`); (2) prints each differing row.
     expect(misses(rows)).toEqual([]);
   });
 });
