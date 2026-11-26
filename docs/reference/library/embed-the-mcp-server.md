@@ -53,6 +53,7 @@ Where the docs teach it: [Core library: serve MCP from your own program](../core
 | [`LOAD_ERROR_CODES`](#load_error_codes) | const | Every code a reply's `basis.enactor.error_code` can hold: each error code, then `uncoded`. |
 | [`NOT_PRICED_CAUSES`](#not_priced_causes) | const | Why a request has no price. |
 | [`PRICE_SOURCE_CLASSES`](#price_source_classes) | const | Every class of source a priced request can name (`PricedBy.source_class`), in the type's order. |
+| [`READING_TOOLS`](#reading_tools) | const | The reading tools: every tool whose annotation is `readOnlyHint: true`, in the table's order. |
 
 ## Functions
 
@@ -314,7 +315,7 @@ interface PriceUsage {
 
 ### RealmMcpServerOptions
 
-interface · public · from `@sensigo/realm-mcp`
+interface · public (beta: limits): those members may change in a minor release until they settle · from `@sensigo/realm-mcp`
 
 What `createRealmMcpServer` is given: the four stores, which it requires, and the registry,
 prices and other settings it may take.
@@ -344,6 +345,12 @@ interface RealmMcpServerOptions {
     onSessionWithoutForms?: () => void;
     deprecationNotifications?: boolean;
     principal?: Principal;
+    limits?: {
+        caller: string;
+        readOnly?: true;
+        tools?: readonly string[];
+        workflows?: readonly string[];
+    };
     monotonicNow?: () => number;
 }
 ```
@@ -827,6 +834,7 @@ const LOAD_ERROR_CODES: readonly [
     "VALIDATION_CALLER_INVALID",
     "VALIDATION_OPTION_INVALID",
     "VALIDATION_CURSOR",
+    "CALL_OUTSIDE_LIMITS",
     "STEP_HANDLER_ERROR",
     "ENGINE_INTERNAL",
     "ENGINE_STORE_FAILED",
@@ -922,6 +930,18 @@ const PRICE_SOURCE_CLASSES: readonly [
     "economics",
     "price_list"
 ];
+```
+
+### READING_TOOLS
+
+const · beta: may change in a minor release until it settles · from `@sensigo/realm-mcp`
+
+The reading tools: every tool whose annotation is `readOnlyHint: true`, in the table's order. A key
+made with `--read-only` (or a server built with `limits.readOnly`) may call only these, so a reading
+tool added to the table is included with no other change.
+
+```ts
+const READING_TOOLS: readonly string[];
 ```
 
 ## Also used by this job
@@ -1079,6 +1099,9 @@ Names this job reaches whose entry is on another page.
 - [`ModelAttempt`](read-a-runs-record.md#modelattempt): One failed try of one of a step's model requests, as `model_attempts` keeps it on an evidence entry and on a drive-failure entry.
 - [`ModelFailureKind`](read-a-runs-record.md#modelfailurekind): What a failed model request needs before it can succeed: one of `MODEL_FAILURE_KINDS`.
 - [`ModelText`](read-a-runs-record.md#modeltext): The text of each model call made for a step, on its evidence entry (`EvidenceSnapshot.model_text`).
+- [`NOT_REMEMBERED_REASONS`](read-a-runs-record.md#not_remembered_reasons): Why a step with `remember:` remembered nothing on its entry (`NotRemembered.not_remembered`).
+- [`NotRemembered`](read-a-runs-record.md#notremembered): A step with `remember:` that remembered nothing, and why (`EvidenceSnapshot.remembered`).
+- [`NotRememberedReason`](read-a-runs-record.md#notrememberedreason): One of the words in `NOT_REMEMBERED_REASONS`: why a step remembered nothing (`NotRemembered.not_remembered`).
 - [`OpenGateDelta`](implement-a-store.md#opengatedelta): Opens a human gate on a claimed step.
 - [`OpeningGate`](implement-a-store.md#openinggate): The gate an `open_gate` delta opens, without its instants: everything a `PendingGate` holds but `opened_at` and `expires_at`.
 - [`OrphanArtifact`](implement-a-store.md#orphanartifact): One candidate orphan artifact — an absolute path this store owns, plus enough metadata for the caller to apply its own age floor.
@@ -1113,6 +1136,9 @@ Names this job reaches whose entry is on another page.
 - [`RegisterWay`](run-and-drive-a-run.md#registerway): Register the run's workflow again.
 - [`RegistryListing`](implement-a-store.md#registrylisting): What a registrar's diagnostic listing returns (`WorkflowRegistrar.listWithDiagnostics`).
 - [`ReleaseStepDelta`](implement-a-store.md#releasestepdelta): Releases a step's claim without settling the step.
+- [`RememberConfig`](define-and-load-a-workflow.md#rememberconfig): What a step keeps for later runs of its workflow (`StepDefinition.remember`).
+- [`RememberedItem`](read-a-runs-record.md#remembereditem): What a step remembered for later runs (`EvidenceSnapshot.remembered`).
+- [`RememberedStamp`](read-a-runs-record.md#rememberedstamp): What a step's entry records about its `remember:` (`EvidenceSnapshot.remembered`): what it remembered, or why it remembered nothing.
 - [`REQUEST_ENDPOINTS`](read-a-runs-record.md#request_endpoints): Which kind of address a request went to: the provider SDK's default (`default`) or another one (`custom`) (`UsageRecord.endpoint`).
 - [`RequestEndpoint`](read-a-runs-record.md#requestendpoint): One of the words in `REQUEST_ENDPOINTS`: whether a request went to the provider's own default address or a custom one (`UsageRecord.endpoint`).
 - [`RespondWay`](run-and-drive-a-run.md#respondway): Answer the run's open question.

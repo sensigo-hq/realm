@@ -29,7 +29,6 @@ import {
 // #729 PR-0 (Amendment 12): the MCP wire's reply type (the core reply is `EngineReply`).
 import {
   disclosureOfTool,
-  safeTool,
   toolContentOf,
   MCP_ENVELOPE_TABLE,
   type McpEnvelope,
@@ -38,6 +37,7 @@ import {
   setForSubject,
   SAFE_TOOL_CONSTANT_RUNLESS,
 } from '../render-reply.js';
+import { limitedTool } from './caller-limits.js';
 import { handleStartRun, type HandleRunStores } from './start-run.js';
 import { ArgsNumbersRefusal, checkArgsNumbersJoined } from './args-numbers.js';
 import { toolMeta } from '../tool-annotations.js';
@@ -795,7 +795,9 @@ export function registerCreateWorkflow(
         'Create a dynamic Realm workflow at runtime and immediately start a run. Use this when you have a multi-step task and want to track your own execution plan. Returns next_action pointing at your first step — proceed with execute_step as normal. Top-level fields: steps, metadata, and extensions (extensions is register-time, operator-only, and rejected here); any other field is dropped and returned as a warning.',
       inputSchema: boundedRefusal(createWorkflowArgsSchema),
     },
-    safeTool(
+    limitedTool(
+      'create_workflow',
+      opts,
       async (args) => {
         const result = await handleCreateWorkflow(args as CreateWorkflowArgs, opts);
         return toolContentOf(

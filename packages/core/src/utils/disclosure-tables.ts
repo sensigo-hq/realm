@@ -14,7 +14,10 @@ import type {
   DriveFailuresField,
   EvidenceSnapshot,
   ModelAttempt,
+  NotRemembered,
   PendingGate,
+  RememberedItem,
+  RememberedStamp,
   RunRecord,
   SealedBy,
   SkipDetail,
@@ -295,6 +298,19 @@ const MODEL_ATTEMPT_TABLE = {
   then: 'fact',
 } as const satisfies Row<ModelAttempt>;
 
+/** Gap 3, unit 1a: a step's `remembered` stamp, flat over its two arms. The key's texts and the
+ *  value are values, masked as an output's are; the memory's name, the key part's name and the choice
+ *  are names the author wrote; why nothing was remembered and when it expires are facts. */
+const REMEMBERED_TABLE = {
+  as: 'fact',
+  key: 'value',
+  value: 'value',
+  choice: 'fact',
+  expires_at: 'fact',
+  not_remembered: 'fact',
+  key_name: 'fact',
+} as const satisfies Record<KeysOfUnion<RememberedStamp>, DisclosureClass>;
+
 // #828 unit 2c: which code an attempt chose (`code_source`). Every key is a fact: closed words, names
 // realm resolved, hashes of files the record does not hold, and the path the identity also records.
 // One table per form, picked by the value, each with its own producer registry below.
@@ -435,6 +451,8 @@ export const EVIDENCE_TABLE = {
   answer: 'fact',
   client_prompt_requested: 'fact',
   principal: 'fact',
+  // Gap 3, unit 1a: what the step remembered for later runs, or why it remembered nothing.
+  remembered: { nested: REMEMBERED_TABLE },
 } as const satisfies Row<EvidenceSnapshot>;
 
 /** Correction 4 (I-9b, R43'): the output's digest derives from the output, the trace's from the
@@ -823,6 +841,20 @@ export const EVIDENCE_FACTS = {
   answer: 'id',
   principal: 'id',
 } as const satisfies FactProducers<typeof EVIDENCE_TABLE, EvidenceSnapshot>;
+
+/** Gap 3, unit 1a: per arm, as `CACHE_DIAGNOSTICS_FACTS`: over the union nothing would be forced. */
+export const REMEMBERED_FACTS = {
+  remembered: {
+    as: 'author_literal',
+    choice: 'author_literal',
+    expires_at: 'time',
+  } satisfies FactProducers<typeof REMEMBERED_TABLE, RememberedItem>,
+  not_remembered: {
+    as: 'author_literal',
+    not_remembered: 'enum',
+    key_name: 'author_literal',
+  } satisfies FactProducers<typeof REMEMBERED_TABLE, NotRemembered>,
+} as const;
 
 /** #828 unit 2c: per form, as `SKIP_DETAIL_FACTS`: over the union nothing would be forced. */
 export const CODE_SOURCE_FACTS = {
