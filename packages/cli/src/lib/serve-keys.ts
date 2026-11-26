@@ -240,10 +240,10 @@ export class ServeKeysWriteRefused extends Error {
 
 /**
  * Writes `keys` as the whole key file of `home` — format 2 when any key has a limit, else format 1 —
- * at 0600: a temporary file in the home (exclusive,
- * owner-only, synced), checked with the reader's own rules, then renamed over the old file. A new file
- * the reader would refuse is never renamed: {@link ServeKeysWriteRefused}. Throws the system's error
- * otherwise; the temporary file is removed in every outcome but the rename.
+ * at 0600: a temporary file in the home (exclusive, owner-only, synced), checked with the reader's
+ * own rules, then renamed over the old file. A new file the reader would refuse is never renamed:
+ * {@link ServeKeysWriteRefused}. Throws the system's error otherwise; the temporary file is removed
+ * in every outcome but the rename.
  */
 export function writeServeKeys(home: string, keys: readonly ServeKeyEntry[]): void {
   const target = serveKeysPath(home);

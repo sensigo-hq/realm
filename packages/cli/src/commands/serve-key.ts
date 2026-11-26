@@ -4,12 +4,13 @@
 //
 // The keys live in `<home>/serve-keys.json` (`lib/serve-keys.ts`), which holds each key's SHA-256 and
 // never its text. Unit 2: `add` also takes a key's limits (`--read-only`, `--allow <tools>`,
-// `--workflows <ids>`), and `list` shows them. `add` prints the new key once: stdout is exactly the key's text and one newline;
-// everything else goes to stderr. Exit 0 on success, 1 on every refusal, as `realm callback key`.
-// `add` and `remove` hold the home's `serve-keys.lock` (`takeServeKeysLock`) for their whole
-// read–change–write, so no change of two commands at once is lost. `add` and `list` read the home's
-// clock, so they open the store as other commands do (which creates the home and `realm.db`); `remove`
-// needs no clock and never opens the store, so a key can be cut off even when the store cannot open.
+// `--workflows <ids>`), and `list` shows them. `add` prints the new key once: stdout is exactly the
+// key's text and one newline; everything else goes to stderr. Exit 0 on success, 1 on every refusal,
+// as `realm callback key`. `add` and `remove` hold the home's `serve-keys.lock`
+// (`takeServeKeysLock`) for their whole read–change–write, so no change of two commands at once is
+// lost. `add` and `list` read the home's clock, so they open the store as other commands do (which
+// creates the home and `realm.db`); `remove` needs no clock and never opens the store, so a key can
+// be cut off even when the store cannot open.
 // The bodies are functions taking their collaborators, so a cell can inject them.
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
