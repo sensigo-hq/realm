@@ -25,6 +25,7 @@ import { FIXED_TERMINAL_REASONS } from '../utils/disclosure-tables.js';
 import { NAMES_SHOWN, listWords, quotedNames } from '../utils/list-words.js';
 import { shellWord } from '../utils/shell-word.js';
 import { checkPreconditions, preconditionHint, preconditionRefusal } from './precondition.js';
+import { notePreconditionHidingFailureText } from './failure-text.js';
 import { validateInputSchema } from '../validation/input-schema.js';
 import {
   describeValidationProblems,
@@ -192,11 +193,15 @@ export function checkPreClaim(args: {
           // the reply's suggestion too — the byte-identical raw form ends here.
           const value = escapedBoundedValue(failed.resolved_value);
           const refusal = preconditionRefusal(hint, failed.expression, value);
+          const precondition: PreconditionFacts = { expression: failed.expression, value };
+          // Gap 2, unit (iv-a2-i): a value read from a failure message's path, as its shape — what
+          // an MCP door shows under `hidden`, from this raw value (never a parse of the sentence).
+          notePreconditionHidingFailureText(precondition, hint, failed.resolved_value);
           return {
             refused_by: 'precondition',
             refusal,
             hint,
-            precondition: { expression: failed.expression, value },
+            precondition,
           };
         }
       }

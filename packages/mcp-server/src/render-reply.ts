@@ -68,6 +68,9 @@ import {
   discloseLeaf,
   failureTextMarkOf,
   failureTextShape,
+  holdsShapedFailureMessage,
+  noteHidingFailureWords,
+  withPreconditionHidingFailureText,
   shapeOf,
   discloseReply,
   discloseSplit,
@@ -185,6 +188,13 @@ export interface McpStablePrefix {
  * this removal is the only thing that keeps it from the agent.
  */
 export const BRIEF_STABLE_CHARS = 'brief_stable_chars';
+
+/**
+ * Gap 2, unit (iv-a2-i): the mark a `run_step` entry carries when its step's brief holds a failure
+ * message core showed as its shape (`holdsShapedFailureMessage`), so {@link toolContentOf} lists the
+ * entry's `prompt` in the receipt. A symbol: never serialized, never walked.
+ */
+export const FAILURE_MESSAGE_PROMPT: unique symbol = Symbol('realm.mcp.failure_message_prompt');
 
 /** A way the agent may read about but never counts as a next step: reading the run, ending it (A-1). */
 export interface McpAlsoEntry extends McpNextAction {
@@ -531,6 +541,9 @@ export const MCP_WAYS: WayRenderer<McpNextAction, McpHost> = {
       // caching 3-B (B2): the brief's boundary rides to the door under its internal key.
       ...(brief.prompt !== undefined && brief.stable_prefix !== undefined
         ? { [BRIEF_STABLE_CHARS]: brief.stable_prefix.chars }
+        : {}),
+      ...(brief.prompt !== undefined && holdsShapedFailureMessage(brief)
+        ? { [FAILURE_MESSAGE_PROMPT]: true }
         : {}),
     } as McpNextAction;
   },
@@ -1372,7 +1385,11 @@ export interface RenderedReply {
  * the person block with an operator's commands, only when the launching door injected an operator
  * route (P-6). One egress assertion at the exit: no claim token outside the opening reply's answer.
  */
-export function renderReply(reply: EngineReply, hostIn: McpHost): RenderedReply {
+export function renderReply(replyIn: EngineReply, hostIn: McpHost): RenderedReply {
+  // Gap 2, unit (iv-a2-i): under `hidden`, a refused step's precondition that read a failure message
+  // is composed from core's shaped twins (its value and its sentence), everywhere the reply says it.
+  const swapped = hostIn.failureText === 'hidden' ? preconditionsHidingFailureText(replyIn) : [];
+  const reply = swapped.length > 0 ? withSwappedPreconditions(replyIn) : replyIn;
   // #819 correction 1 (02 W1): whether the reply's own question has text to show
   const host: McpHost =
     reply.gate !== undefined && reply.gate.display === undefined
@@ -1450,7 +1467,10 @@ export function renderReply(reply: EngineReply, hostIn: McpHost): RenderedReply 
   if (tokenStrayed(envelope, narrowed)) return heldBackReply(reply, host);
   // Gap 2, unit (iv-b2a): under `hidden`, the text core marked as a failure's words, shaped where it
   // stands, after every other part of the envelope is composed (the hint's tails included).
-  const shown = host.failureText === 'hidden' ? hidingFailureText(reply, envelope) : envelope;
+  const shown =
+    host.failureText === 'hidden'
+      ? withCopiesShaped(hidingFailureText(reply, envelope), reply, swapped)
+      : envelope;
   const person = [
     personBlockOf(elsewhereEntries, reply.basis, host, heldOf(narrowed)),
     cutWayOf(reply, host),
@@ -1496,6 +1516,72 @@ function hidingFailureText(reply: EngineReply, envelope: McpEnvelope): McpEnvelo
   const marked: McpEnvelope & { [FAILURE_TEXT_SHAPED]?: readonly string[] } = {
     ...next,
     [FAILURE_TEXT_SHAPED]: paths,
+  };
+  return marked;
+}
+
+/** Gap 2, unit (iv-a2-i): the shaped values of the refused steps' preconditions in `reply` that
+ *  read a failure message (core's twins), in the order the reply holds them. */
+function preconditionsHidingFailureText(reply: EngineReply): string[] {
+  const entries = [
+    ...(reply.refusal !== undefined ? [reply.refusal] : []),
+    ...(reply.unavailable ?? []),
+  ];
+  return entries.flatMap((u) => {
+    if (u.code !== 'refused_before_claim') return [];
+    const shaped = withPreconditionHidingFailureText(u.facts);
+    return shaped?.precondition !== undefined ? [shaped.precondition.value] : [];
+  });
+}
+
+/** Gap 2, unit (iv-a2-i): whether `text` holds one of the shaped values swapped into its reply, so
+ *  its path is listed in the receipt. */
+export function holdsShapedValue(text: string | undefined, swapped: readonly string[]): boolean {
+  return text !== undefined && swapped.some((value) => text.includes(value));
+}
+
+/** `entry` with its precondition's shaped twins, when core noted them; else `entry` itself. */
+function swappedEntry(entry: Unavailable): Unavailable {
+  if (entry.code !== 'refused_before_claim') return entry;
+  const facts = withPreconditionHidingFailureText(entry.facts);
+  return facts !== undefined ? { ...entry, facts } : entry;
+}
+
+/** `reply` with every refused step's precondition swapped for core's shaped twins. */
+function withSwappedPreconditions(reply: EngineReply): EngineReply {
+  return {
+    ...reply,
+    ...(reply.refusal !== undefined ? { refusal: swappedEntry(reply.refusal) } : {}),
+    ...(reply.unavailable !== undefined
+      ? { unavailable: reply.unavailable.map(swappedEntry) }
+      : {}),
+  };
+}
+
+/**
+ * Gap 2, unit (iv-a2-i): `envelope` with the paths of the copies of a failure's message it shows as
+ * their shape added for the receipt: the gated step's instructions core shaped (`gate.agent_hint`),
+ * and the fields composed from a swapped precondition (`blocked_reason.suggestion`, `context_hint`)
+ * while they hold its shaped value. A `run_step` entry's prompt is listed by `toolContentOf`.
+ */
+function withCopiesShaped(
+  envelope: McpEnvelope,
+  reply: EngineReply,
+  swapped: readonly string[],
+): McpEnvelope {
+  const holds = (text: string | undefined): boolean => holdsShapedValue(text, swapped);
+  const paths = [
+    ...(holdsShapedFailureMessage(reply.gate) && envelope.gate?.agent_hint !== undefined
+      ? ['gate.agent_hint']
+      : []),
+    ...(holds(envelope.blocked_reason?.suggestion) ? ['blocked_reason.suggestion'] : []),
+    ...(holds(envelope.context_hint) ? ['context_hint'] : []),
+  ];
+  if (paths.length === 0) return envelope;
+  const before: McpEnvelope & { [FAILURE_TEXT_SHAPED]?: readonly string[] } = envelope;
+  const marked: McpEnvelope & { [FAILURE_TEXT_SHAPED]?: readonly string[] } = {
+    ...envelope,
+    [FAILURE_TEXT_SHAPED]: [...(before[FAILURE_TEXT_SHAPED] ?? []), ...paths],
   };
   return marked;
 }
@@ -1663,8 +1749,11 @@ export function renderWaysOf(
   pace: Pace;
   person?: string;
   next_sentence: string;
+  /** Gap 2, unit (iv-a2-i), correction 1: the shaped values of the refused steps' preconditions
+   *  swapped in under `hidden` ({@link holdsShapedValue} tells a caller which text holds one). */
+  swapped: readonly string[];
 } {
-  const reply = {
+  const built = {
     ...composed,
     command: 'get_run_state',
     run_id: '',
@@ -1677,6 +1766,10 @@ export function renderWaysOf(
     errors: [],
     context_hint: '',
   } as EngineReply;
+  // Gap 2, unit (iv-a2-i), correction 1: under `hidden`, the one swap `renderReply` makes, before
+  // narrowing, so the sentence of what comes next says core's shaped twins too.
+  const swapped = host.failureText === 'hidden' ? preconditionsHidingFailureText(built) : [];
+  const reply = swapped.length > 0 ? withSwappedPreconditions(built) : built;
   const narrowed = narrowReply(reply, host);
   const progress = agentProgressWays(narrowed);
   // #715 (b) (03 §C; Amendment 12b): the pace at the composition's reading (`basis.as_of`); its
@@ -1705,6 +1798,7 @@ export function renderWaysOf(
     pace,
     ...(person !== undefined ? { person } : {}),
     next_sentence: nextSentence(narrowed, false),
+    swapped,
   };
 }
 
@@ -2329,16 +2423,14 @@ function composed(
   guardWayOut: string | undefined,
 ): { content: ToolResult['content']; twin: Record<string, unknown> } {
   const person = reply[PERSON_BLOCK];
-  // Gap 2, unit (iv-b1): the fields the composer shaped under the failure-text setting, read from the
-  // reply as given; every walk (the ceiling's cut copies too) lists those it meets.
-  const shapedPaths = reply[FAILURE_TEXT_SHAPED];
-  const walkOptions =
-    shapedPaths !== undefined && shapedPaths.length > 0
-      ? { failureTextShaped: new Set(shapedPaths) }
-      : {};
   // Caching 3-B (B2): each `run_step` entry's boundary, computed on the RAW reply before the first
   // walk, so the ceiling's cut copies (`fitted`) inherit it; the internal key goes from every entry.
   const raw = withStablePrefixes(reply, disclosure) as Record<string, unknown>;
+  // Gap 2, unit (iv-b1): the fields the composer shaped under the failure-text setting, read from the
+  // reply as given; every walk (the ceiling's cut copies too) lists those it meets. Unit (iv-a2-i):
+  // with every `run_step` entry's prompt core shaped, at any depth.
+  const shapedPaths = [...(reply[FAILURE_TEXT_SHAPED] ?? []), ...shapedPromptPaths(raw, '')];
+  const walkOptions = shapedPaths.length > 0 ? { failureTextShaped: new Set(shapedPaths) } : {};
   const walk = (r: Readonly<Record<string, unknown>>): Record<string, unknown> =>
     discloseReply(r, disclosure.set, disclosure.audience, disclosure.table, walkOptions) as Record<
       string,
@@ -2372,6 +2464,23 @@ function composed(
 interface Sent {
   text: string;
   shown: Record<string, unknown>;
+}
+
+/**
+ * Gap 2, unit (iv-a2-i): the dotted paths, in the walk's spelling (`next_actions[0].prompt`,
+ * `started[1].next_actions[0].prompt`), of the prompt of every `run_step` entry in `node` that carries
+ * {@link FAILURE_MESSAGE_PROMPT}, at any depth.
+ */
+function shapedPromptPaths(node: unknown, path: string): string[] {
+  if (Array.isArray(node))
+    return node.flatMap((item, i) => shapedPromptPaths(item, `${path}[${i}]`));
+  if (node === null || typeof node !== 'object') return [];
+  const own = node as Record<string | symbol, unknown>;
+  const at = (key: string): string => (path === '' ? key : `${path}.${key}`);
+  return [
+    ...(own[FAILURE_MESSAGE_PROMPT] === true ? [at('prompt')] : []),
+    ...Object.keys(own).flatMap((key) => shapedPromptPaths(own[key], at(key))),
+  ];
 }
 
 /**
@@ -2563,24 +2672,33 @@ export function environmentSet(
  * The door's disclosure from a host's options: its provider's set per reply; with no provider, the
  * environment's set read per reply, cause `embedder_none`; a provider that throws gives the
  * environment's set with cause `load_failed`, and the throw is logged through the masked stderr.
+ * Gap 2, unit (iv-a2-i): under the failure-text setting `hidden`, every arm's set is handed out as
+ * the door's own copy, marked for core's renders (`noteHidingFailureWords`): a prompt and a gated
+ * step's instructions show a failure message as its shape. The provider's object is never marked, so
+ * a `shown` server sharing it is unchanged; under `shown` the set is handed out as it is.
  */
-export function doorDisclosureOf(options?: {
-  disclosureProvider?: (
-    definition: WorkflowDefinition | undefined,
-    run?: RunRecord,
-  ) => Promise<DisclosureSet>;
-  disclosure?: { notSecret?: string[] };
-}): DoorDisclosure {
+export function doorDisclosureOf(
+  options?: {
+    disclosureProvider?: (
+      definition: WorkflowDefinition | undefined,
+      run?: RunRecord,
+    ) => Promise<DisclosureSet>;
+    disclosure?: { notSecret?: string[] };
+  },
+  failureText: 'shown' | 'hidden' = 'shown',
+): DoorDisclosure {
   const notSecret = options?.disclosure?.notSecret;
   const provider = options?.disclosureProvider;
+  const handedOut = (set: DisclosureSet): DisclosureSet =>
+    failureText === 'hidden' ? noteHidingFailureWords({ ...set }) : set;
   return {
     async setFor(definition, run) {
-      if (provider === undefined) return environmentSet('embedder_none', notSecret);
+      if (provider === undefined) return handedOut(environmentSet('embedder_none', notSecret));
       try {
-        return await provider(definition, run);
+        return handedOut(await provider(definition, run));
       } catch (err) {
         logMasked(`realm-mcp: the disclosure provider failed: ${String(err)}`);
-        return environmentSet('load_failed', notSecret);
+        return handedOut(environmentSet('load_failed', notSecret));
       }
     },
   };

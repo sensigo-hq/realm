@@ -93,7 +93,13 @@ import {
   failureMessagesWithOverlay,
   handlerAbortHint,
 } from './settlement.js';
-import { carriesFailureWords, failureTextShape, noteFailureText } from './failure-text.js';
+import {
+  carriesFailureWords,
+  failureTextShape,
+  hidesFailureWords,
+  noteFailureText,
+  noteShapedFailureMessage,
+} from './failure-text.js';
 import type {
   SettleStepDelta,
   SettlementResult,
@@ -4962,7 +4968,9 @@ async function executeStepBody(
     };
 
     // #715 (b) (02 §D.4, D6-22): the instructions ride the opening reply (never stored) — rendered at
-    // that reply's reading, the opening write's `at`.
+    // that reply's reading, the opening write's `at`. Gap 2, unit (iv-a2-i): a door's `hidden` set
+    // shows each failure message they read as its shape (the question's mint above never does).
+    let hintShaped = false;
     const gateInstructionsAt = (at: Date): string | undefined =>
       stepDef!.instructions !== undefined
         ? renderTemplate(
@@ -4980,6 +4988,15 @@ async function executeStepBody(
                     disclosure: {
                       set: options.disclosure,
                       tier: tierFor(options.disclosure.audience),
+                      ...(hidesFailureWords(options.disclosure)
+                        ? {
+                            failureMessagesShaped: {
+                              onShaped: () => {
+                                hintShaped = true;
+                              },
+                            },
+                          }
+                        : {}),
                     },
                   }
                 : {}),
@@ -5128,6 +5145,20 @@ async function executeStepBody(
     // issue #291 ([F-A2-6]): the absolute first-due notify-clock timestamp, when reminder_seconds
     // was declared.
     const gateOpenDueState = computeGateDueState(writtenGate, result.at);
+    const agentHint = gateInstructionsAt(result.at);
+    const openingGate = {
+      gate_id,
+      step_name,
+      preview: output,
+      choices,
+      ...(gateDisplay !== undefined ? { display: gateDisplay } : {}),
+      ...(agentHint !== undefined ? { agent_hint: agentHint } : {}),
+      response_spec: { choices },
+      ...(writtenGate.expires_at !== undefined ? { expires_at: writtenGate.expires_at } : {}),
+      ...(gateOpenDueState.next_reminder_due_at !== undefined
+        ? { first_reminder_due_at: gateOpenDueState.next_reminder_due_at }
+        : {}),
+    };
     return {
       command: options.command,
       run_id: options.runId,
@@ -5144,21 +5175,8 @@ async function executeStepBody(
         presented: 'with_gate',
         ...(gateClaimToken !== undefined ? { opening_token: gateClaimToken } : {}),
       }),
-      gate: {
-        gate_id,
-        step_name,
-        preview: output,
-        choices,
-        ...(gateDisplay !== undefined ? { display: gateDisplay } : {}),
-        ...((hint) => (hint !== undefined ? { agent_hint: hint } : {}))(
-          gateInstructionsAt(result.at),
-        ),
-        response_spec: { choices },
-        ...(writtenGate.expires_at !== undefined ? { expires_at: writtenGate.expires_at } : {}),
-        ...(gateOpenDueState.next_reminder_due_at !== undefined
-          ? { first_reminder_due_at: gateOpenDueState.next_reminder_due_at }
-          : {}),
-      },
+      // Unit (iv-a2-i): marked when its hint holds a shaped failure message, for the receipt.
+      gate: hintShaped ? noteShapedFailureMessage(openingGate) : openingGate,
     };
   }
 
