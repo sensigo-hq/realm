@@ -364,6 +364,33 @@ describe("gap 3 (1b-i), check 5 — a gated writer's own choice is found", () =>
     //     checked); (b) prints the verdict.
     expect(judge(text)).toEqual({ loads: true, errors: [], findings: [], notChecked: [] });
   });
+
+  it("a gated writer's own field its answer does not declare is still refused", () => {
+    const text = wf([
+      '  w:',
+      '    description: w',
+      '    execution: agent',
+      '    trust: human_confirmed',
+      '    output_schema:',
+      '      type: object',
+      '      additionalProperties: false',
+      '      properties:',
+      '        email: { type: string }',
+      '      required: [email]',
+      '    remember:',
+      '      as: offers',
+      '      key: { email: context.resources.w.emial }',
+      '      keep_days: 90',
+    ]);
+    // (a) red when every own field of a gated writer is found, not only `choice`; (b) prints them.
+    expect(judge(text).findings).toEqual([
+      unresolvable(
+        'key.email',
+        `Step 'w': remember 'offers' key 'email' reads 'context.resources.w.emial', but step 'w' has no field 'emial' there, and its schema allows no other fields. Did you mean 'email'? (line ${lineOf(text, 'key:')})`,
+        'email',
+      ),
+    ]);
+  });
 });
 
 describe('gap 3 (1b-i), check 6 — one set of key names per memory', () => {
@@ -473,6 +500,76 @@ describe('gap 3 (1b-i), check 7 — a block the loader refuses', () => {
         `Step 'a': 'remember.key' must name at least one part, each a path such as context.resources.<step>.<field>. (line ${lineOf(text, 'remember:')})`,
       ],
       findings: [],
+      notChecked: [],
+    });
+  });
+
+  for (const [form, part] of [
+    ['blank', "'   '"],
+    ['a number', '5'],
+  ] as const) {
+    it(`a key part that is ${form} gives 1a's refusal alone`, () => {
+      const text = wf([
+        '  a:',
+        '    description: a',
+        '    execution: auto',
+        '    handler: h',
+        '    remember:',
+        '      as: offers',
+        `      key: { email: ${part} }`,
+        '      keep_days: 90',
+      ]);
+      // (a) red when a part that is not a path is judged as one (a finding), or the check throws;
+      //     (b) prints the verdict.
+      expect(judge(text)).toEqual({
+        loads: false,
+        errors: [
+          `Step 'a': 'remember.key' must name at least one part, each a path such as context.resources.<step>.<field>. (line ${lineOf(text, 'remember:')})`,
+        ],
+        findings: [],
+        notChecked: [],
+      });
+    });
+  }
+
+  it('a block refused for reading a failure message is left out of the key-names rule; its path is still judged', () => {
+    const text = wf(
+      ['  c:', '    description: c', '    execution: auto', '    handler: h'],
+      [
+        '  a:',
+        '    description: a',
+        '    execution: auto',
+        '    handler: h',
+        '    depends_on: [c]',
+        '    remember:',
+        '      as: offers',
+        '      key: { email: context.resources.$settlement.c.message }',
+        '      keep_days: 90',
+      ],
+      [
+        '  b:',
+        '    description: b',
+        '    execution: auto',
+        '    handler: h',
+        '    remember:',
+        '      as: offers',
+        '      key: { other: run.params.email }',
+        '      keep_days: 90',
+      ],
+    );
+    // (a) red when a block the schema accepts but another check refuses is counted toward the
+    //     key-names rule (a second error); (b) prints the verdict.
+    expect(judge(text)).toEqual({
+      loads: false,
+      errors: [
+        `Step 'a': 'remember' can't read a step's failure message ('context.resources.$settlement.c.message'): a memory outlives the run, and a failure's words can carry anything the failed request echoed back. (line ${lineOf(text, '    remember:')})`,
+      ],
+      findings: [
+        uncertain(
+          'key.email',
+          `Step 'a': remember 'offers' key 'email' reads 'context.resources.$settlement.c.message', which may be absent when this step remembers ('message' is set only when step 'c' failed, or took its default answer after its model request failed); when it is absent, the step remembers nothing. (line ${lineOf(text, 'key: { email')})`,
+        ),
+      ],
       notChecked: [],
     });
   });
