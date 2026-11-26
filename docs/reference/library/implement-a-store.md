@@ -2396,9 +2396,12 @@ RunRecord might ever carry":
    never a behavior change. Joining this CLOSED set (rather than an open one) is deliberate:
    bumping it forces every full-set-declaring store's own fidelity TCK to grow two new cases at
    the SAME compile, so a store cannot silently drift out of sync with what settleStep needs.
+ - `'pending_gate'`: the stored gate, every key kept. A store that does not declare it makes
+   `--failure-text hidden` show a gate's whole question as its length on a run with a failure
+   message, unless the gate's `resolved_message_shaped` survived. Added after version 0.50.0.
 
 ```ts
-type LoadBearingRunRecordField = 'capability_blocks' | 'workflow_context_snapshots' | 'extension_identity' | 'validation_rejections' | 'defaulted_steps' | 'settled' | 'finalizer_ledger' | 'sealed_by';
+type LoadBearingRunRecordField = 'capability_blocks' | 'workflow_context_snapshots' | 'extension_identity' | 'validation_rejections' | 'defaulted_steps' | 'settled' | 'finalizer_ledger' | 'sealed_by' | 'pending_gate';
 ```
 
 ### MarkFinalizerResult

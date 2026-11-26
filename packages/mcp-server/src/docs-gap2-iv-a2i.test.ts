@@ -26,10 +26,11 @@ describe('gap 2 (iv-a2-i), check 10 — the words', () => {
   it('run-state-and-health.md: what hidden shows of a copy (Words 1)', () => {
     // Executed by checks 1 (the prompt: plain, | truncate, the dump), 3 (gate.agent_hint), 4 (the
     // when, the guard and the precondition values), 2 (the not-kept marker under both settings) and
-    // 5 (the stored question's words). The four copies Realm cannot see are not built (Not built).
+    // 5 (the stored question's words); the question's sentence by unit (iv-a2-ii)'s
+    // question-hidden-iva2ii.test.ts. The four copies Realm cannot see are not built (Not built).
     claim(
       RUN_STATE,
-      "Under `hidden`, a copy a workflow makes of a failure's message through `$settlement.<step>.message` is shown as its length too, before any filter: in a step's prompt (`next_actions[].prompt`), in a gated step's instructions (`gate.agent_hint`), and in the value a condition read (`skip_details`, a guard's `abort_context.conditions`, a precondition's refusal). A message already over 500 characters reads `‹N characters, not kept›` either way. An approval question that reads the message still shows its words to an assistant under `hidden`. A copy Realm cannot see is never shaped: a step that copies the message into its own output, a gate's preview of that output, an agent's own answer, and a run's parameters. Added after version 0.50.0.",
+      "Under `hidden`, a copy a workflow makes of a failure's message through `$settlement.<step>.message` is shown as its length too, before any filter: in a step's prompt (`next_actions[].prompt`), in a gated step's instructions (`gate.agent_hint`), and in the value a condition read (`skip_details`, a guard's `abort_context.conditions`, a precondition's refusal). A message already over 500 characters reads `‹N characters, not kept›` either way. An approval question that reads the message shows it to an assistant as its length too (`gate.display`, `pending_gate.resolved_message`); people still see its words. A copy Realm cannot see is never shaped: a step that copies the message into its own output, a gate's preview of that output, an agent's own answer, and a run's parameters. Added after version 0.50.0.",
     );
   });
 

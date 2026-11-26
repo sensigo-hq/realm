@@ -53,6 +53,9 @@ import type { CallbackRegistration, CallbackStore } from './callback-store.js';
  *    never a behavior change. Joining this CLOSED set (rather than an open one) is deliberate:
  *    bumping it forces every full-set-declaring store's own fidelity TCK to grow two new cases at
  *    the SAME compile, so a store cannot silently drift out of sync with what settleStep needs.
+ *  - `'pending_gate'`: the stored gate, every key kept. A store that does not declare it makes
+ *    `--failure-text hidden` show a gate's whole question as its length on a run with a failure
+ *    message, unless the gate's `resolved_message_shaped` survived. Added after version 0.50.0.
  * @public
  */
 export type LoadBearingRunRecordField =
@@ -66,7 +69,12 @@ export type LoadBearingRunRecordField =
   // issue #367: the recorded seal fact. Its consumer profile is the strongest in this set — it is
   // `deriveRunPhase`'s FIRST input, so a store that drops it silently changes what every reader
   // believes the run's outcome was. A `settleStep`-declaring store MUST declare it.
-  | 'sealed_by';
+  | 'sealed_by'
+  // Gap 2, unit (iv-a2-ii): `'pending_gate'`: the stored gate, every key kept. A store that does not
+  // declare it makes `--failure-text hidden` show a gate's whole question as its length on a run with
+  // a failure message, unless the gate's `resolved_message_shaped` survived. Added after version
+  // 0.50.0.
+  | 'pending_gate';
 
 /**
  * What a run store is given to create a run: the workflow and its version, the params, and an

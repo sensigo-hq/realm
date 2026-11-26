@@ -514,6 +514,7 @@ interface PendingGate {
     owner?: string;
     answerers?: string[];
     resolved_message?: string;
+    resolved_message_shaped?: string;
     resolution_messages?: Record<string, string>;
     expires_at?: string;
     on_expiry?: 'settle_default' | 'abort';

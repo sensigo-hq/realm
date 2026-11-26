@@ -512,6 +512,7 @@ export class InMemoryStore implements RunStore {
     'settled',
     'finalizer_ledger',
     'sealed_by', // issue #367 — declaration-coherence with settleStep
+    'pending_gate', // gap 2, unit (iv-a2-ii): the gate is stored as given, every key kept
   ]);
 
   /**

@@ -1395,6 +1395,10 @@ export {
   holdsShapedFailureMessage,
   conditionValueHidingFailureText,
   withPreconditionHidingFailureText,
+  // Gap 2, unit (iv-a2-ii): the mark on a reply's gate whose question core showed as its twin, and
+  // the question a stored gate is shown as under `hidden`.
+  holdsShapedQuestion,
+  questionHidingFailureText,
 } from './engine/failure-text.js';
 export type { FailureTextMark } from './engine/failure-text.js';
 

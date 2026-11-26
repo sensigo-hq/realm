@@ -67,6 +67,8 @@ export const PENDING_GATE_TABLE = {
   owner: 'fact',
   answerers: 'fact',
   resolved_message: 'question',
+  // Gap 2, unit (iv-a2-ii): the question's twin, for an assistant under `hidden`.
+  resolved_message_shaped: 'question',
   resolution_messages: 'question',
   expires_at: 'fact',
   on_expiry: 'fact',

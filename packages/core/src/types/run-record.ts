@@ -1434,6 +1434,12 @@ export interface PendingGate {
    */
   resolved_message?: string;
   /**
+   * The gate's question with each failure message it read as its length (`‹string, N characters›`),
+   * for an assistant under `--failure-text hidden`. Present only when the question read one. Added
+   * after version 0.50.0.
+   */
+  resolved_message_shaped?: string;
+  /**
    * Per-choice messages for Slack thread resolution confirmation.
    * Copied verbatim from gate.resolution_messages on the step definition.
    * The CLI reads the message for the chosen key and posts it to the thread.

@@ -540,6 +540,17 @@ export function holdsFailureMessages(path: string): boolean {
   return segments.every((s, i) => FAILURE_MESSAGE_LEAF[i] === '*' || FAILURE_MESSAGE_LEAF[i] === s);
 }
 
+/**
+ * Gap 2, unit (iv-a2-ii): whether any placeholder of `template` reads a path that holds a failure
+ * message ({@link holdsFailureMessages}): the only placeholders a shape mode can change, so a question
+ * whose template has none is never rendered a second time for its twin.
+ */
+export function templateReadsFailureMessages(template: string): boolean {
+  return [...template.matchAll(TEMPLATE_PLACEHOLDER)].some((m) =>
+    holdsFailureMessages(m[1]!.split('|')[0]!),
+  );
+}
+
 /** Where a condition reads a failure message: `$settlement.<step>.message`, on the bare root a
  *  `when`, a guard and a precondition resolve against. */
 const CONDITION_FAILURE_MESSAGE_LEAF: readonly string[] = ['$settlement', '*', 'message'];

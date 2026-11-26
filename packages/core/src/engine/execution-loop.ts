@@ -99,6 +99,8 @@ import {
   hidesFailureWords,
   noteFailureText,
   noteShapedFailureMessage,
+  noteShapedQuestion,
+  questionHidingFailureText,
 } from './failure-text.js';
 import type {
   SettleStepDelta,
@@ -139,7 +141,11 @@ import {
 import { describeThrown, describeUnrecognised, releaseLineError } from '../release-line.js';
 import { createDefaultRegistry } from '../extensions/default-registry.js';
 import type { ServiceAdapter, ServiceResponse } from '../extensions/service-adapter.js';
-import { renderTemplate, UnknownFilterError } from './render-template.js';
+import {
+  renderTemplate,
+  templateReadsFailureMessages,
+  UnknownFilterError,
+} from './render-template.js';
 import {
   composeQuestionView,
   mintQuestionView,
@@ -4926,8 +4932,55 @@ async function executeStepBody(
       set: options.disclosure,
       ids: { run_id: options.runId, gate_id, step: step_name },
     });
-    // The question the opening reply shows: the minted text; none for a gate with no message ((f)).
-    const gateDisplay = minted.view.question_text !== '' ? minted.view.question_text : undefined;
+    // Gap 2, unit (iv-a2-ii): the question's twin, the same mint run again with every input the same
+    // and each failure message the question read as its shape before any filter (unit (iv-a2-i)'s
+    // render mode), whatever door opened the gate. It is stored only when a message was shaped, and a
+    // question whose template reads no failure-message path is never rendered again. With no set it is
+    // rendered with the set that holds nothing and, as the question then is, stored uncut.
+    let twinShaped = false;
+    const twinRender = (onSubstitution?: (rendered: string, path: string) => string): string =>
+      renderTemplate(
+        gateMessage!,
+        { evidenceByStep: gateEvidenceCtxEarly, runParams: run.params, ...wfCtxSpreadEarly },
+        {
+          strict: true,
+          time: 'stored',
+          ...(onSubstitution !== undefined ? { onSubstitution } : {}),
+          disclosure: {
+            set: questionViewSet(options.disclosure),
+            tier: 'declared',
+            failureMessagesShaped: {
+              onShaped: () => {
+                twinShaped = true;
+              },
+            },
+          },
+        },
+      );
+    const twinSubstitutions =
+      gateMessage !== undefined && templateReadsFailureMessages(gateMessage)
+        ? mintSubstitutions(gateMessage, options.disclosure)
+        : undefined;
+    const twinMessage =
+      twinSubstitutions !== undefined ? twinRender(twinSubstitutions.onSubstitution) : undefined;
+    const twin =
+      twinSubstitutions !== undefined && twinShaped
+        ? mintQuestionView({
+            message: twinMessage,
+            substitutions: twinSubstitutions,
+            rerender: twinRender,
+            preview: output,
+            choices,
+            ...(stepDef!.display !== undefined ? { display: stepDef!.display } : {}),
+            set: options.disclosure,
+            ids: { run_id: options.runId, gate_id, step: step_name },
+          })
+        : undefined;
+    // The question the opening reply shows: the minted text (under a door's `hidden`, its twin when
+    // it has one); none for a gate with no message ((f)).
+    const questionShaped = twin !== undefined && hidesFailureWords(options.disclosure);
+    const shownView = questionShaped ? twin.view : minted.view;
+    const gateDisplay = shownView.question_text !== '' ? shownView.question_text : undefined;
 
     const gateConfig = stepDef!.gate;
 
@@ -4949,6 +5002,9 @@ async function executeStepBody(
       ...(gateConfig?.answerers !== undefined ? { answerers: gateConfig.answerers } : {}),
       ...(minted.resolved_message !== undefined
         ? { resolved_message: minted.resolved_message }
+        : {}),
+      ...(twin?.resolved_message !== undefined
+        ? { resolved_message_shaped: twin.resolved_message }
         : {}),
       ...(gateConfig?.resolution_messages !== undefined
         ? { resolution_messages: gateConfig.resolution_messages }
@@ -5084,6 +5140,36 @@ async function executeStepBody(
         // report_to_user (no `agent_action` set, matching the fresh-open confirm_required shape).
         const liveGate = result.gate!;
         const liveGateDueState = computeGateDueState(liveGate, result.at);
+        // Gap 2, unit (iv-a2-ii): under a door's `hidden`, the question its stored twin gives (or its
+        // whole shape, when the store may have dropped the twin), core's rule.
+        const liveQuestion = hidesFailureWords(options.disclosure)
+          ? questionHidingFailureText(liveGate, result.run, store)
+          : undefined;
+        const liveShown =
+          liveQuestion !== undefined ? { ...liveGate, resolved_message: liveQuestion } : liveGate;
+        const liveGateInfo = {
+          gate_id: liveGate.gate_id,
+          step_name: liveGate.step_name,
+          preview: liveGate.preview,
+          choices: liveGate.choices,
+          // #729 PR-4 (03 #2): the question through the ONE composer, on the live gate as the
+          // host's set discloses it — the stored question; none for a gate with no message.
+          ...((q) => (q !== '' ? { display: q } : {}))(
+            composeQuestionView(
+              discloseGate(
+                stripSpanMarks(liveShown),
+                questionViewSet(options.disclosure),
+                'private',
+              ),
+              stepDef!.display,
+            ).question_text,
+          ),
+          response_spec: { choices: liveGate.choices },
+          ...(liveGate.expires_at !== undefined ? { expires_at: liveGate.expires_at } : {}),
+          ...(liveGateDueState.next_reminder_due_at !== undefined
+            ? { first_reminder_due_at: liveGateDueState.next_reminder_due_at }
+            : {}),
+        };
         return {
           command: options.command,
           run_id: options.runId,
@@ -5100,29 +5186,7 @@ async function executeStepBody(
           ...ways(settledSnapshot(result), {
             presented: 'with_gate',
           }),
-          gate: {
-            gate_id: liveGate.gate_id,
-            step_name: liveGate.step_name,
-            preview: liveGate.preview,
-            choices: liveGate.choices,
-            // #729 PR-4 (03 #2): the question through the ONE composer, on the live gate as the
-            // host's set discloses it — the stored question; none for a gate with no message.
-            ...((q) => (q !== '' ? { display: q } : {}))(
-              composeQuestionView(
-                discloseGate(
-                  stripSpanMarks(liveGate),
-                  questionViewSet(options.disclosure),
-                  'private',
-                ),
-                stepDef!.display,
-              ).question_text,
-            ),
-            response_spec: { choices: liveGate.choices },
-            ...(liveGate.expires_at !== undefined ? { expires_at: liveGate.expires_at } : {}),
-            ...(liveGateDueState.next_reminder_due_at !== undefined
-              ? { first_reminder_due_at: liveGateDueState.next_reminder_due_at }
-              : {}),
-          },
+          gate: liveQuestion !== undefined ? noteShapedQuestion(liveGateInfo) : liveGateInfo,
         };
       }
       return buildSettlementRefusalEnvelope(
@@ -5159,6 +5223,7 @@ async function executeStepBody(
         ? { first_reminder_due_at: gateOpenDueState.next_reminder_due_at }
         : {}),
     };
+    const markedGate = questionShaped ? noteShapedQuestion(openingGate) : openingGate;
     return {
       command: options.command,
       run_id: options.runId,
@@ -5176,7 +5241,7 @@ async function executeStepBody(
         ...(gateClaimToken !== undefined ? { opening_token: gateClaimToken } : {}),
       }),
       // Unit (iv-a2-i): marked when its hint holds a shaped failure message, for the receipt.
-      gate: hintShaped ? noteShapedFailureMessage(openingGate) : openingGate,
+      gate: hintShaped ? noteShapedFailureMessage(markedGate) : markedGate,
     };
   }
 
