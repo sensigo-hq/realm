@@ -72,7 +72,10 @@ const D = {
   ask: def('iva2ii-ask', { boom: BOOM, review: gated('boom', QUESTION) }),
   secret: def('iva2ii-secret', {
     boom: BOOM,
-    review: gated('boom', `token: {{ run.params.token }}\nwhy: {{ ${F}.boom.message }}`),
+    review: gated(
+      'boom',
+      `token: {{ run.params.token }}\nshout: {{ run.params.token | upper }}\nwhy: {{ ${F}.boom.message }}`,
+    ),
   }),
   noMessage: def('iva2ii-no-message', {
     boom: BOOM,
@@ -330,11 +333,16 @@ describe("gap 2 (iv-a2-ii), check 1b — the twin's render is the people's rende
       provider: async () => SET,
     });
     const twin = state.pending_gate?.resolved_message ?? '';
-    // (a) red when the twin's render is not given the host's set (the secret shows in the twin), or
-    //     differs from the people's in anything but the shaping; (b) prints both texts.
+    const holdsSecret = (text: string): boolean =>
+      text.includes(FAKE) || text.includes(FAKE.toUpperCase());
+    // The secret twice: whole (`token`), where the mint's mask over the whole text also hides it,
+    // and through a filter (`shout`, `| upper`), where only the render's mask before the filter can:
+    // the line the twin's own literal must give the host's set for.
+    // (a) red when the twin's render is not given the host's set (the filtered secret shows in the
+    //     twin), or differs from the people's in anything but the shaping; (b) prints both texts.
     expect({
-      twinHoldsSecret: twin.includes(FAKE),
-      peopleHoldSecret: (stored?.resolved_message ?? '').includes(FAKE),
+      twinHoldsSecret: holdsSecret(twin),
+      peopleHoldSecret: holdsSecret(stored?.resolved_message ?? ''),
       swappedBack: twin.split(shape(MSG.length)).join(MSG),
       people: stored?.resolved_message,
     }).toEqual({
