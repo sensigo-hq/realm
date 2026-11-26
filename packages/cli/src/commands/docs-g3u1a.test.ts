@@ -47,7 +47,7 @@ describe('gap 3 (1a), check 13 — the words', () => {
       "`remember` goes on an agent step, or an auto step with `handler` or `uses_service`; the step's own output is `context.resources.<this step>`.",
       'A gated step remembers when its question is answered, with the choice.',
       'A step that failed, took its default answer or whose question expired remembers nothing.',
-      'When a key part is missing, empty, null, masked, or not text or a number, or what it would keep is over 32 KB, the step remembers nothing: its entry says why, and the reply warns.',
+      "When a key part is missing, empty, null, masked, or not text or a number, or what it would keep is over 32 KB, the step remembers nothing: its entry says why, and an assistant's `execute_step` reply and `realm run advance` warn.",
       "A path that reads a step's failure message is refused, because a memory outlives the run.",
       "The step's entry records what it remembered (`remembered`), with `expires_at`: when it was written plus `keep_days`.",
       'Nothing reads it back yet.',
@@ -87,7 +87,7 @@ describe('gap 3 (1a), check 13 — the words', () => {
   it('CHANGELOG.md: the entry, sentence by sentence (Words 12, and the library sentence)', () => {
     for (const sentence of [
       '- **A step can remember something for later runs.** `remember:` on an agent step, or an auto step with a handler or a service, keeps a value under a named key for `keep_days` days (required, 1 to 3650).',
-      "The step's entry records it as `remembered` (`EvidenceSnapshot.remembered`); when a key part is missing, empty, or not text or a number, the step remembers nothing and the reply says why.",
+      "The step's entry records it as `remembered` (`EvidenceSnapshot.remembered`); when a key part is missing, empty, or not text or a number, the step remembers nothing, and its entry says why.",
       'The store kit gains the law `EVIDENCE_KEEPS_REMEMBERED`.',
       'Library: `StepDefinition.remember` takes a `RememberConfig`, and `EvidenceSnapshot.remembered` is a `RememberedStamp`: a `RememberedItem`, or a `NotRemembered` whose reason is a `NotRememberedReason` (the words: `NOT_REMEMBERED_REASONS`).',
     ])
