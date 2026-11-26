@@ -21,6 +21,7 @@
 // Piece 2a: the `when` leaves the loader's existing checks accepted are judged here too
 // (`when-paths.ts`), over the same index and under the same catch.
 import { consumesInputMap, type InputMapStep } from '../engine/input-map.js';
+import { holdsFailureMessages } from '../engine/render-template.js';
 import { capText } from '../utils/redaction.js';
 import { resolveSeverity, type LoaderWarning, type WarningCode } from './diagnostics.js';
 import { absentWhy } from './path-reasons.js';
@@ -62,16 +63,16 @@ export interface NotCheckedPath {
 }
 
 /**
- * Gap 2, unit (iv-a1): a placeholder that puts a step's failure message (`$settlement.<step>.message`,
- * or a path that holds it) into a `prompt` or a gated step's `instructions`. Information for the
- * author, never a warning: it moves no exit code and never counts toward `--strict`
- * (`validate --json`'s `notes`).
+ * A placeholder or an `input_map` leaf that puts a step's failure message
+ * (`$settlement.<step>.message`, or a path that holds it) into a `prompt`, a gated step's
+ * `instructions` or a step's `input_map`. Information for the author, never a warning: it moves no
+ * exit code and never counts toward `--strict` (`validate --json`'s `notes`).
  * @public
  */
 export interface LoaderNote {
-  /** The step whose `prompt` or `instructions` holds the placeholder. */
+  /** The step whose `prompt`, `instructions` or `input_map` holds it. */
   step: string;
-  placement: 'prompt' | 'instructions';
+  placement: 'prompt' | 'instructions' | 'input_map';
   /** The path as written, trimmed: the field, or a shorter path that holds it. */
   reads: string;
   /** The note's sentence; `realm workflow validate` prints it after `ℹ `. */
@@ -153,6 +154,8 @@ export function checkInputMapPaths(
     }
     if (judged.notChecked !== undefined) findings.notChecked.push(judged.notChecked);
     if (judged.warning !== undefined) findings.warnings.push(judged.warning);
+    // Gap 2, unit (iv-a3): pushed here, so every step's input_map notes come before the templates'.
+    if (judged.note !== undefined) findings.notes.push(judged.note);
   }
   for (const leaf of whenLeaves) {
     let judged: LeafFindings | undefined;
@@ -220,7 +223,7 @@ interface Leaf {
 export interface LeafFindings {
   warning?: LoaderWarning;
   notChecked?: NotCheckedPath;
-  /** Gap 2, unit (iv-a1): a template placeholder's note. */
+  /** Gap 2, units (iv-a1) and (iv-a3): a template placeholder's or an `input_map` leaf's note. */
   note?: LoaderNote;
 }
 
@@ -275,6 +278,22 @@ function judgeLeaf(
         text: absentWords(stepName, key, path, judgement.stepCause),
       };
     }
+  }
+  // Gap 2, unit (iv-a3), Words 1: a failure message handed to the step, unless the loader refuses
+  // the leaf — the prompt note's rule (`holdsFailureMessages`).
+  if (
+    holdsFailureMessages(path) &&
+    (cause === undefined || resolveSeverity(cause.code) !== 'error')
+  ) {
+    findings.note = {
+      step: stepName,
+      placement: 'input_map',
+      reads: path,
+      message:
+        `Step '${capText(stepName)}' is handed a failure message (\`${capText(path)}\`) in its ` +
+        `input_map at '${capText(key)}': the text is the failure's own, and whatever the step ` +
+        `copies of it into its output is shown to assistants even under --failure-text hidden.`,
+    };
   }
   if (cause === undefined) return findings;
 

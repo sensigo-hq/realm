@@ -964,8 +964,9 @@ export function loadWorkflowFromFile(
  * Opt-in for callers that want to surface warnings
  * themselves (validate/register/watch/`--strict`) instead of the default console.warn behavior.
  * `notChecked` (fix 1, unit 1) lists the `input_map` paths into data the workflow declares no
- * shape for, which `validate` reports; `notes` (gap 2, unit (iv-a1)) the placeholders that put a
- * step's failure message into a prompt or a gated step's instructions, which `validate` prints.
+ * shape for, which `validate` reports; `notes` (gap 2, unit (iv-a1)) the placeholders and
+ * `input_map` leaves that put a step's failure message into a prompt, a gated step's instructions
+ * or an `input_map`, which `validate` prints.
  * @public
  */
 export function loadWorkflowFromFileWithDiagnostics(
