@@ -558,7 +558,17 @@ const OK_SHAPE = {
       owner: z.string().optional(),
       answerers: z.array(z.string()).optional(),
       resolved_message: z.string().optional(),
-      resolution_messages: z.record(z.string(), z.string()).optional(),
+      // Q1 d2c: a question the door withholds arrives as one sentence in place of the map.
+      resolution_messages: z
+        .record(z.string(), z.string())
+        .or(
+          z
+            .string()
+            .describe(
+              'One sentence, "withheld (declared values could not be read)" or "withheld (declared values changed)", in place of the messages when Realm withholds values.',
+            ),
+        )
+        .optional(),
       expires_at: z.string().optional(),
       on_expiry: openWord(GATE_ON_EXPIRY_WORDS).optional(),
       default_choice: z.string().optional(),

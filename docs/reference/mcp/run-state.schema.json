@@ -1140,13 +1140,21 @@
               "type": "string"
             },
             "resolution_messages": {
-              "type": "object",
-              "propertyNames": {
-                "type": "string"
-              },
-              "additionalProperties": {
-                "type": "string"
-              }
+              "anyOf": [
+                {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "additionalProperties": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "string",
+                  "description": "One sentence, \"withheld (declared values could not be read)\" or \"withheld (declared values changed)\", in place of the messages when Realm withholds values."
+                }
+              ]
             },
             "expires_at": {
               "type": "string"
