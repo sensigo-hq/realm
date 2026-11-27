@@ -1181,6 +1181,8 @@ export type { PersonNotice, PersonNoticeEvent } from './engine/person-notice.js'
 // decision C183 (issue #760, correction H2): the ONE spelling of a control character a terminal line
 // shows — the CLI's printers and the `check_quotes` warning share it.
 export { controlEscape } from './utils/redaction.js';
+// #625 named keys 2b, correction 1: the house's shown-string escapes, the one copy of the rule.
+export { escapeShownString } from './validation/input-schema.js';
 // issue #558 PR-T — the classification table, its builders and the listing cap. The CLI's
 // `--stuck` probe closure mints the SAME errors `get()` does, so a corrupt or unreadable copy
 // speaks with one voice on every surface.

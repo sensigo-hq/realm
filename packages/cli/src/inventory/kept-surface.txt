@@ -216,8 +216,11 @@ realm serve key — command
 realm serve key --help — option, short -h, no value
 realm serve key add — command
 realm serve key add <name> — argument 1, required
+realm serve key add --allow — option, takes a value
 realm serve key add --expires — option, takes a value
 realm serve key add --help — option, short -h, no value
+realm serve key add --read-only — option, no value
+realm serve key add --workflows — option, takes a value
 realm serve key help — command, Commander's help
 realm serve key help <command> — argument 1, optional
 realm serve key list — command

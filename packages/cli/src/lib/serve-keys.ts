@@ -2,8 +2,10 @@
 // `realm serve key` writes and `realm serve` reads on every request the shared token does not settle.
 //
 // The file holds each key's name, the SHA-256 of its text, when it was made and when it ends; never
-// the key's text, nor any part of it. It is written whole, at 0600: a temporary file in the home,
-// synced, then renamed over the old one, so a reader sees the old file or the new one, never a part.
+// the key's text, nor any part of it. Unit 2: a key may also carry its limits; then the file is
+// format 2, and while no key has a limit it stays format 1, byte for byte as unit 1 wrote it. It is
+// written whole, at 0600: a temporary file in the home, synced, then renamed over the old one, so a
+// reader sees the old file or the new one, never a part.
 // A file that breaks any rule below is invalid as a whole, and is described by a fixed cause word,
 // never by the parser's message (which quotes the file's text).
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
@@ -19,7 +21,8 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
-import { escapeC1, writerCtx } from '../output/writer.js';
+import { escapeShownString } from '@sensigo/realm';
+import { writerCtx } from '../output/writer.js';
 import { typedWord } from './callback/master-key-words.js';
 
 /** The key file's name in a Realm home. */
@@ -30,13 +33,43 @@ export function serveKeysPath(home: string): string {
   return join(home, SERVE_KEYS_FILE);
 }
 
+/**
+ * A key's limits (unit 2), a closed set: `read_only` (the reading tools only) or `tools` (only these
+ * tools), and `workflows` (only these workflows and their runs). At least one member.
+ */
+export interface ServeKeyLimits {
+  readonly read_only?: true;
+  readonly tools?: readonly string[];
+  readonly workflows?: readonly string[];
+}
+
 /** One key, as the file holds it. `expires_at` is `null` for a key with no end. */
 export interface ServeKeyEntry {
   readonly name: string;
   readonly sha256: string;
   readonly created_at: string;
   readonly expires_at: string | null;
+  /** Only in a format 2 file; absent for a key with no limit. */
+  readonly limits?: ServeKeyLimits;
 }
+
+/**
+ * The tools `realm serve` offers (`submit_human_response` under `--gate-answers permitted` only): the
+ * names a key's `tools` may hold, in the order the refusals print them.
+ */
+export const SERVE_KEY_TOOLS: readonly string[] = [
+  'list_workflows',
+  'get_workflow_protocol',
+  'start_run',
+  'start_run_batch',
+  'execute_step',
+  'advance_run',
+  'submit_human_response',
+  'get_run_state',
+  'abandon_run',
+  'create_workflow',
+  'append_trace',
+];
 
 /**
  * What a read of the key file found: no file; a file that cannot be used, with its cause word; or its
@@ -56,6 +89,7 @@ const NAME = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 const SHA256_HEX = /^[0-9a-f]{64}$/;
 const INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
 const ENTRY_FIELDS = ['created_at', 'expires_at', 'name', 'sha256'];
+const LIMITS_FIELDS = ['read_only', 'tools', 'workflows'];
 
 /** Whether `name` passes the key-name rule. */
 export function isKeyName(name: string): boolean {
@@ -90,6 +124,37 @@ function openModeOf(path: string): string | undefined {
   }
 }
 
+/** A non-empty list of non-empty strings, each passing `ok`, or undefined. */
+function listOf(value: unknown, ok: (item: string) => boolean): string[] | undefined {
+  if (!Array.isArray(value) || value.length === 0) return undefined;
+  return value.every((item) => typeof item === 'string' && item !== '' && ok(item))
+    ? [...(value as string[])]
+    : undefined;
+}
+
+/** A key's `limits` as the reader keeps it, or undefined when it breaks the closed set's rules. */
+function limitsOf(value: unknown): ServeKeyLimits | undefined {
+  if (!isObject(value)) return undefined;
+  const fields = Object.keys(value);
+  if (fields.length === 0 || fields.some((f) => !LIMITS_FIELDS.includes(f))) return undefined;
+  const { read_only, tools, workflows } = value;
+  if (read_only !== undefined && (read_only !== true || tools !== undefined)) return undefined;
+  const toolList =
+    tools === undefined ? undefined : listOf(tools, (t) => SERVE_KEY_TOOLS.includes(t));
+  const workflowList = workflows === undefined ? undefined : listOf(workflows, () => true);
+  if (
+    (tools !== undefined && toolList === undefined) ||
+    (workflows !== undefined && workflowList === undefined)
+  ) {
+    return undefined;
+  }
+  return {
+    ...(read_only === true ? { read_only: true as const } : {}),
+    ...(toolList !== undefined ? { tools: toolList } : {}),
+    ...(workflowList !== undefined ? { workflows: workflowList } : {}),
+  };
+}
+
 /** The cause word of a file's text that is not a valid key file, or the file's keys. */
 function judge(text: string): { cause: string } | { keys: ServeKeyEntry[] } {
   let parsed: unknown;
@@ -100,7 +165,7 @@ function judge(text: string): { cause: string } | { keys: ServeKeyEntry[] } {
   }
   if (!isObject(parsed)) return { cause: 'not a key file' };
   const format = parsed['format'];
-  if (format !== 1) {
+  if (format !== 1 && format !== 2) {
     return typeof format === 'number' && Number.isInteger(format)
       ? { cause: `format ${format}, which this Realm does not know` }
       : { cause: 'not a key file' };
@@ -113,10 +178,15 @@ function judge(text: string): { cause: string } | { keys: ServeKeyEntry[] } {
   for (const [i, entry] of entries.entries()) {
     const bad = { cause: `entry ${i + 1} is not a valid key entry` };
     if (!isObject(entry)) return bad;
-    const fields = Object.keys(entry).sort();
+    // Format 2: an entry may also carry `limits`; format 1 never does.
+    const fields = Object.keys(entry)
+      .filter((f) => format === 1 || f !== 'limits')
+      .sort();
     if (fields.length !== ENTRY_FIELDS.length || fields.some((f, j) => f !== ENTRY_FIELDS[j]))
       return bad;
     const { name, sha256, created_at, expires_at } = entry;
+    const limits = entry['limits'] === undefined ? undefined : limitsOf(entry['limits']);
+    if (entry['limits'] !== undefined && limits === undefined) return bad;
     if (typeof name !== 'string' || !isKeyName(name)) return bad;
     if (typeof sha256 !== 'string' || !SHA256_HEX.test(sha256)) return bad;
     if (!isInstant(created_at)) return bad;
@@ -126,7 +196,13 @@ function judge(text: string): { cause: string } | { keys: ServeKeyEntry[] } {
     if (names.has(name) || hashes.has(sha256)) return bad;
     names.add(name);
     hashes.add(sha256);
-    keys.push({ name, sha256, created_at, expires_at });
+    keys.push({
+      name,
+      sha256,
+      created_at,
+      expires_at,
+      ...(limits !== undefined ? { limits } : {}),
+    });
   }
   return { keys };
 }
@@ -164,10 +240,11 @@ export class ServeKeysWriteRefused extends Error {
 }
 
 /**
- * Writes `keys` as the whole key file of `home`, at 0600: a temporary file in the home (exclusive,
- * owner-only, synced), checked with the reader's own rules, then renamed over the old file. A new file
- * the reader would refuse is never renamed: {@link ServeKeysWriteRefused}. Throws the system's error
- * otherwise; the temporary file is removed in every outcome but the rename.
+ * Writes `keys` as the whole key file of `home` — format 2 when any key has a limit, else format 1 —
+ * at 0600: a temporary file in the home (exclusive, owner-only, synced), checked with the reader's
+ * own rules, then renamed over the old file. A new file the reader would refuse is never renamed:
+ * {@link ServeKeysWriteRefused}. Throws the system's error otherwise; the temporary file is removed
+ * in every outcome but the rename.
  */
 export function writeServeKeys(home: string, keys: readonly ServeKeyEntry[]): void {
   const target = serveKeysPath(home);
@@ -180,7 +257,8 @@ export function writeServeKeys(home: string, keys: readonly ServeKeyEntry[]): vo
   try {
     try {
       fchmodSync(fd, 0o600); // whatever the umask
-      writeFileSync(fd, `${JSON.stringify({ format: 1, keys }, null, 2)}\n`);
+      const format = keys.some((key) => key.limits !== undefined) ? 2 : 1;
+      writeFileSync(fd, `${JSON.stringify({ format, keys }, null, 2)}\n`);
       fsyncSync(fd);
     } finally {
       closeSync(fd);
@@ -246,9 +324,14 @@ export function keyPath(path: string): string {
   return writerCtx().cmd(typedWord(path));
 }
 
-/** A typed key name as a refusal quotes it: every control character escaped, never the raw byte. */
+/**
+ * A typed key name (or a key's workflow id) as a line shows it: JSON's escaping of the string, then
+ * the house's shown-string escapes (core's one copy, #625 named keys 2b correction 1), so every
+ * control character, and each character that overrides or isolates the text's direction, is written
+ * out, never the raw character.
+ */
 export function escapedKeyName(name: string): string {
-  return escapeC1(JSON.stringify(name).slice(1, -1));
+  return escapeShownString(JSON.stringify(name).slice(1, -1));
 }
 
 /**

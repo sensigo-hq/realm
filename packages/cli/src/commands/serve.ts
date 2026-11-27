@@ -47,11 +47,25 @@ import {
   keyPath,
   readServeKeys,
   serveKeysPath,
+  type ServeKeyLimits,
   type ServeKeysRead,
 } from '../lib/serve-keys.js';
 import { addServeKeyCommands } from './serve-key.js';
 
 const MAX_BODY_BYTES = 1 * 1024 * 1024; // 1 MiB
+
+/** #625 named keys unit 2: a key's limits, as the server's `limits` option takes them. */
+function limitsOfKey(
+  name: string,
+  limits: ServeKeyLimits,
+): NonNullable<RealmMcpServerOptions['limits']> {
+  return {
+    caller: name,
+    ...(limits.read_only === true ? { readOnly: true as const } : {}),
+    ...(limits.tools !== undefined ? { tools: limits.tools } : {}),
+    ...(limits.workflows !== undefined ? { workflows: limits.workflows } : {}),
+  };
+}
 
 /**
  * Checks an Authorization header's Bearer token using timing-safe comparison.
@@ -215,6 +229,8 @@ export async function startHttpMcpServer(options: StartServerOptions): Promise<S
       ...serverOptions,
       driver: { by: key.name, by_source: 'key', channel },
       principal: { kind: 'api_key', id: key.name },
+      // Unit 2: the key's limits, checked by every tool before it does anything.
+      ...(key.limits !== undefined ? { limits: limitsOfKey(key.name, key.limits) } : {}),
     };
   }
   /** The options to serve a request with, or undefined when it is refused with the 401. */
