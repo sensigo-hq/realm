@@ -4,10 +4,12 @@
 // precedent, trigger-schema.ts). The loader refuses a breach with the words below; the stamp
 // (`engine/remember-stamp.ts`) checks a block again with the same compiled schema, so a definition
 // built without the loader never reaches a stamp it cannot make. `value`'s form is `input_map`'s,
-// checked by the loader's own `validateInputMapNode`, never here.
+// checked by the loader's own `validateInputMapNode`, never here. Gap 3, unit 1b-i: and the rule that
+// the steps remembering one memory use one set of key names, judged over the whole workflow.
 import { Ajv } from 'ajv';
 import type { ErrorObject } from 'ajv';
 import type { InputMapNode, RememberConfig } from '../types/workflow-definition.js';
+import { capText } from '../utils/redaction.js';
 
 /** A memory's name and each key part's name: a letter, then letters, digits and `_`, 64 at most. */
 const NAME_PATTERN = '^[A-Za-z][A-Za-z0-9_]{0,63}$';
@@ -133,4 +135,37 @@ export function rememberReadPaths(block: unknown): string[] {
   };
   if (typeof value === 'object' && value !== null && !Array.isArray(value)) visit(value, 0);
   return paths;
+}
+
+/** Gap 3, unit 1b-i: a step whose `remember:` block the loader accepted, for the key-names rule. */
+export interface RememberWriter {
+  step: string;
+  as: string;
+  /** Its key parts' names, in the order written. */
+  names: readonly string[];
+}
+
+/**
+ * Words 4: one refusal per memory whose writers use different sets of key names (order ignored),
+ * naming every writer once, in the order given (the file's), each with its names as written; empty
+ * when the writers of every memory agree.
+ */
+export function keyNamesProblems(writers: readonly RememberWriter[]): string[] {
+  const byMemory = new Map<string, RememberWriter[]>();
+  for (const writer of writers) {
+    const list = byMemory.get(writer.as);
+    if (list === undefined) byMemory.set(writer.as, [writer]);
+    else list.push(writer);
+  }
+  const problems: string[] = [];
+  for (const [as, list] of byMemory) {
+    const sets = list.map((w) => JSON.stringify([...w.names].sort()));
+    if (sets.every((set) => set === sets[0])) continue;
+    problems.push(
+      `Steps that remember '${capText(as)}' use different key names: ` +
+        list.map((w) => `'${w.step}' (${w.names.map(capText).join(', ')})`).join(', ') +
+        `. Every step that remembers one memory must use the same key names.`,
+    );
+  }
+  return problems;
 }

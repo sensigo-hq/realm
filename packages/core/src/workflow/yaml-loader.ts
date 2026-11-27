@@ -56,7 +56,14 @@ import { isCredentialName } from '../utils/redaction.js';
 import { splitComparison, isPathShaped } from '../engine/comparison-expr.js';
 import { DEFAULT_EXECUTION_TIMEOUT_SECONDS } from '../engine/claim-liveness.js';
 import { holdsFailureMessages } from '../engine/render-template.js';
-import { rememberBlockProblems, rememberReadPaths } from './remember-block.js';
+import {
+  isRememberBlock,
+  keyNamesProblems,
+  rememberBlockProblems,
+  rememberReadPaths,
+  type RememberWriter,
+} from './remember-block.js';
+import type { RememberBlockAt } from './remember-paths.js';
 import {
   compileCapturing,
   validateOutputSchema,
@@ -1005,7 +1012,8 @@ export function loadWorkflowFromString(
 
 /**
  * Same as `loadWorkflowFromString`, but prints nothing and returns every collected `LoaderWarning`
- * alongside the definition, and the `input_map` paths not checked.
+ * alongside the definition, and the paths not checked (`input_map`, `when`, template and
+ * `remember`).
  * @public
  */
 export function loadWorkflowFromStringWithDiagnostics(
@@ -1880,6 +1888,10 @@ function parseWorkflowString(
     // Fix 1, piece 2a: the `when` leaves every check below accepted, judged against what the
     // workflow declares at the end (`when-paths.ts`), so a leaf gets at most one finding.
     const admittedWhen: WhenLeaf[] = [];
+    // Gap 3, unit 1b-i: the `remember:` blocks of the steps it goes on, their paths judged at the
+    // end; and each block the checks below accept, for the one-set-of-key-names rule.
+    const rememberBlocks: RememberBlockAt[] = [];
+    const rememberWriters: RememberWriter[] = [];
     for (const [stepName, stepRaw] of Object.entries(stepsRaw)) {
       if (typeof stepRaw !== 'object' || stepRaw === null || Array.isArray(stepRaw)) {
         errors.push(withStepLine(stepName, `Step '${stepName}' must be an object`));
@@ -2234,6 +2246,7 @@ function parseWorkflowString(
       // On an agent step, or an auto step with a handler or a service: the block's schema (Words
       // 3–7), `value` in input_map's form, and no path that reads a step's failure message (Words 8).
       const checkRemember = (block: unknown): void => {
+        const before = errors.length;
         const at = (message: string): string => withKeyLine(stepName, 'remember', message);
         errors.push(...rememberBlockProblems(stepName, block).map(at));
         const value =
@@ -2252,6 +2265,12 @@ function parseWorkflowString(
               `Step '${stepName}': 'remember' can't read a step's failure message ('${path}'): a memory outlives the run, and a failure's words can carry anything the failed request echoed back.`,
             ),
           );
+        }
+        // Gap 3, unit 1b-i: its paths are judged even when it is refused (every problem in one
+        // pass); only a block nothing above refused counts toward the key-names rule.
+        rememberBlocks.push({ step: stepName, block });
+        if (errors.length === before && isRememberBlock(block)) {
+          rememberWriters.push({ step: stepName, as: block.as, names: Object.keys(block.key) });
         }
       };
       if (step['remember'] !== undefined && step['execution'] === 'auto') {
@@ -3796,6 +3815,9 @@ function parseWorkflowString(
       errors.push(`Workflow has a dependency cycle: ${cycle.join(' → ')}`);
     }
 
+    // Gap 3, unit 1b-i: steps that remember one memory use one set of key names (Words 4).
+    errors.push(...keyNamesProblems(rememberWriters));
+
     // Validate mcp_servers: ids must be unique (workflow-level check).
     if (Array.isArray(doc['mcp_servers'])) {
       const seen = new Set<string>();
@@ -4015,6 +4037,7 @@ function parseWorkflowString(
           gateChoicesOf(stepsRaw[name] as Pick<StepDefinition, 'gate' | 'input_schema'>),
       },
       templateLeaves(stepsRaw),
+      rememberBlocks,
     );
     warnings.push(...inputMapPaths.warnings);
 

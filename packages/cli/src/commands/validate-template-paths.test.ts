@@ -264,7 +264,7 @@ describe('fix 1, piece 3a-ii-a — the words the docs and the changelog carry (c
     }).toEqual({ now: true, old: false });
   });
 
-  it('loader-diagnostics.md: 36 codes, twelve of them errors, the errors list, the three rows and the not_checked row', () => {
+  it('loader-diagnostics.md: 38 codes, thirteen of them errors, the errors list, the three rows and the not_checked row', () => {
     const raw = readFileSync(join(ROOT, 'docs/reference/workflow/loader-diagnostics.md'), 'utf8');
     const page = flat(raw);
     const rows = raw
@@ -279,23 +279,23 @@ describe('fix 1, piece 3a-ii-a — the words the docs and the changelog carry (c
     const at = rows.findIndex((r) => r[0] === '`TEMPLATED_FIELD_NOT_TEXT`');
     // (1) red when a count, the list, a row or the not_checked row is missing or changed; (2) prints them.
     expect({
-      lists: page.includes('lists all 36 warning codes'),
-      count: page.includes('The loader has 36 warning codes. Twelve of them count as errors'),
+      lists: page.includes('lists all 38 warning codes'),
+      count: page.includes('The loader has 38 warning codes. Thirteen of them count as errors'),
       list: page.includes(
-        'or leaves a required one unfilled; a template that uses a filter Realm does not have, gives a filter an argument no value accepts, or is not text; and a path in an approval question, `display`, a prompt or step instructions that can never be found, or one in an approval question that may be missing, unless `| default` comes first in its filters and the filters after it take its value. The others are advice',
+        'or leaves a required one unfilled; a template that uses a filter Realm does not have, gives a filter an argument no value accepts, or is not text; a path in an approval question, `display`, a prompt or step instructions that can never be found, or one in an approval question that may be missing, unless `| default` comes first in its filters and the filters after it take its value; and a `remember` key or value path that can never be found. The others are advice',
       ),
       rows: rows.length,
       errors: rows.filter((r) => r[1] === 'Error').length,
       three: rows.slice(at + 1, at + 4),
       notChecked: page.includes(
-        "The `input_map` paths, `when` conditions and template references (in `gate.message`, `display`, `prompt` and `instructions`) that read data the workflow declares no shape for, or a context entry only a file adds: `surface` (`input_map`, `when` or `template`), `step`, `key` (`when` for a condition, the field's name for a template), `path`, `why` (`producer_declares_no_shape`, `no_params_schema`, `added_from_file`, or `check_failed` when the check itself failed on that path).",
+        "The `input_map` paths, `when` conditions, template references (in `gate.message`, `display`, `prompt` and `instructions`) and `remember` paths that read data the workflow declares no shape for, or a context entry only a file adds: `surface` (`input_map`, `when`, `template` or `remember`), `step`, `key` (`when` for a condition, the field's name for a template, `key.<name>` or `value.<key>` for `remember`), `path`, `why` (`producer_declares_no_shape`, `no_params_schema`, `added_from_file`, or `check_failed` when the check itself failed on that path).",
       ),
     }).toEqual({
       lists: true,
       count: true,
       list: true,
-      rows: 36,
-      errors: 12,
+      rows: 38,
+      errors: 13,
       three: [
         [
           '`TEMPLATE_PATH_UNRESOLVABLE`',
