@@ -106,6 +106,11 @@ import {
  * `by_source: 'key'`. Gap 3, unit 1a, adds `EVIDENCE_KEEPS_REMEMBERED`: an evidence entry written
  * with `remembered` (what a step remembered for later runs, or why it remembered nothing) reads back
  * with it, equal, and one written without it reads back without it.
+ * #828 unit 2c adds `EVIDENCE_KEEPS_CODE_SOURCE`: evidence entries written with
+ * `code_source` (which code an attempt chose, or why none), one of each form, read back with it
+ * field for field, from `get` and from a listing, and an `update` that keeps them unchanged is
+ * accepted; an entry written without it reads back without it (its listing case is skipped for a
+ * store with no `scanListed`).
  */
 export const RUN_STORE_FIDELITY_LAWS = [
   'FIDELITY_HONESTY',
@@ -135,6 +140,7 @@ export const RUN_STORE_FIDELITY_LAWS = [
   'CLAIM_KEEPS_DEADLINE_CAUSE',
   'CLAIM_HOLDER_KEEPS_KEY_SOURCE',
   'EVIDENCE_KEEPS_REMEMBERED',
+  'EVIDENCE_KEEPS_CODE_SOURCE',
 ] as const;
 
 export type RunStoreFidelityLaw = (typeof RUN_STORE_FIDELITY_LAWS)[number];
@@ -828,6 +834,84 @@ function failureKindOf(record: RunRecord | ListedRecord | undefined): string {
   return Object.prototype.hasOwnProperty.call(diag, 'failure_kind')
     ? JSON.stringify(diag.failure_kind)
     : 'absent';
+}
+
+/** `EVIDENCE_KEEPS_CODE_SOURCE`'s entries: one of each form an attempt's `code_source` takes. */
+const TCK_CODE_SOURCES: readonly NonNullable<EvidenceSnapshot['code_source']>[] = [
+  {
+    kind: 'handler',
+    name: 'check_quotes',
+    from: {
+      source: 'project',
+      declared: './tck/check-quotes.js',
+      via: 'extensions_file',
+      entry_hash: 'a'.repeat(64),
+      folder_tree_hash: 'b'.repeat(64),
+    },
+    replaces_built_in: true,
+  },
+  {
+    kind: 'adapter',
+    name: 'filesystem',
+    service: 'files',
+    from: { source: 'built_in' },
+    realm_version: '0.0.0-tck',
+  },
+  {
+    kind: 'handler',
+    name: 'tck_host',
+    from: { source: 'host_registered', absent: 'code_text_unavailable' },
+  },
+  { absent: 'not_registered', kind: 'adapter', name: 'tck_missing', service: 'files' },
+  { absent: 'not_looked_up', kind: 'adapter', service: 'tck_undeclared' },
+];
+
+/**
+ * `EVIDENCE_KEEPS_CODE_SOURCE`'s fixture: a run of a workflow of its own whose evidence entries
+ * carry each of {@link TCK_CODE_SOURCES} when `withSource`, written by `update`.
+ */
+async function runWithCodeSource(
+  adapter: RunStoreFidelityContractAdapter,
+  what: string,
+  withSource: boolean,
+): Promise<{ tag: string; runId: string }> {
+  const tag = `tck-code-source-${what}-${Math.random().toString(36).slice(2)}`;
+  const { record: run } = await adapter.store.create({
+    workflowId: tag,
+    workflowVersion: 1,
+    params: {},
+  });
+  const evidence: EvidenceSnapshot[] = TCK_CODE_SOURCES.map((codeSource, i) => ({
+    step_id: adapter.stepName,
+    started_at: '2026-01-01T00:00:00.000Z',
+    completed_at: '2026-01-01T00:00:00.000Z',
+    duration_ms: 0,
+    input_summary: {},
+    output_summary: {},
+    status: 'success',
+    evidence_hash: `tck-code-source-${what}-${i}`,
+    attempt: i + 1,
+    ...(withSource ? { code_source: codeSource } : {}),
+  }));
+  await adapter.store.update({ ...run, evidence });
+  return { tag, runId: run.id };
+}
+
+/** Which of `record`'s entries do not hold their written `code_source` exactly, as JSON. */
+function codeSourceMismatches(
+  record: RunRecord | ListedRecord | undefined,
+  withSource: boolean,
+): string[] {
+  if (record === undefined) return ['no such run'];
+  if (record.evidence.length !== TCK_CODE_SOURCES.length)
+    return [`${record.evidence.length} entries, ${TCK_CODE_SOURCES.length} written`];
+  return record.evidence.flatMap((entry, i) => {
+    const has = Object.prototype.hasOwnProperty.call(entry, 'code_source');
+    if (!withSource) return has ? [`entry ${i}: ${JSON.stringify(entry.code_source)}`] : [];
+    return has && isDeepStrictEqual(entry.code_source, TCK_CODE_SOURCES[i])
+      ? []
+      : [`entry ${i}: ${has ? JSON.stringify(entry.code_source) : 'absent'}`];
+  });
 }
 
 /** Runs `write`, and returns the error it threw, or `undefined` when it was accepted. */
@@ -2745,6 +2829,79 @@ export function runStoreFidelityContract(
         if (read !== wroteKind) {
           throw new Error(
             `EVIDENCE_KEEPS_FAILURE_KIND: scanListed must keep diagnostics.failure_kind; wrote ${wroteKind}, listed ${listed === undefined ? 'no such run' : read}`,
+          );
+        }
+      },
+    ),
+  );
+
+  // #828 unit 2c — EVIDENCE_KEEPS_CODE_SOURCE. The round trips are always active: every store
+  // round-trips evidence. The listing case needs `scanListed`.
+  const codeSourceListing = (
+    name: string,
+    run: () => Promise<void>,
+  ): RunStoreFidelityContractCase =>
+    typeof adapter.store.scanListed !== 'function'
+      ? {
+          law: 'EVIDENCE_KEEPS_CODE_SOURCE',
+          name: `SKIPPED — store has no scanListed: ${name}`,
+          skipped: true,
+          run: async () => {
+            // Intentional no-op — see the case name for why.
+          },
+        }
+      : { law: 'EVIDENCE_KEEPS_CODE_SOURCE', name, run };
+  cases.push(
+    {
+      law: 'EVIDENCE_KEEPS_CODE_SOURCE',
+      name: 'evidence entries written with code_source, one of each form, read back from get with it field for field',
+      run: async () => {
+        const { runId } = await runWithCodeSource(adapter, 'get', true);
+        const wrong = codeSourceMismatches((await adapter.store.get(runId)).record, true);
+        if (wrong.length > 0) {
+          throw new Error(
+            `EVIDENCE_KEEPS_CODE_SOURCE: get must read each entry's code_source back as written; read back ${wrong.join('; ')}`,
+          );
+        }
+      },
+    },
+    {
+      law: 'EVIDENCE_KEEPS_CODE_SOURCE',
+      name: 'an update that keeps the entries code_source unchanged is accepted, and they still read back with it',
+      run: async () => {
+        const { runId } = await runWithCodeSource(adapter, 'update', true);
+        const { record } = await adapter.store.get(runId);
+        const refusal = await refusalOf(() => adapter.store.update({ ...record }));
+        const wrong = codeSourceMismatches((await adapter.store.get(runId)).record, true);
+        if (refusal !== undefined || wrong.length > 0) {
+          throw new Error(
+            `EVIDENCE_KEEPS_CODE_SOURCE: an update that keeps code_source unchanged must be accepted and keep it; ${refusal === undefined ? 'accepted' : `refused (${String(refusal)})`}, then read back ${wrong.length === 0 ? 'as written' : wrong.join('; ')}`,
+          );
+        }
+      },
+    },
+    {
+      law: 'EVIDENCE_KEEPS_CODE_SOURCE',
+      name: 'evidence entries written without code_source read back without it, never with one the store made up',
+      run: async () => {
+        const { runId } = await runWithCodeSource(adapter, 'absent', false);
+        const wrong = codeSourceMismatches((await adapter.store.get(runId)).record, false);
+        if (wrong.length > 0) {
+          throw new Error(
+            `EVIDENCE_KEEPS_CODE_SOURCE: an entry written without code_source must read back without it; read back ${wrong.join('; ')}`,
+          );
+        }
+      },
+    },
+    codeSourceListing(
+      'a listing keeps code_source on each evidence entry, as get reads it',
+      async () => {
+        const { tag, runId } = await runWithCodeSource(adapter, 'listing', true);
+        const listed = await listedRun(adapter, tag, runId);
+        const wrong = codeSourceMismatches(listed?.record, true);
+        if (wrong.length > 0) {
+          throw new Error(
+            `EVIDENCE_KEEPS_CODE_SOURCE: scanListed must keep each entry's code_source; listed ${wrong.join('; ')}`,
           );
         }
       },
