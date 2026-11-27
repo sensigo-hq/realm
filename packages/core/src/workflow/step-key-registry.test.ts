@@ -1,7 +1,7 @@
 // step-key-registry.test.ts — issue #417 PR-2: the core half of the bidirectional conformance
 // lock. Four instruments, run against the registry declared in step-key-registry.ts:
 //   (1) the derived-count pin — the registry's key set is read FROM KNOWN_STEP_KEYS, never typed
-//       by hand, and the 37×4=148 arithmetic is asserted so a missing mode is visible in a report
+//       by hand, and the 38×4=152 arithmetic is asserted so a missing mode is visible in a report
 //       even though the `satisfies` clause already turns it into a compile error;
 //   (2) the behavioral cells — every prohibited / inert / blocked_transitive cell is driven
 //       through the REAL loader on a purpose-built fixture:
@@ -118,6 +118,7 @@ const VALUE_TABLE: Record<string, unknown> = {
   structured_output: 'strict',
   llm_timeout_seconds: 5,
   on_model_failure: 'fail',
+  remember: { as: 'm', key: { k: 'run.params.k' }, keep_days: 1 },
 };
 
 // A handful of cells need a workflow- or step-level extra the base+value pair can't express —
@@ -167,9 +168,9 @@ const cellOf = (key: string, mode: ExecutionMode): StepKeyCell =>
   (STEP_KEY_REGISTRY as Record<string, Record<ExecutionMode, StepKeyCell>>)[key]![mode];
 
 describe('#417-PR2 — the step-key consumption registry (core conformance)', () => {
-  it('takes its key set from KNOWN_STEP_KEYS, and covers all 37 × 4 = 148 cells', () => {
+  it('takes its key set from KNOWN_STEP_KEYS, and covers all 38 × 4 = 152 cells', () => {
     expect(Object.keys(STEP_KEY_REGISTRY).sort()).toEqual([...KNOWN_STEP_KEYS].sort());
-    expect(Object.keys(STEP_KEY_REGISTRY).length * MODES.length).toBe(148);
+    expect(Object.keys(STEP_KEY_REGISTRY).length * MODES.length).toBe(152);
   });
 
   it("the companion-pattern lock: a companion-shaped rule is never spelled 'prohibited' (D4-4)", () => {

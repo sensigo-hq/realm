@@ -13,7 +13,7 @@ Where the docs teach it: [Workflow file: top-level fields](../workflow/top-level
 | [`loadWorkflowFromFile`](#loadworkflowfromfile) | function | Loads a WorkflowDefinition from a YAML file on disk. |
 | [`loadWorkflowFromFileWithDiagnostics`](#loadworkflowfromfilewithdiagnostics) | function | Same as `loadWorkflowFromFile`, but prints nothing and returns every collected `LoaderWarning` alongside the definition. |
 | [`loadWorkflowFromString`](#loadworkflowfromstring) | function | Loads a WorkflowDefinition from a YAML string. |
-| [`loadWorkflowFromStringWithDiagnostics`](#loadworkflowfromstringwithdiagnostics) | function | Same as `loadWorkflowFromString`, but prints nothing and returns every collected `LoaderWarning` alongside the definition, and the `input_map` paths not checked. |
+| [`loadWorkflowFromStringWithDiagnostics`](#loadworkflowfromstringwithdiagnostics) | function | Same as `loadWorkflowFromString`, but prints nothing and returns every collected `LoaderWarning` alongside the definition, and the paths not checked (`input_map`, `when`, template and `remember`). |
 | [`AuthGithub`](#authgithub) | interface | GitHub HMAC-SHA256 hex body signature (header 'X-Hub-Signature-256'). |
 | [`AuthHmac`](#authhmac) | interface | Generic HMAC body signature with a configurable header / algorithm / encoding. |
 | [`AuthNone`](#authnone) | interface | Documented, discouraged escape hatch — accept without verification (trusted network / localhost only). |
@@ -25,8 +25,9 @@ Where the docs teach it: [Workflow file: top-level fields](../workflow/top-level
 | [`JsonSchema`](#jsonschema) | interface | The JSON Schema object a workflow gives for a step's input and for a run's params (`StepDefinition.input_schema`, `WorkflowDefinition.params_schema`). |
 | [`LoaderNote`](#loadernote) | interface | A placeholder or an `input_map` leaf that puts a step's failure message (`$settlement.<step>.message`, or a path that holds it) into a `prompt`, a gated step's `instructions` or a step's `input_map`. |
 | [`McpServerConfig`](#mcpserverconfig) | interface | An MCP server a workflow's tool-enabled steps may call: its id and the command that starts it (`WorkflowDefinition.mcp_servers`). |
-| [`NotCheckedPath`](#notcheckedpath) | interface | An `input_map` path or a `when` condition that reads data the workflow declares no shape for (`validate --json`'s `not_checked`). |
+| [`NotCheckedPath`](#notcheckedpath) | interface | An `input_map` path, a `when` condition, a template placeholder or a `remember` path that reads data the workflow declares no shape for (`validate --json`'s `not_checked`). |
 | [`ProtocolConfig`](#protocolconfig) | interface | A workflow's own words for the agent protocol: a quick-start paragraph that replaces the generated one, and rules added as they are written (`WorkflowDefinition.protocol`). |
+| [`RememberConfig`](#rememberconfig) | interface | What a step keeps for later runs of its workflow (`StepDefinition.remember`). |
 | [`RetryConfig`](#retryconfig) | interface | How a step is tried again after a failure: the most attempts, the backoff and its delays (`StepDefinition.retry`). |
 | [`ServiceDefinition`](#servicedefinition) | interface | A service a workflow declares under `services`: the adapter that calls it, its trust, and its rate limit (`WorkflowDefinition.services`). |
 | [`StepDefinition`](#stepdefinition) | interface | One step of a workflow, as the loaders return it under `WorkflowDefinition.steps`: what it does, how it runs, the steps it waits for, and its input and settings. |
@@ -113,7 +114,8 @@ function loadWorkflowFromString(content: string, registry?: ExtensionRegistry): 
 function · public
 
 Same as `loadWorkflowFromString`, but prints nothing and returns every collected `LoaderWarning`
-alongside the definition, and the `input_map` paths not checked.
+alongside the definition, and the paths not checked (`input_map`, `when`, template and
+`remember`).
 
 ```ts
 function loadWorkflowFromStringWithDiagnostics(content: string, registry?: ExtensionRegistry, declared?: DeclaredNames): {
@@ -310,12 +312,12 @@ interface McpServerConfig {
 
 interface · public
 
-An `input_map` path or a `when` condition that reads data the workflow declares no shape for
-(`validate --json`'s `not_checked`).
+An `input_map` path, a `when` condition, a template placeholder or a `remember` path that reads
+data the workflow declares no shape for (`validate --json`'s `not_checked`).
 
 ```ts
 interface NotCheckedPath {
-    surface: 'input_map' | 'when' | 'template';
+    surface: 'input_map' | 'when' | 'template' | 'remember';
     step: string;
     key: string;
     path: string;
@@ -334,6 +336,24 @@ generated one, and rules added as they are written (`WorkflowDefinition.protocol
 interface ProtocolConfig {
     quick_start?: string;
     rules?: string[];
+}
+```
+
+### RememberConfig
+
+interface · public
+
+What a step keeps for later runs of its workflow (`StepDefinition.remember`). `as` names the
+memory; `key` names each part of its key with a path in this run (the step's own output is
+`context.resources.<this step>`); `value`, in `input_map`'s form, is what is kept (the step's output
+when absent); `keep_days` is how long, from 1 to 3650 days.
+
+```ts
+interface RememberConfig {
+    as: string;
+    key: Record<string, string>;
+    value?: Record<string, InputMapNode>;
+    keep_days: number;
 }
 ```
 
@@ -402,6 +422,7 @@ interface StepDefinition {
     trust?: TrustLevel;
     llm_timeout_seconds?: number;
     on_model_failure?: 'fail' | 'default';
+    remember?: RememberConfig;
     timeout_seconds?: number;
     retry?: RetryConfig;
     validation_exhaustion?: {
@@ -553,7 +574,7 @@ Every code a `WorkflowError` can carry, grouped by its category; a reply's error
 catalogue name it (`WorkflowError.code`).
 
 ```ts
-type ErrorCode = 'NETWORK_TIMEOUT' | 'NETWORK_UNREACHABLE' | 'NETWORK_DNS_FAILED' | 'NETWORK_CONNECTION_RESET' | 'SERVICE_HTTP_4XX' | 'SERVICE_HTTP_5XX' | 'SERVICE_RATE_LIMITED' | 'SERVICE_AUTH_FAILED' | 'SERVICE_NOT_FOUND' | 'SERVICE_RESPONSE_INVALID' | 'SERVICE_UNEXPECTED_REDIRECT' | 'MODEL_REQUEST_FAILED' | 'STATE_BLOCKED' | 'STATE_PRECONDITION_FAILED' | 'STATE_RUN_NOT_FOUND' | 'STATE_WORKFLOW_NOT_FOUND' | 'STATE_WORKFLOW_UNREADABLE' | 'STATE_RUN_TERMINAL' | 'STATE_SNAPSHOT_MISMATCH' | 'STATE_RUN_LOCKED' | 'STATE_RUN_BUSY' | 'STATE_TRANSITION_DENIED' | 'STATE_LEGACY_FORMAT' | 'STATE_NEWER_FORMAT' | 'STATE_STEP_ALREADY_CLAIMED' | 'STATE_STEP_NOT_ELIGIBLE' | 'STATE_STEP_ALREADY_SETTLED' | 'STATE_CLAIM_LOST' | 'STATE_ANSWERER_MISMATCH' | 'STATE_RUN_DIVERGED' | 'STATE_RUN_ALREADY_ACTIVE' | 'STATE_IDEMPOTENCY_KEY_USED' | 'STATE_TEST_CLOCK_FOREIGN' | 'STATE_HOME_UNUSABLE' | 'STATE_STORE_DRIVER_UNAVAILABLE' | 'STATE_STORE_FILESYSTEM_REFUSED' | 'STATE_STORE_SETTINGS_REFUSED' | 'STATE_STORE_VERSION_OLDER' | 'STATE_STORE_VERSION_NEWER' | 'STATE_STORE_SCHEMA_TAMPERED' | 'STATE_STORE_FULL' | 'STATE_STORE_READONLY' | 'STATE_STORE_WRITES_FENCED' | 'STATE_STORE_LIMIT_EXCEEDED' | 'STATE_STORE_BACKUP_REFUSED' | 'STATE_STORE_BACKUP_UNVERIFIED' | 'STATE_STORE_MIGRATE_REFUSED' | 'STATE_STORE_MIGRATE_FAILED' | 'STATE_STORE_IN_USE' | 'STATE_STORE_RESTORE_REFUSED' | 'STATE_STORE_CHECK_REFUSED' | 'STATE_HOME_HOLDS_LEGACY_STORE' | 'STATE_RUN_PURGED' | 'STATE_RUN_TIMESTAMP_INVALID' | 'STATE_WRITE_ONCE_REWRITTEN' | 'STATE_EVIDENCE_REWRITTEN' | 'STATE_RUN_IDENTITY' | 'RUN_ABORTING' | 'VALIDATION_INPUT_SCHEMA' | 'VALIDATION_OUTPUT_SCHEMA' | 'VALIDATION_TRACE_SCHEMA' | 'VALIDATION_EXHAUSTED' | 'VALIDATION_WORKFLOW_SCHEMA' | 'VALIDATION_HASH_MISMATCH' | 'VALIDATION_QUOTE_NOT_FOUND' | 'VALIDATION_FIELD_UNKNOWN' | 'VALIDATION_FIELD_EXCLUDED' | 'VALIDATION_EMPTY_VALUE' | 'VALIDATION_BATCH_TOO_LARGE' | 'VALIDATION_BATCH_ITEMS' | 'VALIDATION_TRUST_VALUE' | 'VALIDATION_ACTOR_INVALID' | 'VALIDATION_CALLER_INVALID' | 'VALIDATION_OPTION_INVALID' | 'VALIDATION_CURSOR' | 'STEP_HANDLER_ERROR' | 'ENGINE_INTERNAL' | 'ENGINE_STORE_FAILED' | 'ENGINE_ARTIFACT_DELETE_FAILED' | 'ENGINE_ADAPTER_FAILED' | 'ENGINE_ADAPTER_NOT_REGISTERED' | 'ENGINE_PROCESSOR_FAILED' | 'ENGINE_HANDLER_FAILED' | 'ENGINE_HANDLER_NOT_REGISTERED' | 'ENGINE_STEP_FAILED' | 'ENGINE_GATE_OPEN_FAILED' | 'ENGINE_RELEASE_LINE_MISMATCH' | 'ENGINE_RELEASE_LINE_UNDECLARED' | 'GATE_MESSAGE_UNRESOLVABLE' | 'FILTER_UNKNOWN' | 'ADAPTER_OP_UNSUPPORTED' | 'ADAPTER_VALIDATION_FAILED' | 'ADAPTER_REQUEST_FAILED' | 'STEP_TIMEOUT' | 'STEP_ABORTED' | 'STEP_RETRY_EXHAUSTED' | 'STATE_STEP_PENDING' | 'STATE_SEAL_UNSTAMPED' | 'STATE_SEAL_ORPHANED' | 'STATE_SEAL_ERASED' | 'STATE_SEAL_UNKNOWN_ARM' | 'STATE_SEAL_INCOHERENT' | 'STATE_SEAL_REWRITTEN' | 'STEP_NOT_FOUND' | 'GUARD_RESOLUTION_ERROR' | 'INPUT_MAP_DEPTH_EXCEEDED' | 'INPUT_MAP_UNKNOWN_DIRECTIVE' | 'RESOURCE_FETCH_FAILED' | 'RESOURCE_TOO_LARGE' | 'RESOURCE_FORMAT_INVALID' | 'RESOURCE_NOT_ACCESSIBLE' | 'BUFFER_FULL' | 'TRACE_CAPABILITY_INCONSISTENT' | 'MCP_CONNECTION_FAILED' | 'MCP_TOOL_NOT_FOUND' | 'MCP_TOOL_NAME_COLLISION';
+type ErrorCode = 'NETWORK_TIMEOUT' | 'NETWORK_UNREACHABLE' | 'NETWORK_DNS_FAILED' | 'NETWORK_CONNECTION_RESET' | 'SERVICE_HTTP_4XX' | 'SERVICE_HTTP_5XX' | 'SERVICE_RATE_LIMITED' | 'SERVICE_AUTH_FAILED' | 'SERVICE_NOT_FOUND' | 'SERVICE_RESPONSE_INVALID' | 'SERVICE_UNEXPECTED_REDIRECT' | 'MODEL_REQUEST_FAILED' | 'STATE_BLOCKED' | 'STATE_PRECONDITION_FAILED' | 'STATE_RUN_NOT_FOUND' | 'STATE_WORKFLOW_NOT_FOUND' | 'STATE_WORKFLOW_UNREADABLE' | 'STATE_RUN_TERMINAL' | 'STATE_SNAPSHOT_MISMATCH' | 'STATE_RUN_LOCKED' | 'STATE_RUN_BUSY' | 'STATE_TRANSITION_DENIED' | 'STATE_LEGACY_FORMAT' | 'STATE_NEWER_FORMAT' | 'STATE_STEP_ALREADY_CLAIMED' | 'STATE_STEP_NOT_ELIGIBLE' | 'STATE_STEP_ALREADY_SETTLED' | 'STATE_CLAIM_LOST' | 'STATE_ANSWERER_MISMATCH' | 'STATE_RUN_DIVERGED' | 'STATE_RUN_ALREADY_ACTIVE' | 'STATE_IDEMPOTENCY_KEY_USED' | 'STATE_TEST_CLOCK_FOREIGN' | 'STATE_HOME_UNUSABLE' | 'STATE_STORE_DRIVER_UNAVAILABLE' | 'STATE_STORE_FILESYSTEM_REFUSED' | 'STATE_STORE_SETTINGS_REFUSED' | 'STATE_STORE_VERSION_OLDER' | 'STATE_STORE_VERSION_NEWER' | 'STATE_STORE_SCHEMA_TAMPERED' | 'STATE_STORE_FULL' | 'STATE_STORE_READONLY' | 'STATE_STORE_WRITES_FENCED' | 'STATE_STORE_LIMIT_EXCEEDED' | 'STATE_STORE_BACKUP_REFUSED' | 'STATE_STORE_BACKUP_UNVERIFIED' | 'STATE_STORE_MIGRATE_REFUSED' | 'STATE_STORE_MIGRATE_FAILED' | 'STATE_STORE_IN_USE' | 'STATE_STORE_RESTORE_REFUSED' | 'STATE_STORE_CHECK_REFUSED' | 'STATE_HOME_HOLDS_LEGACY_STORE' | 'STATE_RUN_PURGED' | 'STATE_RUN_TIMESTAMP_INVALID' | 'STATE_WRITE_ONCE_REWRITTEN' | 'STATE_EVIDENCE_REWRITTEN' | 'STATE_RUN_IDENTITY' | 'RUN_ABORTING' | 'VALIDATION_INPUT_SCHEMA' | 'VALIDATION_OUTPUT_SCHEMA' | 'VALIDATION_TRACE_SCHEMA' | 'VALIDATION_EXHAUSTED' | 'VALIDATION_WORKFLOW_SCHEMA' | 'VALIDATION_HASH_MISMATCH' | 'VALIDATION_QUOTE_NOT_FOUND' | 'VALIDATION_FIELD_UNKNOWN' | 'VALIDATION_FIELD_EXCLUDED' | 'VALIDATION_EMPTY_VALUE' | 'VALIDATION_BATCH_TOO_LARGE' | 'VALIDATION_BATCH_ITEMS' | 'VALIDATION_TRUST_VALUE' | 'VALIDATION_ACTOR_INVALID' | 'VALIDATION_CALLER_INVALID' | 'VALIDATION_OPTION_INVALID' | 'VALIDATION_CURSOR' | 'CALL_OUTSIDE_LIMITS' | 'STEP_HANDLER_ERROR' | 'ENGINE_INTERNAL' | 'ENGINE_STORE_FAILED' | 'ENGINE_ARTIFACT_DELETE_FAILED' | 'ENGINE_ADAPTER_FAILED' | 'ENGINE_ADAPTER_NOT_REGISTERED' | 'ENGINE_PROCESSOR_FAILED' | 'ENGINE_HANDLER_FAILED' | 'ENGINE_HANDLER_NOT_REGISTERED' | 'ENGINE_STEP_FAILED' | 'ENGINE_GATE_OPEN_FAILED' | 'ENGINE_RELEASE_LINE_MISMATCH' | 'ENGINE_RELEASE_LINE_UNDECLARED' | 'GATE_MESSAGE_UNRESOLVABLE' | 'FILTER_UNKNOWN' | 'ADAPTER_OP_UNSUPPORTED' | 'ADAPTER_VALIDATION_FAILED' | 'ADAPTER_REQUEST_FAILED' | 'STEP_TIMEOUT' | 'STEP_ABORTED' | 'STEP_RETRY_EXHAUSTED' | 'STATE_STEP_PENDING' | 'STATE_SEAL_UNSTAMPED' | 'STATE_SEAL_ORPHANED' | 'STATE_SEAL_ERASED' | 'STATE_SEAL_UNKNOWN_ARM' | 'STATE_SEAL_INCOHERENT' | 'STATE_SEAL_REWRITTEN' | 'STEP_NOT_FOUND' | 'GUARD_RESOLUTION_ERROR' | 'INPUT_MAP_DEPTH_EXCEEDED' | 'INPUT_MAP_UNKNOWN_DIRECTIVE' | 'RESOURCE_FETCH_FAILED' | 'RESOURCE_TOO_LARGE' | 'RESOURCE_FORMAT_INVALID' | 'RESOURCE_NOT_ACCESSIBLE' | 'BUFFER_FULL' | 'TRACE_CAPABILITY_INCONSISTENT' | 'MCP_CONNECTION_FAILED' | 'MCP_TOOL_NOT_FOUND' | 'MCP_TOOL_NAME_COLLISION';
 ```
 
 ### ExecutionMode

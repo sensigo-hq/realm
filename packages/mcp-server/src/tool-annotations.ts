@@ -29,6 +29,18 @@ export const TOOL_ANNOTATIONS = {
 /** A tool's name, as the table keys it. */
 export type ToolName = keyof typeof TOOL_ANNOTATIONS;
 
+/**
+ * The reading tools: every tool whose annotation is `readOnlyHint: true`, in the table's order. A key
+ * made with `--read-only` (or a server built with `limits.readOnly`) may call only these, so a reading
+ * tool added to the table is included with no other change.
+ * @beta
+ */
+export const READING_TOOLS: readonly string[] = Object.freeze(
+  (Object.keys(TOOL_ANNOTATIONS) as ToolName[]).filter(
+    (name) => (TOOL_ANNOTATIONS[name] as ToolAnnotations).readOnlyHint === true,
+  ),
+);
+
 /** A tool's `title` and `annotations`, as `registerTool` takes them. */
 export function toolMeta(name: ToolName): { title: string; annotations: ToolAnnotations } {
   const annotations = TOOL_ANNOTATIONS[name];

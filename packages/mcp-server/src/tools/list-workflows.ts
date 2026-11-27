@@ -13,7 +13,6 @@ import {
 } from '@sensigo/realm';
 import {
   disclosureOfTool,
-  safeTool,
   toolContentOf,
   type WithDoorDisclosure,
   replySubject,
@@ -22,6 +21,7 @@ import {
 } from '../render-reply.js';
 import { toolMeta } from '../tool-annotations.js';
 import { assertToolStores } from './assert-tool-stores.js';
+import { limitedTool, mayCall, type CallerLimits, type WithCallerLimits } from './caller-limits.js';
 
 export interface HandleStores {
   /** The workflow registry: any `WorkflowRegistrar` (#661). Listed through core's
@@ -72,8 +72,8 @@ export type ListWorkflowsResult =
       hint: string;
     };
 
-const HEALTHY_HINT =
-  'Call get_workflow_protocol with a workflow_id before calling start_run. If no workflow matches your task, use create_workflow to define and start your own plan.';
+const PROTOCOL_FIRST = 'Call get_workflow_protocol with a workflow_id before calling start_run.';
+const HEALTHY_HINT = `${PROTOCOL_FIRST} If no workflow matches your task, use create_workflow to define and start your own plan.`;
 
 /**
  * Business logic for the list_workflows tool.
@@ -82,9 +82,29 @@ const HEALTHY_HINT =
  * be read may still be a registered workflow that only needs its file repaired, and realm cannot
  * tell which until an operator looks — so the steer is withdrawn rather than guessed.
  */
-export async function handleListWorkflows(stores: HandleStores): Promise<ListWorkflowsResult> {
+export async function handleListWorkflows(
+  stores: HandleStores,
+  limits?: CallerLimits,
+): Promise<ListWorkflowsResult> {
   assertToolStores(stores, 'handleListWorkflows', ['workflowStore']);
-  const { workflows, unreadable } = await listWorkflowsDiagnosed(stores.workflowStore);
+  const listed = await listWorkflowsDiagnosed(stores.workflowStore);
+  // #625 named keys unit 2: a caller limited to some workflows is told of those only — the workflows,
+  // the copies that could not be read (a file copy by its name less `.json`; one whose workflow cannot
+  // be told is left out) and the counts.
+  const within = limits?.workflows;
+  const workflows =
+    within === undefined ? listed.workflows : listed.workflows.filter((w) => within.includes(w.id));
+  const unreadable =
+    within === undefined
+      ? listed.unreadable
+      : listed.unreadable.filter((u) =>
+          u.workflow_id !== undefined
+            ? within.includes(u.workflow_id)
+            : u.class === 'registry_broken' ||
+              (u.file !== undefined &&
+                u.file.endsWith('.json') &&
+                within.includes(u.file.slice(0, -'.json'.length))),
+        );
   const broken = unreadable.find(
     (u): u is UnreadableFileEntry => u.class === 'registry_broken' && u.file !== undefined,
   );
@@ -134,7 +154,9 @@ export async function handleListWorkflows(stores: HandleStores): Promise<ListWor
     warnings: entries.length === 0 ? [] : [`${count} — see 'unreadable'.`],
     hint:
       entries.length === 0
-        ? HEALTHY_HINT
+        ? mayCall(limits, 'create_workflow')
+          ? HEALTHY_HINT
+          : PROTOCOL_FIRST
         : byFile
           ? // Correction 2 (3.5): by class — a newer or a legacy copy carries no `repair`; its reason
             // names the way out.
@@ -171,7 +193,7 @@ export const LIST_WORKFLOWS_TABLE = {
 /** Registers the list_workflows MCP tool on the server. */
 export function registerListWorkflows(
   server: McpServer,
-  opts: HandleStores & WithDoorDisclosure,
+  opts: HandleStores & WithDoorDisclosure & WithCallerLimits,
 ): void {
   const door = disclosureOfTool(opts);
   server.registerTool(
@@ -181,9 +203,11 @@ export function registerListWorkflows(
       description:
         'List all registered Realm workflows; names every registered copy that could not be read, and refuses when the registry directory itself cannot be read.',
     },
-    safeTool(
+    limitedTool(
+      'list_workflows',
+      opts,
       async () => {
-        const result = await handleListWorkflows(opts);
+        const result = await handleListWorkflows(opts, opts.limits);
         // F11 (D-11): the reply covers every listed workflow, so it reports the weakest standing.
         const subjects = await Promise.all(
           (result.workflows ?? []).map((w) => replySubject(opts, { workflowId: w.id })),

@@ -10,13 +10,13 @@ import {
 } from '@sensigo/realm';
 import {
   disclosureOfTool,
-  safeTool,
   toolContentOf,
   type WithDoorDisclosure,
   replySubject,
   setForSubject,
   SAFE_TOOL_CONSTANT_RUNLESS,
 } from '../render-reply.js';
+import { limitedTool } from './caller-limits.js';
 import { toolMeta } from '../tool-annotations.js';
 import {
   generateProtocol,
@@ -146,7 +146,9 @@ export function registerGetWorkflowProtocol(
       description: 'Get the full agent protocol briefing for a registered workflow.',
       inputSchema: boundedRefusal(z.object({ workflow_id: z.string() })),
     },
-    safeTool(
+    limitedTool(
+      'get_workflow_protocol',
+      opts,
       async (args) => {
         const result = await handleGetWorkflowProtocol(args, opts);
         return toolContentOf(

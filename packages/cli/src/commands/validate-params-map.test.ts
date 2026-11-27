@@ -422,11 +422,11 @@ describe('fix 1, piece 2b — the words the docs and the changelog carry (check 
     expect(example(unfilledRow).length).toBeGreaterThan(20);
   });
 
-  it('loader-diagnostics.md: 36 codes, twelve of them errors, the three new rows', () => {
-    claim('docs/reference/workflow/loader-diagnostics.md', 'lists all 36 warning codes');
+  it('loader-diagnostics.md: 38 codes, thirteen of them errors, the three new rows', () => {
+    claim('docs/reference/workflow/loader-diagnostics.md', 'lists all 38 warning codes');
     claim(
       'docs/reference/workflow/loader-diagnostics.md',
-      "The loader has 36 warning codes. Twelve of them count as errors and make `validate`, `register` and `watch` fail: an unknown key at the top of the file or on a step; an `input_map` path that can never be found; a `when` condition that reads a path that can never be found or compares a gate's answer with a choice it does not offer; a webhook `params_map` that names a parameter a closed `params_schema` does not have, or leaves a required one unfilled; a template that uses a filter Realm does not have, gives a filter an argument no value accepts, or is not text; and a path in an approval question, `display`, a prompt or step instructions that can never be found, or one in an approval question that may be missing, unless `| default` comes first in its filters and the filters after it take its value.",
+      "The loader has 38 warning codes. Thirteen of them count as errors and make `validate`, `register` and `watch` fail: an unknown key at the top of the file or on a step; an `input_map` path that can never be found; a `when` condition that reads a path that can never be found or compares a gate's answer with a choice it does not offer; a webhook `params_map` that names a parameter a closed `params_schema` does not have, or leaves a required one unfilled; a template that uses a filter Realm does not have, gives a filter an argument no value accepts, or is not text; a path in an approval question, `display`, a prompt or step instructions that can never be found, or one in an approval question that may be missing, unless `| default` comes first in its filters and the filters after it take its value; and a `remember` key or value path that can never be found.",
     );
     claim(
       'docs/reference/workflow/loader-diagnostics.md',

@@ -28,12 +28,12 @@ describe('gap 2 (ii-b2), check 9 — the words', () => {
     // Executed by the loader's cells (check 8: the agent step loads; auto, guard, finalizer refused).
     claim(
       'docs/reference/workflow/step-fields.md',
-      'This page lists every field a step can have. There are 37,',
+      'This page lists every field a step can have. There are 38,',
     );
     // Correction 1: the example file carries the key (docs-899's transcript cell loads it).
     claim(
       'docs/reference/workflow/step-fields.md',
-      'This file uses the 36 fields that a step itself can carry;',
+      'This file uses the 37 fields that a step itself can carry;',
     );
     claim(
       'docs/reference/workflow/step-fields.md',

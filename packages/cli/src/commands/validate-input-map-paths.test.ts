@@ -463,9 +463,9 @@ describe('fix 1, unit 1 — the words the docs and the changelog carry (check 20
     //     counts the codes); (2) prints the sentence.
     claim(
       'docs/reference/workflow/loader-diagnostics.md',
-      "The loader has 36 warning codes. Twelve of them count as errors and make `validate`, `register` and `watch` fail: an unknown key at the top of the file or on a step; an `input_map` path that can never be found; a `when` condition that reads a path that can never be found or compares a gate's answer with a choice it does not offer; a webhook `params_map` that names a parameter a closed `params_schema` does not have, or leaves a required one unfilled; a template that uses a filter Realm does not have, gives a filter an argument no value accepts, or is not text; and a path in an approval question, `display`, a prompt or step instructions that can never be found, or one in an approval question that may be missing, unless `| default` comes first in its filters and the filters after it take its value.",
+      "The loader has 38 warning codes. Thirteen of them count as errors and make `validate`, `register` and `watch` fail: an unknown key at the top of the file or on a step; an `input_map` path that can never be found; a `when` condition that reads a path that can never be found or compares a gate's answer with a choice it does not offer; a webhook `params_map` that names a parameter a closed `params_schema` does not have, or leaves a required one unfilled; a template that uses a filter Realm does not have, gives a filter an argument no value accepts, or is not text; a path in an approval question, `display`, a prompt or step instructions that can never be found, or one in an approval question that may be missing, unless `| default` comes first in its filters and the filters after it take its value; and a `remember` key or value path that can never be found.",
     );
-    claim('docs/reference/workflow/loader-diagnostics.md', 'lists all 36 warning codes');
+    claim('docs/reference/workflow/loader-diagnostics.md', 'lists all 38 warning codes');
     claim(
       'docs/reference/workflow/loader-diagnostics.md',
       '| `INPUT_MAP_PATH_UNRESOLVABLE` | Error | An `input_map` path can never be found. Added after version 0.49.0. |',
@@ -476,7 +476,7 @@ describe('fix 1, unit 1 — the words the docs and the changelog carry (check 20
     );
     claim(
       'docs/reference/workflow/loader-diagnostics.md',
-      "| `not_checked` | The `input_map` paths, `when` conditions and template references (in `gate.message`, `display`, `prompt` and `instructions`) that read data the workflow declares no shape for, or a context entry only a file adds: `surface` (`input_map`, `when` or `template`), `step`, `key` (`when` for a condition, the field's name for a template), `path`, `why` (`producer_declares_no_shape`, `no_params_schema`, `added_from_file`, or `check_failed` when the check itself failed on that path). Empty when the file could not be loaded. Added after version 0.49.0. |",
+      "| `not_checked` | The `input_map` paths, `when` conditions, template references (in `gate.message`, `display`, `prompt` and `instructions`) and `remember` paths that read data the workflow declares no shape for, or a context entry only a file adds: `surface` (`input_map`, `when`, `template` or `remember`), `step`, `key` (`when` for a condition, the field's name for a template, `key.<name>` or `value.<key>` for `remember`), `path`, `why` (`producer_declares_no_shape`, `no_params_schema`, `added_from_file`, or `check_failed` when the check itself failed on that path). Empty when the file could not be loaded. Added after version 0.49.0. |",
     );
   });
 

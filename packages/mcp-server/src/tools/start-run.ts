@@ -44,7 +44,6 @@ import {
   mcpReplyOf,
   withHintTail,
   renderReply,
-  safeTool,
   toolContentOf,
   MCP_ENVELOPE_TABLE,
   type WithDoorDisclosure,
@@ -56,6 +55,7 @@ import {
   setForSubject,
   SAFE_TOOL_CONSTANT_RUNLESS,
 } from '../render-reply.js';
+import { limitedTool } from './caller-limits.js';
 
 /**
  * issue #729 PR-0: the ways of a record a tool hands back, composed by core's one composer
@@ -585,7 +585,9 @@ export function registerStartRun(
         }),
       ),
     },
-    safeTool(
+    limitedTool(
+      'start_run',
+      opts,
       async (args, extra) => {
         let disclosure: DisclosureSet | undefined;
         const result = await handleStartRun(args, opts, formCallOf(opts, extra), (set) => {

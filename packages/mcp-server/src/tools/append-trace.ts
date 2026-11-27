@@ -28,7 +28,6 @@ import {
   disclosureOfTool,
   mcpReplyOf,
   renderReply,
-  safeTool,
   toolContentOf,
   MCP_ENVELOPE_TABLE,
   type OperatorRoute,
@@ -36,6 +35,7 @@ import {
   replySubject,
   setForSubject,
 } from '../render-reply.js';
+import { limitedTool } from './caller-limits.js';
 import type { McpDoor } from '../door.js';
 import { mcpHostOf } from './start-run.js';
 import { toolMeta } from '../tool-annotations.js';
@@ -452,7 +452,9 @@ export function registerAppendTrace(
         }),
       ),
     },
-    safeTool(
+    limitedTool(
+      'append_trace',
+      opts,
       async (args) => {
         // The zod 4 unit, R2 (O2): before the append — an integer beyond 2^53−1 in an entry's data
         // draws a warning (a non-finite value never gets here: the data union refuses it).

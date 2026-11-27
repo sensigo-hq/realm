@@ -697,6 +697,20 @@ export type LiteralNode = { $literal: unknown };
 export type InputMapNode = string | LiteralNode | { [key: string]: InputMapNode };
 
 /**
+ * What a step keeps for later runs of its workflow (`StepDefinition.remember`). `as` names the
+ * memory; `key` names each part of its key with a path in this run (the step's own output is
+ * `context.resources.<this step>`); `value`, in `input_map`'s form, is what is kept (the step's output
+ * when absent); `keep_days` is how long, from 1 to 3650 days.
+ * @public
+ */
+export interface RememberConfig {
+  as: string;
+  key: Record<string, string>;
+  value?: Record<string, InputMapNode>;
+  keep_days: number;
+}
+
+/**
  * One step of a workflow, as the loaders return it under `WorkflowDefinition.steps`: what it does,
  * how it runs, the steps it waits for, and its input and settings.
  * @public
@@ -851,6 +865,13 @@ export interface StepDefinition {
    * open. Only valid on `execution: agent` steps.
    */
   on_model_failure?: 'fail' | 'default';
+  /**
+   * Gap 3, unit 1a: what this step keeps for later runs of its workflow, recorded on the entry its
+   * success writes (a gated step's: its answer's, with the choice) as `EvidenceSnapshot.remembered`.
+   * Only valid on an agent step, or an auto step with `handler` or `uses_service`. Nothing reads it
+   * back yet.
+   */
+  remember?: RememberConfig;
   timeout_seconds?: number;
   retry?: RetryConfig;
   /**
@@ -1000,6 +1021,7 @@ export const KNOWN_STEP_KEYS = [
   'structured_output',
   'llm_timeout_seconds',
   'on_model_failure',
+  'remember',
 ] as const;
 
 /**
