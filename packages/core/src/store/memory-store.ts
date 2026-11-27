@@ -20,8 +20,9 @@ import { hashParams } from './params-hash.js';
  *
  * @remarks
  * A store must write a run's rows in the same transaction as the run's evidence, and never change
- * one. The row holds the value and the supplier itself, read from the entry, so it needs no other
- * part of the run. Times are ISO 8601 in `toISOString()`'s form.
+ * one. The row holds the value and the supplier itself, read from the run's evidence when the row
+ * is derived (a gate answer's supplier from the entry its question opened on), so it needs no
+ * other part of the run. Times are ISO 8601 in `toISOString()`'s form.
  * @beta
  */
 export interface MemoryRow {

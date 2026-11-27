@@ -41,7 +41,7 @@ describe('gap 3 (1a), check 13 — the words', () => {
       'A step can keep something for later runs of its workflow, under a named key: for example the offer it made, by customer email.',
       'remember:\n  as: offers # required\n  key: { customer_email: context.resources.normalize_email.email } # required\n  value: { rung: context.resources.record_offer.rung } # optional\n  keep_days: 90 # required',
       "| `remember.as` | name | Required | The memory's name. |",
-      '| `remember.key` | map of names to paths | Required | One or more named parts, each a path in this run. A part is kept as text, a number as its digits; with a part over 1 KB the step remembers nothing. |',
+      '| `remember.key` | map of names to paths | Required | One or more named parts, each a path in this run. A part is kept as text, a number as its digits; with a part over 1 KB (1,024 bytes in UTF-8) the step remembers nothing. |',
       "| `remember.value` | map, in `input_map`'s form | None | What to keep, in `input_map`'s form. Without it, the step's output is kept. |",
       '| `remember.keep_days` | whole number | Required | How many days to keep each entry, from 1 to 3650. |',
       "`remember` goes on an agent step, or an auto step with `handler` or `uses_service`; the step's own output is `context.resources.<this step>`.",
