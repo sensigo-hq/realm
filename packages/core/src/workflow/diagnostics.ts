@@ -88,7 +88,11 @@ export type WarningCode =
   // `display` that may be missing (`template-paths.ts`).
   | 'TEMPLATE_PATH_UNRESOLVABLE'
   | 'TEMPLATE_PATH_NO_DEFAULT'
-  | 'TEMPLATE_PATH_UNCERTAIN';
+  | 'TEMPLATE_PATH_UNCERTAIN'
+  // gap 3, unit 1b-i: a `remember:` key or value path that can never be found, and one that may be
+  // absent when the step remembers (`remember-paths.ts`).
+  | 'REMEMBER_PATH_UNRESOLVABLE'
+  | 'REMEMBER_PATH_UNCERTAIN';
 
 /**
  * A single structured diagnostic. `message` is the full human-readable text, minted once at the
@@ -203,6 +207,10 @@ export const DEFAULT_POLICY: Record<WarningCode, 'warn' | 'error'> = {
   TEMPLATE_PATH_UNRESOLVABLE: 'error',
   TEMPLATE_PATH_NO_DEFAULT: 'error',
   TEMPLATE_PATH_UNCERTAIN: 'warn',
+  // gap 3, unit 1b-i — the error refused by validate, register and watch, as
+  // INPUT_MAP_PATH_UNRESOLVABLE; printed elsewhere.
+  REMEMBER_PATH_UNRESOLVABLE: 'error',
+  REMEMBER_PATH_UNCERTAIN: 'warn',
 };
 
 /**

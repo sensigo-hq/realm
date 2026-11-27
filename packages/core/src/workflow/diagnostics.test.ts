@@ -13,7 +13,7 @@ import {
 } from './diagnostics.js';
 
 describe('DEFAULT_POLICY / resolveSeverity', () => {
-  it('exactly twelve codes are "error" — the issue #170 flip, the input_map path that can never be found (fix 1, unit 1), the two `when` codes (piece 2a), the two `params_map` codes (piece 2b), the three template codes (piece 3a-i) and the two template path codes (piece 3a-ii-a), and nothing rode along with them', () => {
+  it('exactly thirteen codes are "error" — the issue #170 flip, the input_map path that can never be found (fix 1, unit 1), the two `when` codes (piece 2a), the two `params_map` codes (piece 2b), the three template codes (piece 3a-i), the two template path codes (piece 3a-ii-a) and the remember path that can never be found (gap 3, unit 1b-i), and nothing rode along with them', () => {
     // Written as a whole-table assertion rather than spot checks: the risk this guards is another
     // code quietly acquiring 'error' severity, which no per-code test would ever see.
     const errored = Object.entries(DEFAULT_POLICY)
@@ -24,6 +24,7 @@ describe('DEFAULT_POLICY / resolveSeverity', () => {
       'INPUT_MAP_PATH_UNRESOLVABLE',
       'PARAMS_MAP_REQUIRED_UNMAPPED',
       'PARAMS_MAP_UNKNOWN_PARAM',
+      'REMEMBER_PATH_UNRESOLVABLE',
       'TEMPLATED_FIELD_NOT_TEXT',
       'TEMPLATE_FILTER_ARGUMENT',
       'TEMPLATE_FILTER_UNKNOWN',

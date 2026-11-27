@@ -24,34 +24,43 @@ import { consumesInputMap, type InputMapStep } from '../engine/input-map.js';
 import { holdsFailureMessages } from '../engine/render-template.js';
 import { capText } from '../utils/redaction.js';
 import { resolveSeverity, type LoaderWarning, type WarningCode } from './diagnostics.js';
-import { absentWhy } from './path-reasons.js';
+import { absentWhy, neverWords } from './path-reasons.js';
 import { judgeWhenLeaf, whenLeafPath, type WhenLeaf } from './when-paths.js';
 import { judgeTemplateLeaf, type TemplateLeaf } from './template-paths.js';
+import {
+  judgeRememberLeaf,
+  rememberLeafKey,
+  type RememberBlockAt,
+  type RememberLeaf,
+} from './remember-paths.js';
 import {
   INPUT_MAP_SURFACE,
   PathIndex,
   resolveReference,
   type AbsentCause,
-  type NeverCause,
   type NotCheckedWhy,
   type PathWorkflow,
 } from './path-resolver.js';
 import type { SourcePosition } from './source-positions.js';
 
 /**
- * An `input_map` path or a `when` condition that reads data the workflow declares no shape for
- * (`validate --json`'s `not_checked`).
+ * An `input_map` path, a `when` condition, a template placeholder or a `remember` path that reads
+ * data the workflow declares no shape for (`validate --json`'s `not_checked`).
  * @public
  */
 export interface NotCheckedPath {
   /**
-   * Where the path is read: an `input_map` leaf, a `when` condition (piece 2a), or a template
-   * placeholder in `gate.message` or `display` (piece 3a-ii-a).
+   * Where the path is read: an `input_map` leaf, a `when` condition (piece 2a), a template
+   * placeholder in `gate.message`, `display`, a prompt or instructions (pieces 3a-ii-a and 3a-ii-b),
+   * or a `remember` key or value path (gap 3).
    */
-  surface: 'input_map' | 'when' | 'template';
-  /** The step whose `input_map` (or `when`) holds the path. */
+  surface: 'input_map' | 'when' | 'template' | 'remember';
+  /** The step whose `input_map`, `when`, template or `remember` holds the path. */
   step: string;
-  /** The map's dotted key chain; `when` for a condition; the field's name for a template. */
+  /**
+   * The map's dotted key chain; `when` for a condition; the field's name for a template;
+   * `key.<name>` or `value.<key>` for `remember`.
+   */
   key: string;
   /** The path as written, trimmed: for a condition, its left-hand path. */
   path: string;
@@ -110,6 +119,8 @@ export function checkInputMapPaths(
   },
   /** Piece 3a-ii-a: the `gate.message` and `display` placeholders to judge (`templateLeaves`). */
   templates: readonly TemplateLeaf[] = [],
+  /** Gap 3, unit 1b-i: the `remember:` blocks of the steps `remember` goes on, to judge. */
+  remember: readonly RememberBlockAt[] = [],
 ): InputMapPathFindings {
   const findings: InputMapPathFindings = { warnings: [], notChecked: [], notes: [] };
   const leaves: Leaf[] = [];
@@ -125,7 +136,15 @@ export function checkInputMapPaths(
     );
   }
   const whenLeaves = when?.leaves ?? [];
-  if (leaves.length === 0 && whenLeaves.length === 0 && templates.length === 0) return findings;
+  const rememberLeaves = remember.flatMap(rememberLeavesOf);
+  if (
+    leaves.length === 0 &&
+    whenLeaves.length === 0 &&
+    templates.length === 0 &&
+    rememberLeaves.length === 0
+  ) {
+    return findings;
+  }
 
   let index: PathIndex | undefined;
   try {
@@ -209,7 +228,54 @@ export function checkInputMapPaths(
     if (judged.warning !== undefined) findings.warnings.push(judged.warning);
     if (judged.note !== undefined) findings.notes.push(judged.note);
   }
+  // Gap 3, unit 1b-i: every `remember:` path, over the same index and under the same catch.
+  for (const leaf of rememberLeaves) {
+    let judged: LeafFindings | undefined;
+    if (index !== undefined) {
+      try {
+        judged = judgeRememberLeaf(index, leaf, positionOf);
+      } catch {
+        judged = undefined;
+      }
+    }
+    if (judged === undefined) {
+      findings.notChecked.push({
+        surface: 'remember',
+        step: leaf.step,
+        key: rememberLeafKey(leaf),
+        path: leaf.rawPath.trim(),
+        why: 'check_failed',
+      });
+      continue;
+    }
+    if (judged.notChecked !== undefined) findings.notChecked.push(judged.notChecked);
+    if (judged.warning !== undefined) findings.warnings.push(judged.warning);
+  }
   return findings;
+}
+
+/**
+ * Gap 3, unit 1b-i: a `remember:` block's paths in the order written: each `key` part that is text,
+ * then each `value` leaf, walked as an `input_map` is (`walkMap`). A part that is not a map gives no
+ * leaf: the loader's own check refuses it.
+ */
+function rememberLeavesOf({ step, block }: RememberBlockAt): RememberLeaf[] {
+  const out: RememberLeaf[] = [];
+  if (typeof block !== 'object' || block === null || Array.isArray(block)) return out;
+  const { as, key, value } = block as Record<string, unknown>;
+  if (typeof key === 'object' && key !== null && !Array.isArray(key)) {
+    for (const [name, rawPath] of Object.entries(key)) {
+      if (typeof rawPath === 'string' && rawPath.trim() !== '') {
+        out.push({ step, as, part: 'key', keys: [name], rawPath });
+      }
+    }
+  }
+  if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+    walkMap(value as Record<string, unknown>, [], 0, (keys, rawPath) =>
+      out.push({ step, as, part: 'value', keys, rawPath }),
+    );
+  }
+  return out;
 }
 
 /** One `input_map` leaf: the step that holds it, its key chain, and the path as written. */
@@ -263,7 +329,7 @@ function judgeLeaf(
   if (judgement.verdict === 'never') {
     cause = {
       code: 'INPUT_MAP_PATH_UNRESOLVABLE',
-      ...neverWords(stepName, key, path, judgement.cause),
+      ...neverWords(head(stepName, key), path, judgement.cause, 'input_map'),
     };
   } else if (judgement.verdict === 'may_be_absent') {
     cause = {
@@ -329,71 +395,6 @@ function judgeLeaf(
 /** The opening every finding shares, bounded as unknown keys are (#872 b1). */
 function head(stepName: string, key: string): string {
   return `Step '${stepName}': input_map '${capText(key)}'`;
-}
-
-function neverWords(
-  stepName: string,
-  key: string,
-  path: string,
-  cause: NeverCause,
-): { text: string; didYouMean?: string } {
-  const opening = head(stepName, key);
-  const p = capText(path);
-  switch (cause.rule) {
-    case 'bad_start':
-    case 'bad_root':
-      return {
-        text:
-          `${opening} reads '${p}', which can never be found: a path starts with 'run.params.' or ` +
-          `'context.resources.<step>.'.` +
-          (cause.fix !== undefined ? ` Write it as '${capText(cause.fix)}'.` : ''),
-      };
-    case 'template':
-      return {
-        text:
-          `${opening} is '${p}': input_map takes a path, not a template, so the braces make it a ` +
-          `path that can never be found.` +
-          (cause.fix !== undefined ? ` Write it as '${capText(cause.fix)}'.` : ''),
-      };
-    case 'no_step':
-      return withDidYouMean(
-        `${opening} reads '${p}', but the workflow has no step '${capText(cause.step)}'.`,
-        cause.didYouMean,
-      );
-    case 'no_field':
-      return withDidYouMean(
-        `${opening} reads '${p}', but step '${cause.step}' has no field '${capText(cause.field)}' ` +
-          `there, and its schema allows no other fields.`,
-        cause.didYouMean,
-      );
-    case 'no_settlement_field':
-      return withDidYouMean(
-        `${opening} reads '${p}', but '$settlement.${cause.step}' holds only 'failed', ` +
-          `'settled_by_default', 'validation_rejections', 'failure_kind' and 'message'.`,
-        cause.didYouMean,
-      );
-    case 'no_param':
-      return withDidYouMean(
-        `${opening} reads '${p}', but params_schema has no parameter '${capText(cause.param)}' ` +
-          `and allows no others.`,
-        cause.didYouMean,
-      );
-    // Piece 3a-ii-a's rows, which no `input_map` path reaches: its surface has no context root and
-    // does not read the step's own output.
-    case 'own_settlement':
-    case 'own_choice':
-    case 'no_context_entry':
-      return { text: `${opening} reads '${p}', which can never be found.` };
-  }
-}
-
-function withDidYouMean(
-  text: string,
-  didYouMean: string | undefined,
-): { text: string; didYouMean?: string } {
-  return didYouMean === undefined
-    ? { text }
-    : { text: `${text} Did you mean '${capText(didYouMean)}'?`, didYouMean };
 }
 
 function absentWords(stepName: string, key: string, path: string, cause: AbsentCause): string {
