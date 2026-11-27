@@ -1839,6 +1839,32 @@ describe('#760 correction 1 — handlers.md, sentence by sentence (05)', () => {
       HANDLERS,
       'ends the step `failed` with `ENGINE_HANDLER_FAILED` and a message saying what to change; every fault in the config is named at once.',
     );
+    // #845 1b-ii-c (A1): the step-level fault, run below (`stepLevel`) and word for word, each kind of
+    // output for both steps, by check-quotes.test.ts's "#845 1b-ii-c check 3" rows; the way back
+    // (a new run, never resume) by its "the way back" cell.
+    claimOn(
+      HANDLERS,
+      'a step whose output is not an object with fields (`{}`, `[]`, a list or a string: start a new run once it gives one),',
+    );
+    const stepLevel = await Promise.all(
+      [{}, [], [{ text: SOURCE }], SOURCE].map(async (output) => {
+        try {
+          await handler.execute(
+            { params: {} },
+            {
+              run_id: 'r',
+              run_params: {},
+              config: { source_step: 'doc', candidates_step: 'extract' },
+              resources: { doc: output, extract: { candidates: [] } },
+            },
+          );
+          return 'not refused';
+        } catch (err) {
+          const m = err instanceof WorkflowError ? err.message : '';
+          return `${err instanceof WorkflowError ? err.code : 'untyped'} ${m.includes('then start a new run: this run keeps that output') ? 'new run' : m}`;
+        }
+      }),
+    );
     // Correction 2 (03, D2): walk 4 — the guard needs the check, yet the run completes.
     claimOn(
       HANDLERS,
@@ -1881,6 +1907,7 @@ describe('#760 correction 1 — handlers.md, sentence by sentence (05)', () => {
       failed: after.failed_steps,
       guard: after.skip_details?.['stop_if_not_found']?.kind,
       sealedBy: after.sealed_by?.arm,
+      stepLevel,
     }).toEqual({
       both: true,
       removed: true,
@@ -1888,6 +1915,7 @@ describe('#760 correction 1 — handlers.md, sentence by sentence (05)', () => {
       failed: ['quote_check'],
       guard: 'trigger_rule_unsatisfiable',
       sealedBy: 'complete',
+      stepLevel: Array(4).fill('ENGINE_HANDLER_FAILED new run'),
     });
   });
 
@@ -2041,11 +2069,67 @@ describe('#760 correction 1 — handlers.md, sentence by sentence (05)', () => {
     );
     // #866 correction 1 (C2): what `nearest` reads — run by locate-quote-language-0480.test.ts's
     // "the review’s correction: nearest" cells (`كُتِبَ`, `abcdefgh rent`, `старый замок`,
-    // `qqq ndlord shall repair`)
+    // `qqq ndlord shall repair`). #845 1b-ii-c (A4): a word the piece cuts left out, each example run
+    // below, and by locate-quote-rules-845.test.ts's "#845 1b-ii-c check 1" and E5; correction 1: its
+    // edges read as `exact` reads them, each claim of the sentence a row below and the rules each a
+    // cell of locate-quote-rules-845.test.ts's "#845 1b-ii-c correction 1".
     claimOn(
       HANDLERS,
-      '`nearest` is where the longest piece of the quote that is in the document lies (an Arabic or Hebrew piece, and the document, read without their Arabic or Hebrew marks); it is absent when that piece holds no whole word, and on a quote refused for joining text across a blank line, and it may start or end inside a word.',
+      "`nearest` is where the longest piece of the quote that is in the document lies (an Arabic or Hebrew piece, and the document, read without their Arabic or Hebrew marks); it is absent when that piece holds no whole word, and on a quote refused for joining text across a blank line. It leaves out a word or a number that piece cuts at either end (a word cut inside a letter, between it and its accent, is left out whole), with the spaces beside it, so it starts and ends only where a quote could start and end and read `exact`: a word hyphen and the apostrophe of a contraction ending in `'t` join (`twenty-four`, `can't`), while a dash, a slash, any other apostrophe, a comma or an emoji between two words is an edge (`the building—but` keeps `the building`, `Landlord's` is two words), though it never starts right after an apostrophe inside a word (`it's due` gives `due`); a word broken by a hyphen at a line's end is one word; and a number keeps its sign (`€48,000`, `-5`, `4%`). When nothing whole is left, there is no `nearest`.",
     );
+    /** The document's text at a not-found quote's `nearest`, or `none`. */
+    const at = (quote: string, source: string): string => {
+      const n = locateQuote(quote, source).nearest;
+      return n === undefined ? 'none' : source.slice(n.start, n.end);
+    };
+    // (a) red when a word the piece cuts is kept (`ndlord`, `four`, `can`, `s`, `ing`, the Russian
+    //     `числа` without its accent), a whole word beside an edge is dropped (`building`, `and`,
+    //     `Landlord`, `rent`, `cake`, `U`), a sign at its edge is dropped (`€`, `-`, `%`), or a
+    //     pointer is given when nothing whole is left; (b) prints the text at each.
+    expect({
+      cutStart: at('qqq ndlord shall repair', 'The Landlord shall repair the roof.'),
+      accent: at(
+        'Арендная плата вносится до пятого числа',
+        'Арендная плата вносится до пятого числа\u0301.',
+      ),
+      twentyFour: at('qqq four thousand euro', 'a deposit of twenty-four thousand euro'),
+      cant: at('the Tenant can not assign', "the Tenant can't assign"),
+      dash: at(
+        'The Landlord shall insure the building against fire.',
+        'The Landlord shall insure the building—but not the contents—against fire.',
+      ),
+      andOr: at('the Landlord and the Tenant agree', 'the Landlord and/or the Tenant may agree'),
+      possessive: at('the Landlord shall pay', "the Landlord's agent shall pay"),
+      comma: at('The rent zzqx', 'The rent,service charge and rates are due.'),
+      emoji: at('Ben: bring the cake zzqx', 'Ben: bring the cake\u{1f382}\u{1f389}please, Ana.'),
+      uk: at('made in the U zzz', 'made in the U.K. today'),
+      itsDue: at('Ben: it is due today', "Ben: it's due today"),
+      lineEnd: at(
+        'shall keep the building insured against fire.',
+        'The Tenant shall keep the build-\ning insured against fire.',
+      ),
+      euro: at('zzz €48,000 a year', 'The rent is €48,000 a year.'),
+      minus: at('qqq -5 degrees at night', 'The reading is -5 degrees today.'),
+      percent: at('the rate of 4% qqq', 'Interest at the rate of 4% per annum.'),
+      nothingWhole: at('qqq VID-19 zz', 'the COVID-19 cases rose'),
+    }).toEqual({
+      cutStart: 'shall repair',
+      accent: 'Арендная плата вносится до пятого',
+      twentyFour: 'thousand euro',
+      cant: 'the Tenant',
+      dash: 'The Landlord shall insure the building',
+      andOr: 'the Landlord and',
+      possessive: 'the Landlord',
+      comma: 'The rent',
+      emoji: 'Ben: bring the cake',
+      uk: 'made in the U',
+      itsDue: 'due today',
+      lineEnd: 'insured against fire',
+      euro: '€48,000 a year',
+      minus: '-5 degrees',
+      percent: 'the rate of 4%',
+      nothingWhole: 'none',
+    });
     claimOn(
       HANDLERS,
       '`all_found` is true when no value is `not_found`: `exact`, `reformatted`, `stitched` and `stitched_out_of_order` count as found, and `unquoted` is not counted.',
@@ -2097,16 +2181,53 @@ describe('#760 correction 1 — handlers.md, sentence by sentence (05)', () => {
     // "H3: a value with no quote says…" (:594, asserted at :604 and :605); the cut with `…` by "names
     // each missing value…" (:246) and "H4: a quote head of 81 characters…" (:610); one line, with
     // control characters written out, by "H2: the warning is one terminal-safe line…" (:569,
-    // `escWrittenOut`); a mark after the 80th character cut too by "the review’s correction (#866,
-    // C1)…" (:301, `cutTail`).
+    // `escWrittenOut`); the cut moved back before a letter or symbol it would split (#845 1b-ii-c, A6)
+    // run below (`cuts`), and by "#845 1b-ii-c check 2" and "the review’s correction (#866, C1)…"
+    // (`cutTail`).
     claimOn(
       HANDLERS,
       "When any quote is not found, the step completes with a warning that names each one: its field, the quote's first 80 characters, and the offsets of its nearest match, or `no nearby match`; a value with no quote reads `no quote given`, and one whose quote is not a string `the quote is not text`; a quote refused for joining text across a blank line reads `(this quote joins text across a blank line; quote each part separately)` in place of its nearest match.",
     );
     claimOn(
       HANDLERS,
-      'It prints the quote as the model gave it, on one line, with control characters written out (`\\u001b`), and cut after its 80th character with `…` (a mark after the 80th character is cut too), and offsets; it never prints text it read from the document.',
+      "It prints the quote as the model gave it, on one line, with control characters written out (`\\u001b`), and cut after its 80th character with `…` (or, where that cut would split a letter or symbol written with several characters, such as an accented letter or a joined emoji, before it, unless that one letter or symbol alone runs from the quote's start past the 80th), and offsets; it never prints text it read from the document.",
     );
+    const x = (n: number): string => 'x'.repeat(n);
+    const cutQuotes: Record<string, string> = {
+      accented: `${x(79)}e\u0301yy`,
+      emoji: `${x(79)}\u{1f468}\u200d\u{1f469}yy`,
+      alone: `e${'\u0301'.repeat(100)}yy`,
+    };
+    const cutWarn = (
+      await handler.execute(
+        { params: {} },
+        {
+          run_id: 'r',
+          run_params: {},
+          config: { source_step: 'doc', candidates_step: 'extract' },
+          resources: {
+            doc: { text: 'The Tenant shall pay the rent.' },
+            extract: {
+              candidates: Object.entries(cutQuotes).map(([field, quote]) => ({
+                field,
+                value: 'v',
+                quote,
+              })),
+            },
+          },
+        },
+      )
+    ).warn?.message;
+    /** The quote the warning shows for `field`: whether it is `want` exactly. */
+    const shows = (field: string, want: string): boolean =>
+      (cutWarn ?? '').includes(`${field} — "${want}" (`);
+    // (a) red when the cut splits the accented letter or the joined emoji, or the one letter that
+    //     alone runs past the 80th is not cut at the 80th; (b) prints three booleans.
+    expect({
+      accented: shows('accented', `${x(79)}…`),
+      emoji: shows('emoji', `${x(79)}…`),
+      alone: shows('alone', `e${'\u0301'.repeat(79)}…`),
+    }).toEqual({ accented: true, emoji: true, alone: true });
     const long = `${'The Landlord shall repaint every window each spring and every door each autumn'} and more`;
     // Correction 2 (ride-along, F760-C1R-B-09): the source spells the shared words its own way, so
     // its text at `nearest` differs from the quote and the check below can fail.
@@ -5703,6 +5824,109 @@ describe('#845 1b-ii-b — the words, each executed', () => {
       'e.g.': 'exact',
       'U.S.': 'exact',
       '20 °.': 'exact',
+    });
+  });
+});
+
+describe('#845 1b-ii-c — the words, each executed', () => {
+  const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..');
+  const CL = 'CHANGELOG.md';
+  const raw = (p: string) => readFileSync(join(ROOT, p), 'utf8');
+  const flatten = (t: string) => t.replace(/\\\|/g, '|').replace(/\s+/g, ' ');
+  /** (a) red when the page no longer holds the sentence word for word; (b) prints it. */
+  const claimOn = (p: string, sentence: string): void => {
+    expect(flatten(raw(p)), `${p} no longer says: ${sentence}`).toContain(flatten(sentence));
+  };
+
+  it("the CHANGELOG's Changed line: `nearest` without a cut word, the warning's cut, the step-level refusal", async () => {
+    claimOn(
+      CL,
+      "check_quotes gives a not-found quote's `nearest` without a word or number the piece it covers cuts at either end, judged as exact judges a quote's edges and never starting right after an apostrophe inside a word, and keeps a number's sign; it is now given between two dashes and withheld when nothing whole is left; its warning cuts a long quote and a field label before a letter or symbol the cut would split (an accented letter, a joined emoji), not inside it, unless one alone runs from its start past the 80th character; and a source or candidates step whose output is not an object with fields is refused with words saying what it gave and to start a new run (#845).",
+    );
+    const nearAt = (quote: string, source: string): string => {
+      const n = locateQuote(quote, source).nearest;
+      return n === undefined ? 'none' : source.slice(n.start, n.end);
+    };
+    const handler = new CheckQuotesHandler();
+    const x = (n: number): string => 'x'.repeat(n);
+    const execute = (resources: Record<string, unknown>) =>
+      handler.execute(
+        { params: {} },
+        {
+          run_id: 'r',
+          run_params: {},
+          config: { source_step: 'fetch', candidates_step: 'extract' },
+          resources,
+        },
+      );
+    const warn = (
+      await execute({
+        fetch: { text: 'The Tenant shall pay the rent.' },
+        extract: {
+          candidates: [
+            { field: 'accented', value: 'v', quote: `${x(79)}e\u0301yy` },
+            { field: 'emoji', value: 'v', quote: `${x(79)}\u{1f468}\u200d\u{1f469}yy` },
+            { field: 'alone', value: 'v', quote: `e${'\u0301'.repeat(100)}yy` },
+            { field: 'later', value: 'v', quote: `xe${'\u0301'.repeat(100)}yy` },
+            { field: `${x(79)}e\u0301yy`, value: 'v', quote: 'nothing like it' },
+          ],
+        },
+      })
+    ).warn?.message;
+    const refusal = async (resources: Record<string, unknown>): Promise<string> => {
+      try {
+        await execute(resources);
+        return 'not refused';
+      } catch (err) {
+        return err instanceof WorkflowError ? err.message : 'untyped';
+      }
+    };
+    const NEW_RUN = 'then start a new run: this run keeps that output';
+    const source = await refusal({ fetch: [], extract: { candidates: [] } });
+    const candidates = await refusal({ fetch: { text: 'The rent.' }, extract: 'rent' });
+    // (a) red when one of the line's examples reads otherwise; (b) prints each read.
+    expect({
+      cutWord: nearAt('qqq ndlord shall repair', 'The Landlord shall repair the roof.'),
+      // correction 1: the edges as `exact` judges them (a dash), the start after an apostrophe,
+      // given between two dashes, withheld when nothing whole is left
+      asExact: nearAt('The rent zzqx', 'The rent—payable'),
+      apostrophe: nearAt('Ben: it is due today', "Ben: it's due today"),
+      betweenDashes: nearAt(
+        'The rent is payable quarterly',
+        'The rent—payable quarterly—is due on the usual days.',
+      ),
+      nothingWhole: nearAt('qqq VID-19 zz', 'the COVID-19 cases rose'),
+      sign: nearAt('zzz €48,000 a year', 'The rent is €48,000 a year.'),
+      accented: (warn ?? '').includes(`accented — "${x(79)}…" (`),
+      emoji: (warn ?? '').includes(`emoji — "${x(79)}…" (`),
+      alone: (warn ?? '').includes(`alone — "e${'\u0301'.repeat(79)}…" (`),
+      // "from its start": the same letter after an `x` is cut before it, not at the 80th
+      later: (warn ?? '').includes(`later — "x…" (`),
+      fieldLabel: (warn ?? '').includes(`; ${x(79)}… — "nothing like it"`),
+      source: [
+        source.includes("the source step 'fetch' gave no output (got an empty list)"),
+        source.includes(NEW_RUN),
+      ],
+      candidates: [
+        candidates.includes(
+          "the candidates step 'extract' gave a string, not an object with fields",
+        ),
+        candidates.includes(NEW_RUN),
+      ],
+    }).toEqual({
+      cutWord: 'shall repair',
+      asExact: 'The rent',
+      apostrophe: 'due today',
+      betweenDashes: 'payable quarterly',
+      nothingWhole: 'none',
+      sign: '€48,000 a year',
+      accented: true,
+      emoji: true,
+      alone: true,
+      later: true,
+      fieldLabel: true,
+      source: [true, true],
+      candidates: [true, true],
     });
   });
 });

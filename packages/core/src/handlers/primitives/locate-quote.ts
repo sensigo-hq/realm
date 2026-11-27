@@ -18,9 +18,17 @@
  *   count as one part, and every part is at least `minPartChars` canonical characters. Text is
  *   skipped only between parts, never inside a piece (the owner's yes, 2026-10-18).
  * - `stitched_out_of_order`: the same, with the parts in another order.
- * - `not_found`: otherwise; `nearest` is the longest piece of the quote found in the source, when it
- *   covers at least one whole word. A quote placed in order only by joining text across a blank line
- *   inside a sentence carries `cause` and `join_at` instead (#845, Q-C).
+ * - `not_found`: otherwise; `nearest` is the longest piece of the quote found in the source. It
+ *   leaves out a word or a number that piece cuts at either end (a word cut inside a letter, between
+ *   it and its accent, is left out whole), with the spaces beside it, so it starts and ends only where
+ *   a quote could start and end and read `exact`: a word hyphen and the apostrophe of a contraction
+ *   ending in `'t` join (`twenty-four`, `can't`), while a dash, a slash, any other apostrophe, a comma
+ *   or an emoji between two words is an edge (`the building—but` keeps `the building`, `Landlord's` is
+ *   two words), though it never starts right after an apostrophe inside a word (`it's due` gives
+ *   `due`); a word broken by a hyphen at a line's end is one word; and a number keeps its sign
+ *   (`€48,000`, `-5`, `4%`). When nothing whole is left, there is no `nearest`. A quote placed in
+ *   order only by joining text across a blank line inside a sentence carries `cause` and `join_at`
+ *   instead (#845, Q-C).
  * (`unquoted` is the handler's, for a candidate with no quote and no value; this never returns it.)
  *
  * A quote that ends a sentence where the source's sentence goes on is marked `cut_short` (L2). Every
@@ -65,8 +73,15 @@ export interface QuoteCheck {
   readonly parts: readonly QuoteSpan[];
   /** How many times the whole quote occurs (canonically); 0 unless `exact` or `reformatted`. */
   readonly occurrences: number;
-  /** For `not_found` only: the longest piece of the quote that IS in the source, when it covers at
-   *  least one whole word. */
+  /** For `not_found` only: the longest piece of the quote that IS in the source. It leaves out a word
+   *  or a number that piece cuts at either end (a word cut inside a letter, between it and its accent,
+   *  is left out whole), with the spaces beside it, so it starts and ends only where a quote could
+   *  start and end and read `exact`: a word hyphen and the apostrophe of a contraction ending in `'t`
+   *  join (`twenty-four`, `can't`), while a dash, a slash, any other apostrophe, a comma or an emoji
+   *  between two words is an edge (`the building—but` keeps `the building`, `Landlord's` is two
+   *  words), though it never starts right after an apostrophe inside a word (`it's due` gives `due`);
+   *  a word broken by a hyphen at a line's end is one word; and a number keeps its sign (`€48,000`,
+   *  `-5`, `4%`). When nothing whole is left, there is none. */
   readonly nearest?: QuoteSpan;
   /** L2: the quote ends a sentence where the source's sentence goes on. Absent otherwise. */
   readonly cut_short?: true;
@@ -821,12 +836,16 @@ const isWordHyphen = (c: string | undefined): boolean => c !== undefined && WORD
  *  `ไม้`); and each side is read by code point, past every mark to its base character (UAX #29 WB4),
  *  the needle's first and last characters past their own marks (`ताब` is not cut from `किताब`). */
 function wordEdgesHold(hay: string, at: number, needle: string): boolean {
-  const end = at + needle.length;
-  if (visibleMarkAt(hay, at) || visibleMarkAt(hay, end)) return false;
+  return wordStartHolds(hay, at, needle) && wordEndHolds(hay, at, needle);
+}
+
+/** #845 1b-ii-c correction 1: `wordEdgesHold`'s start half — the match at `at` starts at a word edge
+ *  (the reads above, at its first character); with `wordEndHolds`, the whole test. `nearest` judges
+ *  its start by it, so the pointer and `exact` read one edge (R13). */
+function wordStartHolds(hay: string, at: number, needle: string): boolean {
+  if (visibleMarkAt(hay, at)) return false;
   const first = cpAt(needle, pastMarksAfter(needle, 0));
   if (isAlnum(cpBefore(hay, pastMarks(hay, at))) && isAlnum(first)) return false;
-  const last = cpBefore(needle, pastMarks(needle, needle.length));
-  if (isAlnum(cpAt(hay, pastMarksAfter(hay, end))) && isAlnum(last)) return false;
   // #845 (R-A2): the hyphen reads by code point, each letter past its marks
   const hyphenBefore = cpBefore(hay, at);
   if (
@@ -836,6 +855,15 @@ function wordEdgesHold(hay: string, at: number, needle: string): boolean {
   ) {
     return false;
   }
+  return contractionStartHolds(hay, at, needle);
+}
+
+/** #845 1b-ii-c correction 1: `wordEdgesHold`'s end half — the match ends at a word edge. */
+function wordEndHolds(hay: string, at: number, needle: string): boolean {
+  const end = at + needle.length;
+  if (visibleMarkAt(hay, end)) return false;
+  const last = cpBefore(needle, pastMarks(needle, needle.length));
+  if (isAlnum(cpAt(hay, pastMarksAfter(hay, end))) && isAlnum(last)) return false;
   const hyphenAfter = cpAt(hay, end);
   if (
     isLetter(last) &&
@@ -844,7 +872,7 @@ function wordEdgesHold(hay: string, at: number, needle: string): boolean {
   ) {
     return false;
   }
-  return contractionEdgesHold(hay, at, needle);
+  return contractionEndHolds(hay, at, needle);
 }
 
 /** #845 (R-F): the marks a contraction ending in `'t` or `'nt` is written with — `'` `’` `‘` `` ` ``
@@ -871,8 +899,10 @@ function contractionEndingAt(s: string, at: number): boolean {
  *  `hay` goes on with a letter (`THE TENANT'` in `THE TENANT'S`, `CAN´` in `CAN´T`), and one that
  *  opens with a mark and the ending right after a letter (`´T REFUSE` in `CAN´T REFUSE`).
  *  Possessives (`'S`), other contractions (`you'll`), names (`O'Toole`) and a mark then a letter
- *  (`‘The…`) keep their edge, and so does a space beside the mark (`can' t`). */
-function contractionEdgesHold(hay: string, at: number, needle: string): boolean {
+ *  (`‘The…`) keep their edge, and so does a space beside the mark (`can' t`). #845 1b-ii-c correction
+ *  1: read in two halves, the end here and the start in `contractionStartHolds`, each part of the
+ *  word edge's own half (`wordEndHolds`, `wordStartHolds`). */
+function contractionEndHolds(hay: string, at: number, needle: string): boolean {
   const end = at + needle.length;
   const last = cpBefore(needle, needle.length);
   const after = cpAt(hay, end);
@@ -883,13 +913,15 @@ function contractionEdgesHold(hay: string, at: number, needle: string): boolean 
   ) {
     return false;
   }
-  if (
+  return !(
     isContractionMark(last) &&
     isLetter(cpBefore(needle, pastMarks(needle, needle.length - last!.length))) &&
     isLetter(after)
-  ) {
-    return false;
-  }
+  );
+}
+
+/** #845 1b-ii-c correction 1: the contraction rule's start half (see `contractionEndHolds`). */
+function contractionStartHolds(hay: string, at: number, needle: string): boolean {
   const before = cpBefore(hay, at);
   if (
     contractionEndingAt(needle, 0) &&
@@ -937,16 +969,35 @@ function findWithEdges(
 
 /** The literal layer's edges (N1–N6, and 02 B): the number and word edges of the match at `at`,
  *  read in the literal view, so past every `\p{Cf}` character (a contraction is one word there too,
- *  #845 R-F: `contractionEdgesHold`); and, read in the source text itself, no edge inside a word a
+ *  #845 R-F: `contractionEndHolds`, `contractionStartHolds`); and, read in the source text itself, no edge inside a word a
  *  hyphen breaks across a line (#845 S1/F1: `lineBreakHyphenEdgesHold`). */
 function literalEdgesHold(view: LiteralView, source: string, at: number, end: number): boolean {
+  if (view.at[at]! >= view.at[end]!) return false;
+  return literalStartHolds(view, source, at, end) && literalEndHolds(view, source, at, end);
+}
+
+/** #845 1b-ii-c correction 1: `literalEdgesHold`'s start half — the number, word and line-end-hyphen
+ *  tests at the start of the source span `[at, end)`; with `literalEndHolds`, the whole test. `nearest`
+ *  judges its edges by these two halves, so it starts and ends only where `exact` would (R13). */
+function literalStartHolds(view: LiteralView, source: string, at: number, end: number): boolean {
   const from = view.at[at]!;
   const to = view.at[end]!;
-  const needle = view.raw.slice(from, to);
-  if (needle === '') return false;
-  if (!numberEdgesHold(view.mapped, from, view.mapped.slice(from, to))) return false;
-  if (!wordEdgesHold(view.raw, from, needle)) return false;
-  return lineBreakHyphenEdgesHold(source, at, end);
+  return (
+    leftNumberEdgeHolds(view.mapped, from, view.mapped.slice(from, to)) &&
+    wordStartHolds(view.raw, from, view.raw.slice(from, to)) &&
+    !insideLineBreakHyphen(source, at)
+  );
+}
+
+/** #845 1b-ii-c correction 1: `literalEdgesHold`'s end half. */
+function literalEndHolds(view: LiteralView, source: string, at: number, end: number): boolean {
+  const from = view.at[at]!;
+  const to = view.at[end]!;
+  return (
+    rightNumberEdgeHolds(view.mapped, from, view.mapped.slice(from, to)) &&
+    wordEndHolds(view.raw, from, view.raw.slice(from, to)) &&
+    !insideLineBreakHyphen(source, end)
+  );
 }
 
 /** The first literal occurrence of `quote` whose edges hold (`literalEdgesHold`), or -1. 02 C: the
@@ -1833,26 +1884,55 @@ function tilesOf(budget: Budget, quote: string, source: string, tiles: Tile[]): 
   }
 }
 
-/** A7: the longest found tile, when it covers at least one whole word of the source (a word with a
- *  word edge at both ends inside the tile's span) — a whole word, read by code point past marks (the
- *  reads `wordEdgesHold` uses: a mark is part of its letter's word, never its edge). */
-function nearestOf(tiles: readonly Tile[], canonical: Canonical): QuoteSpan | undefined {
+/** A7: the longest found tile, read as `exact` reads a quote's edges. #845 1b-ii-c correction 1: its
+ *  start moves on and its end moves back, a character at a time and past spaces, until `exact`'s own
+ *  edge test holds there — the number, word and line-end-hyphen halves of `literalEdgesHold`, on the
+ *  same literal view — so a word or a number the tile cuts at either end is left out, with the spaces
+ *  beside it, and everything else in the tile is kept. Two more refusals, which only ever refuse an
+ *  edge `exact` accepts: no edge inside a letter (two canonical characters of one span of the source:
+ *  a mark kept with its letter, or two letters NFKC makes of one, `ﬁ`), and no start right after an
+ *  apostrophe that has a letter on each side (`s due` in `it's due`). Given when what is left holds a
+ *  letter or a decimal digit (`WORD_CHAR`, the test `exact` applies to a quote). */
+function nearestOf(
+  tiles: readonly Tile[],
+  canonical: Canonical,
+  view: LiteralView,
+  source: string,
+): QuoteSpan | undefined {
   let best: Tile | undefined;
   for (const t of tiles) {
     if (t.at >= 0 && (best === undefined || t.text.length > best.text.length)) best = t;
   }
   if (best === undefined) return undefined;
-  const hay = canonical.text;
-  const end = best.at + best.text.length;
-  for (let k = best.at; k < end; k += cpAt(hay, k)!.length) {
-    // a word starts at a letter or digit whose neighbour before it, read past marks, is not one
-    if (!isAlnum(cpAt(hay, k)) || isAlnum(cpBefore(hay, pastMarks(hay, k)))) continue;
-    // it runs over letters, digits and marks; it is whole when it ends inside the tile
-    let w = k;
-    for (let d = cpAt(hay, w); isAlnum(d) || isMark(d); d = cpAt(hay, w)) w += d!.length;
-    if (w <= end) return spanOf(canonical, best.at, best.text.length);
-  }
-  return undefined;
+  const { text: hay, from, to } = canonical;
+  const insideLetter = (k: number): boolean =>
+    k > 0 && k < hay.length && from[k] === from[k - 1] && to[k] === to[k - 1];
+  const startHolds = (a: number, b: number): boolean => {
+    if (insideLetter(a)) return false;
+    const raw = view.raw;
+    const s = view.at[from[a]!]!;
+    const mark = cpBefore(raw, s);
+    if (
+      isContractionMark(mark) &&
+      isLetter(cpAt(raw, s)) &&
+      isLetter(cpBefore(raw, pastMarks(raw, s - mark!.length)))
+    ) {
+      return false;
+    }
+    return literalStartHolds(view, source, from[a]!, to[b - 1]!);
+  };
+  const endHolds = (a: number, b: number): boolean =>
+    !insideLetter(b) && literalEndHolds(view, source, from[a]!, to[b - 1]!);
+  let a = best.at;
+  let b = best.at + best.text.length;
+  // each half reads the piece's own first or last characters, so the start is judged again once
+  // the end has moved; every pass only shrinks the piece
+  do {
+    while (a < b && (hay[a] === ' ' || !startHolds(a, b))) a += cpAt(hay, a)!.length;
+    while (b > a && (hay[b - 1] === ' ' || !endHolds(a, b))) b -= cpBefore(hay, b)!.length;
+  } while (a < b && !startHolds(a, b));
+  if (a >= b || !WORD_CHAR.test(hay.slice(a, b))) return undefined;
+  return spanOf(canonical, a, b - a);
 }
 
 // ─── L2, L3: what a found span says at its edges ────────────────────────────────────────────────
@@ -1968,7 +2048,7 @@ export function locateQuote(
     return ladder(quote, quoteBare, source, canonical, view, budget, minPartChars, tiles);
   } catch (err) {
     if (err !== OUT_OF_BUDGET) throw err;
-    const nearest = nearestOf(tiles, canonical);
+    const nearest = nearestOf(tiles, canonical, view, source);
     return nearest === undefined ? notFound : { ...notFound, nearest };
   }
 }
@@ -2132,7 +2212,7 @@ function ladder(
   }
 
   tilesOf(budget, canonicalQuote, canonical.text, tiles);
-  const nearest = nearestOf(tiles, canonical);
+  const nearest = nearestOf(tiles, canonical, view, source);
   return nearest === undefined ? notFound : { ...notFound, nearest };
 }
 

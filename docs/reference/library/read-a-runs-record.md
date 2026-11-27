@@ -28,8 +28,10 @@ Where the docs teach it: [Run record and export bundle format](../run-record-and
 | [`EvidenceSnapshot`](#evidencesnapshot) | interface | One evidence entry of a run's record (`RunRecord.evidence`): what one step run or one answered question recorded, with its times, its input and output, its status and its hash. |
 | [`ModelAttempt`](#modelattempt) | interface | One failed try of one of a step's model requests, as `model_attempts` keeps it on an evidence entry and on a drive-failure entry. |
 | [`ModelFailureFacts`](#modelfailurefacts) | interface | The values `classifyModelFailure` reads from one failed model request. |
+| [`NotRemembered`](#notremembered) | interface | A step with `remember:` that remembered nothing, and why (`EvidenceSnapshot.remembered`). |
 | [`PendingGate`](#pendinggate) | interface | The question a run waits on (`RunRecord.pending_gate`): its gate id, its step, the preview and choices shown to the person, when it opened, and its owner and time limit when set. |
 | [`PrefixParts`](#prefixparts) | interface | A SHA-256 (64 lowercase hex) of each part a request sent: `system`, and `tools`, `prompt` and `format` where it had them (`UsageRecord.prefix_parts`). |
+| [`RememberedItem`](#remembereditem) | interface | What a step remembered for later runs (`EvidenceSnapshot.remembered`). |
 | [`RunRecord`](#runrecord) | interface | A run as its store keeps it: its workflow and version, its phase, its params, its evidence entries, the question it waits on and how it ended; a store's `get` returns it inside a `Snapshot`. |
 | [`SealedBy`](#sealedby) | interface | Who sealed a run: the recorded fact `deriveRunPhase` reads before every marker and the terminal reason's text (`RunRecord.sealed_by`). |
 | [`StepCacheDetail`](#stepcachedetail) | interface | A step's cache facts: its state, how they are known, and each request's detail (`EvidenceSnapshot.cache`). |
@@ -63,10 +65,12 @@ Where the docs teach it: [Run record and export bundle format](../run-record-and
 | [`GateClaimVerdict`](#gateclaimverdict) | type | A verdict with a cause that does not belong to it does not compile. |
 | [`ModelFailureKind`](#modelfailurekind) | type | What a failed model request needs before it can succeed: one of `MODEL_FAILURE_KINDS`. |
 | [`ModelText`](#modeltext) | type | The text of each model call made for a step, on its evidence entry (`EvidenceSnapshot.model_text`). |
+| [`NotRememberedReason`](#notrememberedreason) | type | One of the words in `NOT_REMEMBERED_REASONS`: why a step remembered nothing (`NotRemembered.not_remembered`). |
 | [`OutputSource`](#outputsource) | type | One of the words in `OUTPUT_SOURCES`: where a bare `auto` step's recorded output came from (`EvidenceSnapshot.output_source`). |
 | [`OutputSourceAbsentCause`](#outputsourceabsentcause) | type | Why an evidence entry says nothing about where its output came from (`outputSourceOf`'s `absent_cause`). |
 | [`Principal`](#principal) | type | What a door's transport authenticated: an API key by its id, the one shared token of `realm serve`, or the door's typed absence (`EvidenceSnapshot.principal`). |
 | [`PrincipalAbsence`](#principalabsence) | type | One of the words in `PRINCIPAL_ABSENCES`: why a door names no principal for an answer (`Principal`'s `absent`). |
+| [`RememberedStamp`](#rememberedstamp) | type | What a step's entry records about its `remember:` (`EvidenceSnapshot.remembered`): what it remembered, or why it remembered nothing. |
 | [`RequestEndpoint`](#requestendpoint) | type | One of the words in `REQUEST_ENDPOINTS`: whether a request went to the provider's own default address or a custom one (`UsageRecord.endpoint`). |
 | [`RunPhase`](#runphase) | type | Derived phase of a workflow run. |
 | [`SealArm`](#sealarm) | type | Which code path sealed a run, named as a fact about the code, never a verdict on the run (`SealedBy.arm`). |
@@ -96,6 +100,7 @@ Where the docs teach it: [Run record and export bundle format](../run-record-and
 | [`GATE_ON_EXPIRY_WORDS`](#gate_on_expiry_words) | const | Every word a pending gate's `on_expiry` can hold, in the type's order. |
 | [`MODEL_ATTEMPT_THEN_WORDS`](#model_attempt_then_words) | const | Every word a failed model attempt's `then` can hold: the re-send that followed it, in the type's order. |
 | [`MODEL_FAILURE_KINDS`](#model_failure_kinds) | const | What a failed model request can need before it succeeds: another try (`transient`), an operator's fix first (`setup`), or nothing, because it will fail the same way again (`permanent`). |
+| [`NOT_REMEMBERED_REASONS`](#not_remembered_reasons) | const | Why a step with `remember:` remembered nothing on its entry (`NotRemembered.not_remembered`). |
 | [`OUTPUT_SOURCE_ABSENT_CAUSES`](#output_source_absent_causes) | const | Why an evidence entry carries no `output_source` (`outputSourceOf`'s `absent_cause`). |
 | [`OUTPUT_SOURCES`](#output_sources) | const | Where a bare `auto` step's recorded output came from (`EvidenceSnapshot.output_source`). |
 | [`PRINCIPAL_ABSENCES`](#principal_absences) | const | Why a door names no principal (`Principal`'s `absent`). |
@@ -455,6 +460,7 @@ interface EvidenceSnapshot {
     error_category?: ErrorCategory;
     agent_action?: AgentAction;
     stop_reason?: 'no_retry_policy' | 'total_timeout' | 'non_retryable' | 'attempts';
+    remembered?: RememberedStamp;
 }
 ```
 
@@ -496,6 +502,21 @@ interface ModelFailureFacts {
     workspace_refusal?: boolean;
     realm_code?: string | null;
     phase: 'model_request' | 'after_response' | 'mcp_discovery';
+}
+```
+
+### NotRemembered
+
+interface · public
+
+A step with `remember:` that remembered nothing, and why (`EvidenceSnapshot.remembered`). `key_name`
+names the first key part that failed, in the order the key was written.
+
+```ts
+interface NotRemembered {
+    as: string;
+    not_remembered: NotRememberedReason;
+    key_name?: string;
 }
 ```
 
@@ -541,6 +562,24 @@ interface PrefixParts {
     system: string;
     prompt?: string;
     format?: string;
+}
+```
+
+### RememberedItem
+
+interface · public
+
+What a step remembered for later runs (`EvidenceSnapshot.remembered`). The memory's name, each key
+part as text, the declared value (absent: the entry's own output is the value, with no copy), a
+gated step's choice, and when it expires: the entry's `completed_at` plus `keep_days`.
+
+```ts
+interface RememberedItem {
+    as: string;
+    key: Record<string, string>;
+    value?: Record<string, unknown>;
+    choice?: string;
+    expires_at: string;
 }
 ```
 
@@ -1208,6 +1247,17 @@ type ModelText = {
 };
 ```
 
+### NotRememberedReason
+
+type · public
+
+One of the words in `NOT_REMEMBERED_REASONS`: why a step remembered nothing
+(`NotRemembered.not_remembered`).
+
+```ts
+type NotRememberedReason = (typeof NOT_REMEMBERED_REASONS)[number];
+```
+
 ### OutputSource
 
 type · public
@@ -1259,6 +1309,17 @@ One of the words in `PRINCIPAL_ABSENCES`: why a door names no principal for an a
 
 ```ts
 type PrincipalAbsence = (typeof PRINCIPAL_ABSENCES)[number];
+```
+
+### RememberedStamp
+
+type · public
+
+What a step's entry records about its `remember:` (`EvidenceSnapshot.remembered`): what it
+remembered, or why it remembered nothing.
+
+```ts
+type RememberedStamp = RememberedItem | NotRemembered;
 ```
 
 ### RequestEndpoint
@@ -1793,6 +1854,28 @@ const MODEL_FAILURE_KINDS: readonly [
 ];
 ```
 
+### NOT_REMEMBERED_REASONS
+
+const · public
+
+Why a step with `remember:` remembered nothing on its entry (`NotRemembered.not_remembered`). In the
+order they are checked: it took its default answer; a path could not be read; a key part was
+absent, `null`, empty or only whitespace, not text or a finite number, or held a mask marker; what
+it would keep was over 32 KB as JSON.
+
+```ts
+const NOT_REMEMBERED_REASONS: readonly [
+    "settled_by_default",
+    "paths_unreadable",
+    "key_absent",
+    "key_null",
+    "key_empty",
+    "key_not_text",
+    "key_masked",
+    "value_too_large"
+];
+```
+
 ### OUTPUT_SOURCE_ABSENT_CAUSES
 
 const · public
@@ -1996,6 +2079,7 @@ Names this job reaches whose entry is on another page.
 - [`ProjectSource`](run-and-drive-a-run.md#projectsource): Where a project's module came from: how it was declared, and the hashes of its file and its folder, or a typed absence when they could not be read.
 - [`ProtocolConfig`](define-and-load-a-workflow.md#protocolconfig): A workflow's own words for the agent protocol: a quick-start paragraph that replaces the generated one, and rules added as they are written (`WorkflowDefinition.protocol`).
 - [`RateLimitConfig`](write-a-handler.md#ratelimitconfig): How fast Realm calls a service: requests per second, the burst it allows, and how long it waits after a 429 (`ServiceDefinition.rate_limit`).
+- [`RememberConfig`](define-and-load-a-workflow.md#rememberconfig): What a step keeps for later runs of its workflow (`StepDefinition.remember`).
 - [`RetryConfig`](define-and-load-a-workflow.md#retryconfig): How a step is tried again after a failure: the most attempts, the backoff and its delays (`StepDefinition.retry`).
 - [`ServiceDefinition`](define-and-load-a-workflow.md#servicedefinition): A service a workflow declares under `services`: the adapter that calls it, its trust, and its rate limit (`WorkflowDefinition.services`).
 - [`ServiceTrust`](define-and-load-a-workflow.md#servicetrust): The words a workflow's `services: <name>: trust:` takes (`ServiceDefinition.trust`).

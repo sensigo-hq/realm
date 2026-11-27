@@ -306,7 +306,7 @@ describe('fix 1, piece 3a-i — the words the docs and the changelog carry (chec
     }).toEqual({ refuse: true, instructions: true, oldRefuse: false, oldInstructions: false });
   });
 
-  it('loader-diagnostics.md: 36 codes, twelve of them errors, the errors list and the three rows', () => {
+  it('loader-diagnostics.md: 38 codes, thirteen of them errors, the errors list and the three rows', () => {
     const page = readFileSync(join(ROOT, 'docs/reference/workflow/loader-diagnostics.md'), 'utf8');
     const rows = page
       .split('\n')
@@ -320,10 +320,12 @@ describe('fix 1, piece 3a-i — the words the docs and the changelog carry (chec
     const at = rows.findIndex((r) => r[0] === '`ADAPTER_NOT_PROVIDED`');
     // (1) red when a count, the list or a row is missing or changed; (2) prints them.
     expect({
-      lists: flat(page).includes('lists all 36 warning codes'),
-      count: flat(page).includes('The loader has 36 warning codes. Twelve of them count as errors'),
+      lists: flat(page).includes('lists all 38 warning codes'),
+      count: flat(page).includes(
+        'The loader has 38 warning codes. Thirteen of them count as errors',
+      ),
       list: flat(page).includes(
-        'or leaves a required one unfilled; a template that uses a filter Realm does not have, gives a filter an argument no value accepts, or is not text; and a path in an approval question',
+        'or leaves a required one unfilled; a template that uses a filter Realm does not have, gives a filter an argument no value accepts, or is not text; a path in an approval question',
       ),
       rows: rows.length,
       errors: rows.filter((r) => r[1] === 'Error').length,
@@ -334,8 +336,8 @@ describe('fix 1, piece 3a-i — the words the docs and the changelog carry (chec
       list: true,
       // #603 A3a: GATE_ANSWERER_NOT_SLACK_ID, a warning, after the three rows; piece 3a-ii-a's three
       // template path rows (two errors) between them.
-      rows: 36,
-      errors: 12,
+      rows: 38,
+      errors: 13,
       three: [
         [
           '`TEMPLATE_FILTER_UNKNOWN`',

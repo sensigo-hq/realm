@@ -171,6 +171,8 @@ function printValidationOutcome(
   const when = notChecked.filter((n) => n.surface === 'when');
   // Fix 1, piece 3a-ii-a: the template references' lines after them, by the same counting rule.
   const template = notChecked.filter((n) => n.surface === 'template');
+  // Gap 3, unit 1b-i: the `remember` paths' lines after them, by the same counting rule.
+  const remember = notChecked.filter((n) => n.surface === 'remember');
   for (const line of [
     renderNotCheckedLine(inputMap),
     renderCheckFailedLine(inputMap),
@@ -178,6 +180,8 @@ function printValidationOutcome(
     renderWhenCheckFailedLine(when),
     renderTemplateNotCheckedLine(template),
     renderTemplateCheckFailedLine(template),
+    renderRememberNotCheckedLine(remember),
+    renderRememberCheckFailedLine(remember),
   ]) {
     if (line !== undefined) console.log(line);
   }
@@ -265,6 +269,34 @@ function renderTemplateCheckFailedLine(notChecked: readonly NotCheckedPath[]): s
   return (
     `Not checked: ${refs.length} template reference(s), because Realm's own check failed on ` +
     `them: ${refs.map((n) => `${n.step}.${n.key}: ${n.path}`).join(', ')}`
+  );
+}
+
+/**
+ * Gap 3, unit 1b-i — the `remember` key and value paths on data the workflow declares no shape for,
+ * named as the template line names its references: the first ten, then how many more.
+ */
+function renderRememberNotCheckedLine(notChecked: readonly NotCheckedPath[]): string | undefined {
+  const paths = notChecked.filter((n) => n.why !== 'check_failed');
+  if (paths.length === 0) return undefined;
+  const more = paths.length - TEMPLATE_REFS_SHOWN;
+  return (
+    `Not checked: ${paths.length} remember path(s) on data the workflow declares no shape for: ` +
+    paths
+      .slice(0, TEMPLATE_REFS_SHOWN)
+      .map((n) => `${n.step}.${n.key}: ${n.path}`)
+      .join(', ') +
+    (more > 0 ? `, and ${more} more; --json lists every one` : '')
+  );
+}
+
+/** Gap 3, unit 1b-i — the `remember` paths Realm's own check failed on (#123's exception). */
+function renderRememberCheckFailedLine(notChecked: readonly NotCheckedPath[]): string | undefined {
+  const paths = notChecked.filter((n) => n.why === 'check_failed');
+  if (paths.length === 0) return undefined;
+  return (
+    `Not checked: ${paths.length} remember path(s), because Realm's own check failed on them: ` +
+    paths.map((n) => `${n.step}.${n.key}: ${n.path}`).join(', ')
   );
 }
 

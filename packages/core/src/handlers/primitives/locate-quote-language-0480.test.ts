@@ -788,19 +788,21 @@ describe('the review’s correction: nearest', () => {
     });
   });
 
-  it('present: a whole word, marks and astral letters inside it — `किराया`, `за\u0301мок`, two CJK Extension-B letters; a longest piece may still start or end inside a word (controls)', () => {
+  it('present: a whole word, marks and astral letters inside it — `किराया`, `за\u0301мок`, two CJK Extension-B letters; a word the piece cuts is left out', () => {
     // (a) red when a word holding a mark is never whole (`किराया`, `за\u0301мок новый`), the start test
-    //     reads a code unit (the astral word, the one kind C1 adds), or a control moves; (b) prints
-    //     each row's state and `nearest` as offsets, or `none`.
+    //     reads a code unit (the astral word, the one kind C1 adds), a word the longest piece cuts is
+    //     kept (#845 1b-ii-c, A4: `staryZamok`, `ndlord`), or a control moves; (b) prints each row's
+    //     state and `nearest` as offsets, or `none`.
     expect({
       kiraya: near('किराया ज़्यादा है', 'मासिक किराया देय है।'),
       zamokNovy: near(`за${A}мок новый`, `Это за${A}мок и старый дом.`),
       astralWord: near(`${ch(0x20000)}${ch(0x20001)} qq`, `the ${ch(0x20000)}${ch(0x20001)} here`),
-      // controls, unchanged: Latin; the bare reading of Arabic (C2); a whole word with no mark; a
-      // longest piece that ends, or starts, inside a word (C2's words)
+      // controls, unchanged: Latin; the bare reading of Arabic (C2); a whole word with no mark
       dueIn: near('due in 60 days', 'payment is due in 30 days'),
       arabicBare: near('كُتِبَ', 'كَتَبَ الطالب'),
       zamokStary: near('замок старый', `Это за${A}мок и старый дом.`),
+      // #845 1b-ii-c (A4): a longest piece that ends inside `за\u0301мок`, or starts inside
+      // `Landlord`, leaves that word out
       staryZamok: near('старый замок', `Это старый за${A}мок.`),
       ndlord: near('qqq ndlord shall repair', 'The Landlord shall repair the roof.'),
     }).toEqual({
@@ -810,8 +812,8 @@ describe('the review’s correction: nearest', () => {
       dueIn: 'not_found 11–17',
       arabicBare: 'not_found 0–6',
       zamokStary: 'not_found 13–19',
-      staryZamok: 'not_found 4–14',
-      ndlord: 'not_found 6–25',
+      staryZamok: 'not_found 4–10',
+      ndlord: 'not_found 13–25',
     });
   });
 });

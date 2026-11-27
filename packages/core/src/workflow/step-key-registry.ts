@@ -1,7 +1,7 @@
 // step-key-registry.ts — issue #417 PR-2 (the map) + #517 (the drive-flip: MINTS the
 // kind-prohibitions FROM these cells).
 //
-// Every member of KNOWN_STEP_KEYS crossed with every ExecutionMode (37 × 4 = 148 cells) is
+// Every member of KNOWN_STEP_KEYS crossed with every ExecutionMode (38 × 4 = 152 cells) is
 // classified here with evidence: where the engine actually reads it, where the loader refuses it
 // — since #517, the loader's per-step walk looks every declared key up here and MINTS exactly one
 // refusal per key × kind, with the message text carried as per-cell data; companion/value rules
@@ -275,6 +275,12 @@ const gateNeverOpensOn = (kind: 'guard' | 'finalizer'): string =>
   'This refusal clears as soon as either is done.';
 const MSG_GATE_GUARD = gateNeverOpensOn('guard');
 const MSG_GATE_FINALIZER = gateNeverOpensOn('finalizer');
+// Gap 3, unit 1a, Words 1 (MA 4's ruling): the registry's own front clause, then the reason.
+const rememberGoesOn = (kind: 'guard' | 'finalizer'): string =>
+  `'remember' is not valid on execution: ${kind} steps — 'remember' goes on an agent step or an ` +
+  "auto step with 'handler' or 'uses_service'.";
+const MSG_REMEMBER_GUARD = rememberGoesOn('guard');
+const MSG_REMEMBER_FINALIZER = rememberGoesOn('finalizer');
 
 // ——— surviving hand-written by-witnesses (#517): only the except-bearing trust×finalizer
 // value-conditional check and the blocked_transitive tool_timeout companion check keep live
@@ -406,6 +412,18 @@ const W_STRUCTURED_OUTPUT_READ: StepKeyWitness = {
 const W_TIMEOUT_ENFORCE: StepKeyWitness = {
   file: EL,
   pattern: 'const enforceTimeout = stepDef !== undefined && shouldEnforceTimeout(stepDef);',
+};
+// Gap 3, unit 1a: the stamp is made at the engine's two successful settles — the step's success
+// write and a gate's answer — through the one core helper.
+const W_REMEMBER_STAMP: StepKeyWitness = {
+  file: EL,
+  pattern: 'withRememberedStamp(',
+  count: 2,
+};
+// …and a bare auto step's `remember:` is refused at load: its output depends on what drives the run.
+const W_REMEMBER_BARE_REFUSAL: StepKeyWitness = {
+  file: YL,
+  pattern: "if (step['handler'] === undefined && step['uses_service'] === undefined) {",
 };
 
 /** #517 rung 2: file-shorthand → the operator phrase a consequence clause names it by. TOTAL over
@@ -1497,5 +1515,19 @@ export const STEP_KEY_REGISTRY = {
       line: 'key',
       message_data: MSG_ON_MODEL_FAILURE_ELSEWHERE,
     },
+  },
+  // Gap 3, unit 1a: stamped on the success entry (a gated step's answer) by the execution loop.
+  remember: {
+    auto: {
+      c: 'consumed',
+      where: [W_REMEMBER_STAMP],
+      when: {
+        desc: "an auto step with 'handler' or 'uses_service' only — a bare auto step is refused at load",
+        witness: W_REMEMBER_BARE_REFUSAL,
+      },
+    },
+    agent: { c: 'consumed', where: [W_REMEMBER_STAMP] },
+    guard: { c: 'prohibited', by: [MINT], line: 'key', message_data: MSG_REMEMBER_GUARD },
+    finalizer: { c: 'prohibited', by: [MINT], line: 'key', message_data: MSG_REMEMBER_FINALIZER },
   },
 } satisfies Record<(typeof KNOWN_STEP_KEYS)[number], Record<ExecutionMode, StepKeyCell>>;

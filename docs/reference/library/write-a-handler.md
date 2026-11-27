@@ -911,7 +911,7 @@ type · public
 Every warning code the workflow loader can give (`LoaderWarning.code`).
 
 ```ts
-type WarningCode = 'UNKNOWN_WORKFLOW_KEY' | 'UNKNOWN_STEP_KEY' | 'UNKNOWN_CREATE_WORKFLOW_KEY' | 'IDEMPOTENT_INERT_IN_FINALIZER' | 'DUAL_SCHEMA_DECLARED' | 'RETRY_NO_TIMEOUT' | 'EXTENSION_SENTINEL' | 'UNKNOWN_RETRY_KEY' | 'ON_TIMEOUT_SINGLE_ATTEMPT' | 'TOTAL_TIMEOUT_BELOW_ATTEMPT' | 'TOTAL_TIMEOUT_NON_AUTO' | 'RETRY_INERT_NON_AUTO' | 'UNKNOWN_VALIDATION_EXHAUSTION_KEY' | 'DEAD_VALIDATION_EXHAUSTION_CONFIG' | 'UNKNOWN_GATE_KEY' | 'DEAD_GATE_CONFIG' | 'SCHEMA_STRICT_ADVISORY' | 'REALM_RELEASE_LINE_MISMATCH' | 'AUTHOR_TEXT_NAMES_ANSWER_TOOL' | 'INPUT_MAP_PATH_UNRESOLVABLE' | 'INPUT_MAP_PATH_UNCERTAIN' | 'WHEN_PATH_UNRESOLVABLE' | 'WHEN_CHOICE_NOT_OFFERED' | 'WHEN_PATH_UNCERTAIN' | 'PARAMS_MAP_UNKNOWN_PARAM' | 'PARAMS_MAP_REQUIRED_UNMAPPED' | 'PARAMS_MAP_UNDECLARED_PARAM' | 'HANDLER_NOT_PROVIDED' | 'ADAPTER_NOT_PROVIDED' | 'TEMPLATE_FILTER_UNKNOWN' | 'TEMPLATE_FILTER_ARGUMENT' | 'TEMPLATED_FIELD_NOT_TEXT' | 'GATE_ANSWERER_NOT_SLACK_ID' | 'TEMPLATE_PATH_UNRESOLVABLE' | 'TEMPLATE_PATH_NO_DEFAULT' | 'TEMPLATE_PATH_UNCERTAIN';
+type WarningCode = 'UNKNOWN_WORKFLOW_KEY' | 'UNKNOWN_STEP_KEY' | 'UNKNOWN_CREATE_WORKFLOW_KEY' | 'IDEMPOTENT_INERT_IN_FINALIZER' | 'DUAL_SCHEMA_DECLARED' | 'RETRY_NO_TIMEOUT' | 'EXTENSION_SENTINEL' | 'UNKNOWN_RETRY_KEY' | 'ON_TIMEOUT_SINGLE_ATTEMPT' | 'TOTAL_TIMEOUT_BELOW_ATTEMPT' | 'TOTAL_TIMEOUT_NON_AUTO' | 'RETRY_INERT_NON_AUTO' | 'UNKNOWN_VALIDATION_EXHAUSTION_KEY' | 'DEAD_VALIDATION_EXHAUSTION_CONFIG' | 'UNKNOWN_GATE_KEY' | 'DEAD_GATE_CONFIG' | 'SCHEMA_STRICT_ADVISORY' | 'REALM_RELEASE_LINE_MISMATCH' | 'AUTHOR_TEXT_NAMES_ANSWER_TOOL' | 'INPUT_MAP_PATH_UNRESOLVABLE' | 'INPUT_MAP_PATH_UNCERTAIN' | 'WHEN_PATH_UNRESOLVABLE' | 'WHEN_CHOICE_NOT_OFFERED' | 'WHEN_PATH_UNCERTAIN' | 'PARAMS_MAP_UNKNOWN_PARAM' | 'PARAMS_MAP_REQUIRED_UNMAPPED' | 'PARAMS_MAP_UNDECLARED_PARAM' | 'HANDLER_NOT_PROVIDED' | 'ADAPTER_NOT_PROVIDED' | 'TEMPLATE_FILTER_UNKNOWN' | 'TEMPLATE_FILTER_ARGUMENT' | 'TEMPLATED_FIELD_NOT_TEXT' | 'GATE_ANSWERER_NOT_SLACK_ID' | 'TEMPLATE_PATH_UNRESOLVABLE' | 'TEMPLATE_PATH_NO_DEFAULT' | 'TEMPLATE_PATH_UNCERTAIN' | 'REMEMBER_PATH_UNRESOLVABLE' | 'REMEMBER_PATH_UNCERTAIN';
 ```
 
 ### WorkflowCopyFault
@@ -965,9 +965,17 @@ The ladder, first hit wins:
   count as one part, and every part is at least `minPartChars` canonical characters. Text is
   skipped only between parts, never inside a piece (the owner's yes, 2026-10-18).
 - `stitched_out_of_order`: the same, with the parts in another order.
-- `not_found`: otherwise; `nearest` is the longest piece of the quote found in the source, when it
-  covers at least one whole word. A quote placed in order only by joining text across a blank line
-  inside a sentence carries `cause` and `join_at` instead (#845, Q-C).
+- `not_found`: otherwise; `nearest` is the longest piece of the quote found in the source. It
+  leaves out a word or a number that piece cuts at either end (a word cut inside a letter, between
+  it and its accent, is left out whole), with the spaces beside it, so it starts and ends only where
+  a quote could start and end and read `exact`: a word hyphen and the apostrophe of a contraction
+  ending in `'t` join (`twenty-four`, `can't`), while a dash, a slash, any other apostrophe, a comma
+  or an emoji between two words is an edge (`the building—but` keeps `the building`, `Landlord's` is
+  two words), though it never starts right after an apostrophe inside a word (`it's due` gives
+  `due`); a word broken by a hyphen at a line's end is one word; and a number keeps its sign
+  (`€48,000`, `-5`, `4%`). When nothing whole is left, there is no `nearest`. A quote placed in
+  order only by joining text across a blank line inside a sentence carries `cause` and `join_at`
+  instead (#845, Q-C).
 (`unquoted` is the handler's, for a candidate with no quote and no value; this never returns it.)
 
 A quote that ends a sentence where the source's sentence goes on is marked `cut_short` (L2). Every

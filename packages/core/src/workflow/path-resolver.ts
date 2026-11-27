@@ -59,6 +59,11 @@ export interface PathSurface {
    * but not its `$settlement` entry or its gate's `choice`.
    */
   readonly readsOwnOutput?: boolean;
+  /**
+   * Gap 3, unit 1b-i: with `readsOwnOutput`, the reading step's own gate's `choice` is there too when
+   * the step opens a gate (a gated step remembers on its answer's entry, whose output holds `choice`).
+   */
+  readonly readsOwnChoice?: boolean;
 }
 
 /** `input_map`'s surface: the root `resolveInputMap` builds (`{ run: { params }, context: { resources } }`). */
@@ -108,6 +113,18 @@ export const PROMPT_SURFACE: PathSurface = {
     { prefix: ['context', 'resources'], data: 'step' },
     { prefix: ['workflow', 'context'], data: 'context_entry' },
   ],
+};
+
+/**
+ * Gap 3, unit 1b-i: a `remember:` block's surface: `input_map`'s roots, read when the step's new
+ * entry is written (the stamp resolves over the record with that entry). The step's own output is
+ * there, and its gate's `choice` when it opens a gate; its own `$settlement` entry, written after
+ * the stamp, never is.
+ */
+export const REMEMBER_SURFACE: PathSurface = {
+  roots: INPUT_MAP_SURFACE.roots,
+  readsOwnOutput: true,
+  readsOwnChoice: true,
 };
 
 /** Fix 1, piece 3a-ii-a: `display`'s surface: the names of the step's own output, bare. */
@@ -804,6 +821,15 @@ class Context {
     // Piece 3a-ii-a: on a surface read once the step's work is done, the step's own output is there
     // (no step cause), but its gate's `choice` is not, unless its own answer declares one.
     const own = s === this.reader && this.surface.readsOwnOutput === true;
+    // Gap 3, unit 1b-i: a gated step's own `choice`, on a surface read once its gate is answered.
+    if (
+      own &&
+      fields[0] === 'choice' &&
+      this.surface.readsOwnChoice === true &&
+      this.index.opensGate(s)
+    ) {
+      return FOUND;
+    }
     // Correction 1: only a step whose own answer schema is declared (an agent step) is judged so; a
     // bare step's own `choice` follows its chain and a handler step's declares no shape, as their
     // other own fields do.
