@@ -10,6 +10,7 @@ import type { LeaseHold, LeasePort } from './lease-port.js';
 import type { LeaseFacts } from './lease-facts.js';
 import type { OutboundLedger } from './outbound-ledger.js';
 import type { CallbackRegistration, CallbackStore } from './callback-store.js';
+import type { MemoryStore } from './memory-store.js';
 
 /**
  * The `RunRecord` fields the engine relies on enough that a store must declare which of them it
@@ -241,6 +242,13 @@ export interface RunStore {
    * @beta
    */
   readonly callbacks?: CallbackStore | null;
+
+  /**
+   * The memory rows a store derives from the runs' `remembered` stamps (gap 3), or `null` / absent
+   * when it keeps none. No store keeps one yet, and nothing reads it yet.
+   * @beta
+   */
+  readonly memory?: MemoryStore | null;
 
   /**
    * Which {@link LoadBearingRunRecordField}s this store guarantees to round-trip through

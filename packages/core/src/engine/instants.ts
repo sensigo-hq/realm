@@ -46,6 +46,20 @@ export function parseStamp(stamp: string): number | undefined {
 }
 
 /**
+ * Whether `text` is an instant in the one form a store keeps, `toISOString()`'s
+ * (`YYYY-MM-DDTHH:MM:SS.sssZ`): the text an instant read from it prints back. A text that names no
+ * instant, and anything that is not text, is not one either. Stores compare such instants as text,
+ * so a time in any other form (`2030-01-01`, an HTTP date) would compare wrongly: gap 3's memory rows
+ * read a time only in this form, and the SQLite store's import checks a record's two stamps with it.
+ * @internal
+ */
+export function isStoredInstant(text: unknown): text is string {
+  if (typeof text !== 'string') return false;
+  const instant = new Date(text);
+  return !Number.isNaN(instant.getTime()) && instant.toISOString() === text;
+}
+
+/**
  * Reads one stored instant (D4 P-8). `r` is the RAW reading — the clock reading a snapshot was taken
  * at, before its load (`loadSnapshot`) — and is required: the parser never reads a clock.
  */

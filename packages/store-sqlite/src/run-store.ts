@@ -51,6 +51,7 @@ import {
   foldReading,
   isRunRecordShape,
   isStepSettledOrInFlight,
+  isStoredInstant,
   leaseFactsOf,
   NO_LEASE_FACTS,
   runNotFoundError,
@@ -431,16 +432,6 @@ export function deleteRunIfDeletable(
     bytes,
     gone: (check) => verifyDeleted(check, runId, { bytes_deleted: bytes, at }),
   };
-}
-
-/**
- * Whether `text` is an instant in the one form the store keeps, `toISOString()`'s
- * (`YYYY-MM-DDTHH:MM:SS.sssZ`): the text an instant read from it prints back. A text that names no
- * instant (`toISOString` would throw on it) is not one either.
- */
-function isStoredInstant(text: string): boolean {
-  const instant = new Date(text);
-  return !Number.isNaN(instant.getTime()) && instant.toISOString() === text;
 }
 
 /** An import of something that is not a run record in the current format (`save`). */

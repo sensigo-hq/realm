@@ -26,6 +26,9 @@ import { parseStamp } from './instants.js';
 /** The most a remembered value may hold, as JSON in UTF-8 bytes; recall's cap reuses it (unit 3). */
 export const REMEMBER_VALUE_MAX_BYTES = 32_768;
 
+/** The most one key part may hold, as UTF-8 bytes (gap 3, unit 2a); `memoryRowsOf` checks it again. */
+export const REMEMBER_KEY_PART_MAX_BYTES = 1_024;
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** The reply's warning (Words 9), per reason. */
@@ -37,6 +40,7 @@ const NOT_REMEMBERED_WORDS: Readonly<Record<NotRememberedReason, (name: string) 
   key_empty: (name) => `its key '${name}' was empty`,
   key_not_text: (name) => `its key '${name}' was not text or a number`,
   key_masked: (name) => `its key '${name}' was a masked value`,
+  key_too_large: (name) => `its key '${name}' was over 1 KB`,
   value_too_large: () => 'what it would remember was over 32 KB',
 };
 
@@ -50,13 +54,21 @@ export function notRememberedWarning(stepName: string, stamp: NotRemembered): st
 function keyPartOf(value: unknown): { text: string } | { reason: NotRememberedReason } {
   if (value === undefined) return { reason: 'key_absent' };
   if (value === null) return { reason: 'key_null' };
+  let text: string;
   if (typeof value === 'number') {
-    return Number.isFinite(value) ? { text: String(value) } : { reason: 'key_not_text' };
+    if (!Number.isFinite(value)) return { reason: 'key_not_text' };
+    text = String(value);
+  } else {
+    if (typeof value !== 'string') return { reason: 'key_not_text' };
+    if (value.trim() === '') return { reason: 'key_empty' };
+    if (markersIn(value).length > 0) return { reason: 'key_masked' };
+    text = value;
   }
-  if (typeof value !== 'string') return { reason: 'key_not_text' };
-  if (value.trim() === '') return { reason: 'key_empty' };
-  if (markersIn(value).length > 0) return { reason: 'key_masked' };
-  return { text: value };
+  // A number's digits count as its text (they never come near the cap).
+  if (Buffer.byteLength(text, 'utf8') > REMEMBER_KEY_PART_MAX_BYTES) {
+    return { reason: 'key_too_large' };
+  }
+  return { text };
 }
 
 /** Whether a resolved leaf is something JSON can hold: an absent value or a function is left out. */

@@ -59,6 +59,8 @@ Where the docs teach it: [Core library: the run store interface](../core-library
 | [`ListedSnapshot`](#listedsnapshot) | interface | One run and the reading it is judged at, as a listing of runs gives it: a `Snapshot` whose record is a `ListedRecord`, with the model calls' texts left out. |
 | [`Listing`](#listing) | interface | What `JsonFileStore.listWithDiagnostics` returns beside its diagnostics: every record with the reading it is judged at, and the listing's own reading. |
 | [`MarkFinalizerDelta`](#markfinalizerdelta) | interface | Record a finalizer handler's outcome against the lease that authorized running it. |
+| [`MemoryRow`](#memoryrow) | interface | One memory row: what one evidence entry remembered for later runs, as a store keeps it. |
+| [`MemoryStore`](#memorystore) | interface | A store's memory: the rows it derived from its runs' `remembered` stamps. |
 | [`OpenGateDelta`](#opengatedelta) | interface | Opens a human gate on a claimed step. |
 | [`OrphanArtifact`](#orphanartifact) | interface | One candidate orphan artifact — an absolute path this store owns, plus enough metadata for the caller to apply its own age floor. |
 | [`OrphanSweepableStore`](#orphansweepablestore) | interface | A store whose files for a run can outlive the run's own file, and that lists those left behind; it deletes nothing (`listOrphans`). |
@@ -1103,6 +1105,47 @@ interface MarkFinalizerDelta {
 }
 ```
 
+### MemoryRow
+
+interface · beta: may change in a minor release until it settles
+
+One memory row: what one evidence entry remembered for later runs, as a store keeps it.
+
+`@remarks` A store must write a run's rows in the same transaction as the run's evidence, and never change
+one. The row holds the value and the supplier itself, read from the run's evidence when the row
+is derived (a gate answer's supplier from the entry its question opened on), so it needs no
+other part of the run. Times are ISO 8601 in `toISOString()`'s form.
+
+```ts
+interface MemoryRow {
+    readonly run_id: string;
+    readonly seq: number;
+    readonly workflow_id: string;
+    readonly workflow_version: number;
+    readonly step: string;
+    readonly memory: string;
+    readonly key: Readonly<Record<string, string>>;
+    readonly key_hash: string;
+    readonly at: string;
+    readonly expires_at: string;
+    readonly choice?: string;
+    readonly supplied_by?: string;
+    readonly value: Readonly<Record<string, unknown>>;
+}
+```
+
+### MemoryStore
+
+interface · beta: may change in a minor release until it settles
+
+A store's memory: the rows it derived from its runs' `remembered` stamps.
+
+```ts
+interface MemoryStore {
+    rowsOfRun(runId: string): Promise<MemoryRow[]>;
+}
+```
+
 ### OpenGateDelta
 
 interface · public
@@ -1449,7 +1492,7 @@ interface RunRow {
 
 ### RunStore
 
-interface · public (beta: callbacks, claimStep.hold, leases, outbound): those members may change in a minor release until they settle
+interface · public (beta: callbacks, claimStep.hold, leases, memory, outbound): those members may change in a minor release until they settle
 
 Where a program keeps its runs: it creates, reads, updates, lists, claims and settles them,
 reading the time from its own clock.
@@ -1462,6 +1505,7 @@ interface RunStore {
     readonly leases?: LeasePort | null;
     readonly outbound?: OutboundLedger | null;
     readonly callbacks?: CallbackStore | null;
+    readonly memory?: MemoryStore | null;
     readonly persistedRunRecordFields?: ReadonlySet<LoadBearingRunRecordField>;
     create(options: CreateRunOptions): Promise<CreateResult>;
     get(runId: string): Promise<Snapshot>;
