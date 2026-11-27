@@ -965,9 +965,17 @@ The ladder, first hit wins:
   count as one part, and every part is at least `minPartChars` canonical characters. Text is
   skipped only between parts, never inside a piece (the owner's yes, 2026-10-18).
 - `stitched_out_of_order`: the same, with the parts in another order.
-- `not_found`: otherwise; `nearest` is the longest piece of the quote found in the source, when it
-  covers at least one whole word. A quote placed in order only by joining text across a blank line
-  inside a sentence carries `cause` and `join_at` instead (#845, Q-C).
+- `not_found`: otherwise; `nearest` is the longest piece of the quote found in the source. It
+  leaves out a word or a number that piece cuts at either end (a word cut inside a letter, between
+  it and its accent, is left out whole), with the spaces beside it, so it starts and ends only where
+  a quote could start and end and read `exact`: a word hyphen and the apostrophe of a contraction
+  ending in `'t` join (`twenty-four`, `can't`), while a dash, a slash, any other apostrophe, a comma
+  or an emoji between two words is an edge (`the building—but` keeps `the building`, `Landlord's` is
+  two words), though it never starts right after an apostrophe inside a word (`it's due` gives
+  `due`); a word broken by a hyphen at a line's end is one word; and a number keeps its sign
+  (`€48,000`, `-5`, `4%`). When nothing whole is left, there is no `nearest`. A quote placed in
+  order only by joining text across a blank line inside a sentence carries `cause` and `join_at`
+  instead (#845, Q-C).
 (`unquoted` is the handler's, for a candidate with no quote and no value; this never returns it.)
 
 A quote that ends a sentence where the source's sentence goes on is marked `cut_short` (L2). Every

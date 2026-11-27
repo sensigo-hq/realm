@@ -295,7 +295,7 @@ describe('check_quotes — the warning, only when a quote is not found', () => {
     }).toEqual({ none: true, oneLetter: undefined });
   });
 
-  it('the review’s correction (#866, C1): the warning carries the record’s `nearest`, read past marks — none for a piece inside `за\u0301мок`, `26–32` for `किराया`; the cut after the 80th character drops a vowel sign', async () => {
+  it('the review’s correction (#866, C1): the warning carries the record’s `nearest`, read past marks — none for a piece inside `за\u0301мок`, `26–32` for `किराया`; the cut moves back before a letter it would split (#845 1b-ii-c, A6)', async () => {
     const doc = 'Это за\u0301мок на горе. मासिक किराया देय है।';
     const { data, warn } = await run(
       ctx(
@@ -325,9 +325,9 @@ describe('check_quotes — the warning, only when a quote is not found', () => {
     const hex = (c: string): string =>
       `U+${c.codePointAt(0)!.toString(16).toUpperCase().padStart(4, '0')}`;
     // (a) red when the word test stops at a mark's edge (`ru` keeps `7–10`, and the warning prints
-    //     it), the record and the warning disagree, or the cut keeps the vowel sign; (b) prints each
-    //     record's `nearest`, the warning's own words for `ru` and `hi`, and the cut's last two code
-    //     points.
+    //     it), the record and the warning disagree, or the cut splits `कि` after its 80th character
+    //     (keeping `क`, the cut before #845 1b-ii-c); (b) prints each record's `nearest`, the
+    //     warning's own words for `ru` and `hi`, and the cut's last two code points.
     expect({
       ru: [nearestOf(0), entry('ru')],
       hi: [nearestOf(1), entry('hi')],
@@ -335,7 +335,7 @@ describe('check_quotes — the warning, only when a quote is not found', () => {
     }).toEqual({
       ru: ['none', '"замок" (no nearby match)'],
       hi: ['26–32', '"किराया ज़्यादा है" (nearest match at 26–32)'],
-      cutTail: ['U+0915', 'U+2026'],
+      cutTail: ['U+0078', 'U+2026'],
     });
   });
 
@@ -813,6 +813,191 @@ describe('#845 1b-i check 3: the warning for a quote refused for joining text ac
         `(this quote joins text across a blank line; quote each part separately); missing — ` +
         `"${missing}" (nearest match at 72–88).`,
       causes: ['blank_line_join', null],
+    });
+  });
+});
+
+describe('#845 1b-ii-c check 2: the warning’s cut never splits a letter or symbol (A6)', () => {
+  it('the cut moves back before a letter or symbol written with several characters that goes on past the 80th; one that ends at the 80th, or alone runs past it from the start, is cut as before', async () => {
+    const x = (n: number): string => 'x'.repeat(n);
+    const quotes: Record<string, string> = {
+      accent: `${x(79)}éyy`,
+      virama: `${x(79)}क्षyy`,
+      family: `${x(79)}\u{1f468}‍\u{1f469}yy`,
+      endsAt80: `${x(78)}é${x(5)}`,
+      opening: `e${'́'.repeat(100)}yy`,
+    };
+    const { warn } = await run(
+      ctx(
+        [],
+        {},
+        {
+          doc: { text: SOURCE },
+          extract: {
+            candidates: [
+              ...Object.entries(quotes).map(([field, quote]) => ({ field, value: 'v', quote })),
+              { field: `${x(79)}éyy`, value: 'v', quote: 'nothing like it' },
+            ],
+          },
+        },
+      ),
+    );
+    const hex = (c: string): string =>
+      `U+${c.codePointAt(0)!.toString(16).toUpperCase().padStart(4, '0')}`;
+    /** What the warning shows: its length in code points and its last three, as `U+` codes. */
+    const seen = (text: string): [number, string[]] => [
+      [...text].length,
+      [...text].slice(-3).map(hex),
+    ];
+    const quoteOf = (field: string): [number, string[]] =>
+      seen((warn ?? '').match(new RegExp(`${field} — "([^"]*)"`))?.[1] ?? '');
+    const label = (warn ?? '').match(/; (x+[^ ]*) — "nothing like it"/)?.[1] ?? '';
+    // (1) red when the cut stays at the 80th code point inside a letter or symbol (`accent`,
+    //     `virama`, `family`, the field label keep its first code point), when a letter that ends at
+    //     the 80th is moved too (`endsAt80`), or when one letter alone running from the start is not
+    //     cut (`opening`); (2) prints each shown text's length and its last three code points.
+    expect({
+      accent: quoteOf('accent'),
+      virama: quoteOf('virama'),
+      family: quoteOf('family'),
+      endsAt80: quoteOf('endsAt80'),
+      opening: quoteOf('opening'),
+      fieldLabel: seen(label),
+    }).toEqual({
+      accent: [80, ['U+0078', 'U+0078', 'U+2026']],
+      virama: [80, ['U+0078', 'U+0078', 'U+2026']],
+      family: [80, ['U+0078', 'U+0078', 'U+2026']],
+      endsAt80: [81, ['U+0065', 'U+0301', 'U+2026']],
+      opening: [81, ['U+0301', 'U+0301', 'U+2026']],
+      fieldLabel: [80, ['U+0078', 'U+0078', 'U+2026']],
+    });
+  });
+});
+
+describe('#845 1b-ii-c check 3: a step whose output has no field to point at (A1)', () => {
+  const SOURCE_WAY =
+    "Make 'fetch' put the document's text in a field of its output (register the workflow again if you change it), then start a new run: this run keeps that output, so running this step again in it fails the same way.";
+  const CANDIDATES_WAY =
+    "Make 'extract' put the list of extracted values in a field of its output (register the workflow again if you change it), then start a new run: this run keeps that output, so running this step again in it fails the same way.";
+  const CONSEQUENCE = 'so the quote check did not run and this step failed.';
+  const at = (resources: Record<string, unknown>): StepContext => ({
+    ...ctx([]),
+    config: { source_step: 'fetch', candidates_step: 'extract' },
+    resources,
+  });
+  const LIST = [FOUND];
+  const ROWS: Array<[string, StepContext, string]> = [
+    [
+      'source {} (an agent step that submitted no params)',
+      at({ fetch: {}, extract: { candidates: LIST } }),
+      `check_quotes: the source step 'fetch' gave no output (got an empty object), ${CONSEQUENCE} ${SOURCE_WAY}`,
+    ],
+    [
+      'source []',
+      at({ fetch: [], extract: { candidates: LIST } }),
+      `check_quotes: the source step 'fetch' gave no output (got an empty list), ${CONSEQUENCE} ${SOURCE_WAY}`,
+    ],
+    [
+      "source a non-empty list (an adapter step's list reply)",
+      at({ fetch: [{ text: SOURCE }], extract: { candidates: LIST } }),
+      `check_quotes: the source step 'fetch' gave a list, not an object with fields, ${CONSEQUENCE} ${SOURCE_WAY}`,
+    ],
+    [
+      'source a string',
+      at({ fetch: SOURCE, extract: { candidates: LIST } }),
+      `check_quotes: the source step 'fetch' gave a string, not an object with fields, ${CONSEQUENCE} ${SOURCE_WAY}`,
+    ],
+    [
+      'candidates {}',
+      at({ fetch: { text: SOURCE }, extract: {} }),
+      `check_quotes: the candidates step 'extract' gave no output (got an empty object), ${CONSEQUENCE} ${CANDIDATES_WAY}`,
+    ],
+    [
+      'candidates []',
+      at({ fetch: { text: SOURCE }, extract: [] }),
+      `check_quotes: the candidates step 'extract' gave no output (got an empty list), ${CONSEQUENCE} ${CANDIDATES_WAY}`,
+    ],
+    [
+      'candidates a non-empty list',
+      at({ fetch: { text: SOURCE }, extract: LIST }),
+      `check_quotes: the candidates step 'extract' gave a list, not an object with fields, ${CONSEQUENCE} ${CANDIDATES_WAY}`,
+    ],
+    [
+      'candidates a string',
+      at({ fetch: { text: SOURCE }, extract: 'rent' }),
+      `check_quotes: the candidates step 'extract' gave a string, not an object with fields, ${CONSEQUENCE} ${CANDIDATES_WAY}`,
+    ],
+    [
+      'control: source { text: null } keeps the field’s words',
+      at({ fetch: { text: null }, extract: { candidates: LIST } }),
+      "check_quotes: 'fetch.text' is not the document's text (got null), so the quote check did not run and this step failed. Point source_field at the field of 'fetch' that holds the text, then register the workflow again and start a new run; if this run ended failed, realm run resume <run-id> --from <step> runs the step again instead.",
+    ],
+  ];
+  for (const [name, context, words] of ROWS) {
+    it(name, async () => {
+      const err = await refusal(context);
+      // (1) red when the step-level branch is removed (the field's words return: "is not the
+      //     document's text (got nothing)", "Point source_field …"), the empty and the non-empty
+      //     kinds are told apart wrongly, or the old re-admission ("realm run resume") is put back;
+      //     (2) prints the code and the refusal's words.
+      expect({ code: err?.code, words: err?.message }).toEqual({
+        code: 'ENGINE_HANDLER_FAILED',
+        words,
+      });
+    });
+  }
+
+  it('the way back: resuming from the check in the same run reads the same output and fails the same way (H6’s shape, the source step submitting `{}`)', async () => {
+    const definition = {
+      id: 'quote-empty',
+      name: 'Q',
+      version: 1,
+      steps: {
+        extract: { description: 'E', execution: 'agent', depends_on: [] },
+        quote_check: {
+          description: 'C',
+          execution: 'auto',
+          handler: 'check_quotes',
+          depends_on: ['extract'],
+          config: { source_step: 'extract', candidates_step: 'extract' },
+        },
+      },
+    } as unknown as WorkflowDefinition;
+    const store = new InMemoryStore();
+    const { record: created } = await store.create({
+      workflowId: definition.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    const runId = created.id;
+    await executeChain(store, definition, {
+      runId,
+      command: 'extract',
+      registry: createDefaultRegistry(),
+      input: {},
+      dispatcher: async (_name, input) => ({ ...input }),
+    });
+    const { record: failed } = await store.get(runId);
+    await store.update(applyResume(failed, 'quote_check', definition).run);
+    await advanceRun(store, definition, { runId, registry: createDefaultRegistry() });
+    const { record: after } = await store.get(runId);
+    const words =
+      "check_quotes: the source step 'extract' gave no output (got an empty object), so the quote check did not run and this step failed. Make 'extract' put the document's text in a field of its output (register the workflow again if you change it), then start a new run: this run keeps that output, so running this step again in it fails the same way.";
+    // (1) red when the refusal offers `realm run resume` as the way back (the old re-admission), or
+    //     the resumed check gets past the empty output; (2) prints both phases, the check's runs and
+    //     whether each end carries the words.
+    expect({
+      firstPhase: failed.run_phase,
+      first: failed.terminal_reason?.endsWith(words),
+      phase: after.run_phase,
+      checkRuns: after.evidence.filter((e) => e.step_id === 'quote_check').length,
+      again: after.terminal_reason?.endsWith(words),
+    }).toEqual({
+      firstPhase: 'failed',
+      first: true,
+      phase: 'failed',
+      checkRuns: 2,
+      again: true,
     });
   });
 });

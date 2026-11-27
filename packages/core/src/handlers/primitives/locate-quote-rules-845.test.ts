@@ -944,20 +944,20 @@ describe('#845 check 4: every neighbour is read by code point', () => {
     expect(misses(rows)).toEqual([]);
   });
 
-  it('nearest rounds the longest found piece down to a code-point boundary: `x`+U+20000+U+20001 gives 16–28 (E5)', () => {
+  it('nearest rounds the longest found piece down to a code-point boundary, and leaves out the word it cuts: `x`+U+20000+U+20001 gives 16–24 (E5; #845 1b-ii-c, A4)', () => {
     releaseQuoteCache();
     const r = locateQuote(
       'the rent x\u{20000}\u{20001} now due',
       'The Tenant pays the rent x\u{20000}\u{20002} here',
     );
-    // (1) red when the round-down is removed (the piece ends inside U+20000); (2) prints the state and
-    //     where `nearest` lies.
+    // (1) red when the cut word is kept (16–28, `the rent x`+U+20000), or the round-down is removed
+    //     (the piece ends inside U+20000: 16–30); (2) prints the state and where `nearest` lies.
     expect({
       state: r.state,
       nearest: r.nearest === undefined ? null : [r.nearest.start, r.nearest.end],
     }).toEqual({
       state: 'not_found',
-      nearest: [16, 28],
+      nearest: [16, 24],
     });
   });
 });
@@ -3037,5 +3037,331 @@ describe('#845 1b-ii-b correction 1, check 1: `cut_short_at` names one offset fo
       stitched: 'stitched@151',
       outOfOrder: 'stitched_out_of_order@151',
     });
+  });
+});
+
+describe('#845 1b-ii-c check 1: `nearest` leaves out only a word the piece cuts', () => {
+  /** The state, and `nearest` as `start–end` with the document's text there, or `none`. */
+  const near = (quote: string, source: string): string => {
+    releaseQuoteCache();
+    const { state: s, nearest: n } = locateQuote(quote, source);
+    return `${s} ${n === undefined ? 'none' : `${n.start}–${n.end} ${source.slice(n.start, n.end)}`}`;
+  };
+
+  it('a number keeps its sign or symbol at the piece’s edge (`€48,000`, `4%`); a piece that starts inside `twenty-four` leaves the whole word out', () => {
+    // (1) red when the piece is trimmed to its first and last whole word (rev 1's rule: `€` and `%`
+    //     dropped, 13–26 and 12–25), or the cut word is kept (`four thousand euro`, 20–38); (2) prints
+    //     each row's state, offsets and the document's text there.
+    expect({
+      euro: near('zzz €48,000 a year', 'The rent is €48,000 a year.'),
+      percent: near('the rate of 4% qqq', 'Interest at the rate of 4% per annum.'),
+      twentyFour: near('qqq four thousand euro', 'a deposit of twenty-four thousand euro'),
+    }).toEqual({
+      euro: 'not_found 12–26 €48,000 a year',
+      percent: 'not_found 12–26 the rate of 4%',
+      twentyFour: 'not_found 25–38 thousand euro',
+    });
+  });
+});
+
+// ─── #845 1b-ii-c correction 1: `nearest` reads a word's edges as `exact` does ──────────────────
+// Each cell names (1) the break that turns it red and (2) what it prints when it fails. The rows
+// are the prompt's; every expected value was run on the build first (plans/issue-845/unit1b/
+// ia1-1biic/c1/checks-build-run1.txt).
+describe('#845 1b-ii-c correction 1: `nearest` starts and ends only where `exact` accepts an edge', () => {
+  /** The state, and `nearest` as `start–end` with the document's text there, or `none`. */
+  const near = (quote: string, source: string): string => {
+    releaseQuoteCache();
+    const { state: s, nearest: n } = locateQuote(quote, source);
+    return `${s} ${n === undefined ? 'none' : `${n.start}–${n.end} ${source.slice(n.start, n.end)}`}`;
+  };
+  const LEASE_US =
+    'COMMERCIAL LEASE (fictional)\n1. Rent. The Tenant shall pay the rent—forty-eight thousand euro a year—in four equal installments.\n2. Use. The Premises—including the loading bay—shall be used as a warehouse only.\n3. Insurance. The Landlord shall insure the building—but not the contents—against fire and flood.\n4. Repairs. The Tenant shall keep the interior—walls, floors and ceilings—in good repair.\n5. Notices. Any notice shall be given in writing—by post or by hand—to the other party.\n';
+  const PDF =
+    'The Tenant shall pay for the main-\ntenance of the roof and the gutters, and shall keep the build-\ning insured against fire.';
+  const HI = 'किरायेदार हर महीने की पाँच तारीख़ तक किराया देगा। मकान मालिक छत की मरम्मत करेगा।';
+  const RU = 'Арендная плата вносится до пятого числа́. Это ста́рый за́мок у реки́.';
+  const W3HI =
+    'Догово́р аре́нды. Аре́ндная пла́та вно́сится ежеме́сячно до пя́того числа́. Это ста́рый за́мок у реки́.\nकिरायेदार हर महीने की पाँच तारीख़ तक किराया देगा। मकान मालिक छत की मरम्मत करेगा।\n';
+
+  /** Every row of checks 1–5, as [name, quote, document]: check 6 runs the invariant over them. */
+  const ROWS: ReadonlyArray<readonly [string, string, string]> = [
+    ['emDash', 'The rent zzqx', 'The rent—payable'],
+    ['lease', 'The Landlord shall insure the building against fire and flood.', LEASE_US],
+    ['emoji', 'Ben: bring the cake zzqx', 'Ben: bring the cake🎂🎉please, Ana.'],
+    ['enDash', 'The rent zzqx', 'The rent–payable quarterly–is due on the usual days.'],
+    ['comma', 'The rent zzqx', 'The rent,service charge and rates are due.'],
+    ['ellipsis', 'The rent zzqx', 'The rent…payable quarterly is due.'],
+    ['bullet', 'Terms zzqx', 'Terms•Rent•Repairs are set out below.'],
+    ['trademark', 'The Acme zzqx', 'The Acme™Widget is supplied.'],
+    ['twenty', 'a deposit of twenty euro', 'a deposit of twenty-four thousand euro'],
+    ['andOr', 'the Landlord and the Tenant agree', 'the Landlord and/or the Tenant may agree'],
+    ['possessive', 'the Landlord shall pay', "the Landlord's agent shall pay"],
+    ['cant', 'the Tenant can not assign', "the Tenant can't assign"],
+    ['its', 'Ben: it is due today', "Ben: it's due today"],
+    ['youll', 'you will see it', "you'll see it"],
+    ['im', 'I am here now', "I'm here now"],
+    ['tenants', "the tenant's agent may inspect", "the Landlord's agent may inspect"],
+    ['lineEnd', 'shall keep the building insured against fire.', PDF],
+    ['hindi', 'किरायेदार हर महीने की पाँच तारीख तक', W3HI],
+    ['gender', 'तक किराया देगी', HI],
+    ['russian', 'Арендная плата вносится до пятого числа', RU],
+    ['ligature', 'the fx zz', 'the ﬁ is due'],
+    ['covid', 'qqq VID-19 cases', 'the COVID-19 cases rose'],
+    ['euro', 'zzz €48,000 a year', 'The rent is €48,000 a year.'],
+    ['minus', 'qqq -5 °C at night', 'shall be kept at -5 °C at all times.'],
+    ['percent', 'the rate of 4% qqq', 'Interest at the rate of 4% per annum.'],
+    ['wrongAmount', 'The annual rent is €84,000 a year', 'The annual rent is €48,000 a year.'],
+    [
+      'aside',
+      'The rent is payable quarterly',
+      'The rent—payable quarterly—is due on the usual days.',
+    ],
+    ['covidNone', 'qqq VID-19 zz', 'the COVID-19 cases rose'],
+    ['unpaid', 'zz unpaid', 'The rent is un-\npaid.'],
+  ];
+  const row = (name: string): string => {
+    const r = ROWS.find(([n]) => n === name)!;
+    return near(r[1], r[2]);
+  };
+
+  it('1. the walk’s cases: a word beside a dash, an emoji, a comma, an ellipsis, a bullet or U+2122 is kept whole', () => {
+    // (1) red with 920301e2's canonical-text reading (`The`, `… the`, `Ben: bring the`, no
+    //     `Terms`); (2) prints each row's state, offsets and the document's text there.
+    const names = [
+      'emDash',
+      'lease',
+      'emoji',
+      'enDash',
+      'comma',
+      'ellipsis',
+      'bullet',
+      'trademark',
+    ];
+    expect(Object.fromEntries(names.map((n) => [n, row(n)]))).toEqual({
+      emDash: 'not_found 0–8 The rent',
+      lease: 'not_found 225–263 The Landlord shall insure the building',
+      emoji: 'not_found 0–19 Ben: bring the cake',
+      enDash: 'not_found 0–8 The rent',
+      comma: 'not_found 0–8 The rent',
+      ellipsis: 'not_found 0–8 The rent',
+      bullet: 'not_found 0–5 Terms',
+      trademark: 'not_found 0–8 The Acme',
+    });
+  });
+
+  it("2. the joins: a word hyphen and a `'t` contraction join; a slash and a possessive are edges", () => {
+    // (1) red when a hyphen is read as an edge (`a deposit of twenty`), a reading joins on any
+    //     punctuation (`the Landlord`, `the`), or an apostrophe is always an edge (`the Tenant can`);
+    //     (2) prints each row.
+    expect({
+      twenty: row('twenty'),
+      andOr: row('andOr'),
+      possessive: row('possessive'),
+      cant: row('cant'),
+    }).toEqual({
+      twenty: 'not_found 0–12 a deposit of',
+      andOr: 'not_found 0–16 the Landlord and',
+      possessive: 'not_found 0–12 the Landlord',
+      cant: 'not_found 0–10 the Tenant',
+    });
+  });
+
+  it('2. never a start right after an apostrophe inside a word (`it’s`, `you’ll`, `I’m`, `Landlord’s`)', () => {
+    // (1) red when the start-after-apostrophe rule is removed (`s due today`, `ll see it`,
+    //     `m here now`, `s agent may inspect`); (2) prints each row.
+    expect({
+      its: row('its'),
+      youll: row('youll'),
+      im: row('im'),
+      tenants: row('tenants'),
+    }).toEqual({
+      its: 'not_found 10–19 due today',
+      youll: 'not_found 7–13 see it',
+      im: 'not_found 4–12 here now',
+      tenants: 'not_found 15–32 agent may inspect',
+    });
+  });
+
+  it('3. a word a hyphen breaks across a line is one word; no edge inside a letter (a mark, `ﬁ`)', () => {
+    // (1) red when the line-end hyphen test is left out (`ing insured against fire`), or the edge is
+    //     judged only at the mapped document offset (the Hindi and Russian rows then keep the word
+    //     whose mark the piece cuts, the `ﬁ` row `the ﬁ`); (2) prints each row.
+    expect({
+      lineEnd: row('lineEnd'),
+      hindi: row('hindi'),
+      gender: row('gender'),
+      russian: row('russian'),
+      ligature: row('ligature'),
+    }).toEqual({
+      lineEnd: 'not_found 102–122 insured against fire',
+      hindi: 'not_found 104–130 किरायेदार हर महीने की पाँच',
+      gender: 'not_found 34–43 तक किराया',
+      russian: 'not_found 0–33 Арендная плата вносится до пятого',
+      ligature: 'not_found 0–3 the',
+    });
+  });
+
+  it('4. numbers: a hyphen before digits belongs to the number; the signs and the edge after a sign are kept', () => {
+    // (1) red when the number edges are not used (`-19 cases`); the controls are unchanged;
+    //     (2) prints each row.
+    expect({
+      covid: row('covid'),
+      euro: row('euro'),
+      minus: row('minus'),
+      percent: row('percent'),
+      wrongAmount: row('wrongAmount'),
+    }).toEqual({
+      covid: 'not_found 13–18 cases',
+      euro: 'not_found 12–26 €48,000 a year',
+      minus: 'not_found 17–25 -5 °C at',
+      percent: 'not_found 12–26 the rate of 4%',
+      wrongAmount: 'not_found 0–20 The annual rent is €',
+    });
+  });
+
+  it('5. presence follows the same reading: gained between two em dashes and on a bullet, lost when nothing whole is left', () => {
+    // (1) red when 920301e2's presence test is kept (no pointer on the aside and the bullet rows),
+    //     or presence is read by canonical words (`-19`, `paid`); never an empty or startless span;
+    //     (2) prints each row.
+    expect({
+      aside: row('aside'),
+      bullet: row('bullet'),
+      covidNone: row('covidNone'),
+      unpaid: row('unpaid'),
+    }).toEqual({
+      aside: 'not_found 9–26 payable quarterly',
+      bullet: 'not_found 0–5 Terms',
+      covidNone: 'not_found none',
+      unpaid: 'not_found none',
+    });
+  });
+
+  /** The walk's W3 corpus (walk/probes/w3.mjs and w3b.mjs, copied): four documents and a second
+   *  chat transcript, 57 quotes, 51 of them not found. */
+  const W3_DOCS: Record<string, string> = {
+    lease:
+      'LEASE OF UNIT 7, HARTWELL FICTIONAL ESTATE\n\n3. RENT\n3.1 The rent is €48,000 a year, payable quarterly in advance.\n3.2 Late rent bears interest at 4% per annum above the base rate.\n3.3 The deposit is €12,500 and is held by the Landlord.\n4. STORAGE\n4.1 The cold store shall be kept at -5 °C at all times.\n4.2 The service charge is capped at 15% of the rent.\n',
+    report:
+      "Annual Facilities Report (fictional)\n\nThe plant ran twenty-four hours a day and the Landlord's agent and/or the Tenant inspected it weekly. Shipments to the U.K. rose by a third. The co-operative board met on 12/03 and approved the self-funded upgrade. The Landlord's surveyor signed off the roof.\n",
+    cyr_hi:
+      'Догово́р аре́нды. Аре́ндная пла́та вно́сится ежеме́сячно до пя́того числа́. Это ста́рый за́мок у реки́.\nकिरायेदार हर महीने की पाँच तारीख़ तक किराया देगा। मकान मालिक छत की मरम्मत करेगा।\n',
+    chat: '[09:14] Ana: the parcel arrived 👍🏽 thanks!\n[09:15] Ben: great, family dinner on Sunday 👨‍👩‍👧‍👦 at 7pm?\n[09:16] Ana: yes 🇷🇴 flag is up, see you then 😀\n[09:17] Ben: bring the cake 🎂🎉 please\n',
+  };
+  const W3_QUOTES: Record<string, string[]> = {
+    lease: [
+      'The rent is €49,000 a year, payable quarterly in advance.',
+      'Rent is €48,000 per year, payable quarterly',
+      'Late rent bears interest at 5% per annum above the base rate.',
+      'interest at 4% a year above the base rate',
+      'The deposit is €12,000 and is held by the Landlord.',
+      'The deposit of €12,500 is held by the Landlord.',
+      'The cold store shall be kept at -6 °C at all times.',
+      'kept at -5 °F at all times',
+      'The service charge is capped at 10% of the rent.',
+      'The yearly rent is €48,000 a year',
+      'zzz €48,000 a year',
+      'ent is €48,000 a month',
+      'charge is capped at 15% of the price',
+    ],
+    report: [
+      'The plant ran twenty-five hours a day',
+      'ran twenty-four hours each day',
+      'the Landlords agent or the Tenant inspected it weekly',
+      'agent and/or the Landlord inspected it weekly',
+      'Shipments to the U.S. rose by a third.',
+      'Shipments to the UK rose by a half.',
+      'The co-op board met on 12/03',
+      'The cooperative board met on 12/04 and approved the upgrade',
+      "The Landlord's architect signed off the roof.",
+      'approved the self-financed upgrade',
+      'the Landlord inspected it daily',
+      'and or the Tenant inspected it',
+    ],
+    cyr_hi: [
+      'Аре́ндная пла́та вно́сится ежене́дельно',
+      'Арендная плата вносится ежемесячно до шестого числа',
+      'Это ста́рый дом у реки́.',
+      'Договор аре́нды подписан',
+      'вно́сится ежеме́сячно до деся́того числа́',
+      'किरायेदार हर हफ़्ते किराया देगा।',
+      'मकान मालिक दीवार की मरम्मत करेगा।',
+      'हर महीने की दस तारीख़ तक किराया देगा',
+      'किरायेदार हर महीने की पाँच तारीख तक',
+      'मकान मालिक छत की सफ़ाई करेगा',
+    ],
+    chat: [
+      'the parcel arrived 👍 thanks!',
+      'the parcel arrived 👍🏻 thanks!',
+      'family dinner on Saturday 👨‍👩‍👧‍👦 at 7pm?',
+      'family dinner on Sunday 👨‍👩‍👧 at 7pm?',
+      'yes 🇷🇴 flag is down',
+      'yes 🇫🇷 flag is up, see you then',
+      'bring the cake 🎂 please',
+      'bring the pie 🎂🎉 please',
+      'Ben: great, family lunch on Sunday',
+      'see you then 😃',
+      'Ana: the parcel came 👍🏽 thanks!',
+    ],
+  };
+  const W3_CHAT2 =
+    '[09:14] Ana: the parcel arrived 👍🏽 thanks!\n[09:15] Ben: great, family dinner on Sunday 👨‍👩‍👧‍👦 at 7pm?\n[09:16] Ana: yes 🇷🇴 flag is up, see you then 😀\n[09:17] Ben: bring the cake🎂🎉please\n[09:18] Ana: ok👍see you\n';
+  const W3_CHAT2_QUOTES = [
+    '[09:15] Ben: great, family dinner on Monday',
+    'Ana: yes 🇷🇴 flag is up, see you soon',
+    'bring the cake🎂🎉 now',
+    'the parcel arrived 👍🏽 thank you!',
+    'great, family dinner on Sunday 👨‍👩‍👧‍👦 at 8pm?',
+    'Ben: bring the cakes',
+    'cake🎂🎉pleased',
+    'Ana: okay👍see you',
+    'ok👍see ya',
+    'family dinner on Sun 👨‍👩‍👧‍👦',
+    'Ana: the parcels arrived 👍🏽',
+  ];
+
+  it('6. the invariant: every `nearest`, its own text quoted alone, reads `exact` — over every row here, the PR’s pins and the walk’s W3 corpus', () => {
+    // (1) red when the line-end hyphen test is removed, the number edges are removed, or 920301e2's
+    //     presence test is kept (the inside-a-letter rule is check 3's); (2) prints each pointer
+    //     whose text quoted alone reads otherwise, and the counts.
+    const pins: Array<readonly [string, string, string]> = [
+      ...ROWS,
+      ['present.staryZamok', 'старый замок', 'Это старый за́мок.'],
+      ['present.ndlord', 'qqq ndlord shall repair', 'The Landlord shall repair the roof.'],
+      [
+        'E5',
+        'the rent x\u{20000}\u{20001} now due',
+        'The Tenant pays the rent x\u{20000}\u{20002} here',
+      ],
+      ['check1.twentyFour', 'qqq four thousand euro', 'a deposit of twenty-four thousand euro'],
+      ['claims.uk', 'made in the U zzz', 'made in the U.K. today'],
+      ['claims.minus', 'qqq -5 degrees at night', 'The reading is -5 degrees today.'],
+      // the control: a pointer that crosses a blank line still reads `exact` quoted alone
+      [
+        'blankLine',
+        'The Tenant shall keep the Premises in good and substantial repair zzqx',
+        'The Tenant shall keep the Premises\n\nin good and substantial repair and condition.',
+      ],
+    ];
+    for (const [k, quotes] of Object.entries(W3_QUOTES)) {
+      for (const q of quotes) pins.push([`w3.${k}`, q, W3_DOCS[k]!]);
+    }
+    for (const q of W3_CHAT2_QUOTES) pins.push(['w3b.chat', q, W3_CHAT2]);
+    let notFound = 0;
+    let pointers = 0;
+    const notExact: string[] = [];
+    for (const [name, quote, source] of pins) {
+      releaseQuoteCache();
+      const r = locateQuote(quote, source);
+      if (r.state !== 'not_found') continue;
+      notFound++;
+      if (r.nearest === undefined) continue;
+      pointers++;
+      const text = source.slice(r.nearest.start, r.nearest.end);
+      releaseQuoteCache();
+      const alone = locateQuote(text, source).state;
+      if (alone !== 'exact') notExact.push(`${name}: "${text}" reads ${alone}`);
+    }
+    expect({ notExact, notFound, pointers }).toEqual({ notExact: [], notFound: 87, pointers: 84 });
   });
 });

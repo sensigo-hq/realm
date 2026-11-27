@@ -56,10 +56,17 @@ const READMISSION =
   'then register the workflow again and start a new run; if this run ended failed, ' +
   'realm run resume <run-id> --from <step> runs the step again instead.';
 
-/** One fault: what is wrong, and its own remedy. */
+/** #845 1b-ii-c (A1): how a step whose output has no field to point at is got past — this run keeps
+ *  that output, so running the check again in it reads the same one. */
+const NEW_RUN_READMISSION =
+  'then start a new run: this run keeps that output, so running this step again in it fails the ' +
+  'same way.';
+
+/** One fault: what is wrong, its own remedy, and — when resume cannot help — its own way back. */
 interface Fault {
   readonly validity: string;
   readonly remedy: string;
+  readonly readmission?: string;
 }
 
 /** The four-clause refusal (validity · consequence · remedy · re-admission); H5: every config fault
@@ -68,7 +75,7 @@ function refuse(faults: readonly Fault[]): WorkflowError {
   const only = faults[0]!;
   const message =
     faults.length === 1
-      ? `check_quotes: ${only.validity}, ${CONSEQUENCE}. ${only.remedy}, ${READMISSION}`
+      ? `check_quotes: ${only.validity}, ${CONSEQUENCE}. ${only.remedy}, ${only.readmission ?? READMISSION}`
       : (() => {
           const shown = faults.slice(0, VALIDATION_PROBLEMS_SHOWN);
           const more = renderMore(faults.length, shown.length);
@@ -123,13 +130,31 @@ function stringKey(
   return value;
 }
 
+/** #845 1b-ii-c (A6): one letter or symbol as a reader sees it — a grapheme cluster, as Node reads
+ *  one. */
+const LETTERS = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+
+/** #845 1b-ii-c (A6): how many characters of a text longer than 80 the warning shows — 80, or fewer
+ *  where the 80th is part of a letter or symbol that goes on past it: the cut then moves back to
+ *  before it, unless that one letter or symbol alone runs from the text's start past the 80th. */
+function headLength(oneLine: string): number {
+  let before = 0;
+  for (const { segment } of LETTERS.segment(oneLine)) {
+    const size = Array.from(segment).length;
+    if (before + size > QUOTE_HEAD_CHARS) return before === 0 ? QUOTE_HEAD_CHARS : before;
+    before += size;
+  }
+  return QUOTE_HEAD_CHARS;
+}
+
 /** H2: text the model wrote, as one terminal-safe line: whitespace runs as one space, cut at 80
- *  characters with `…`, then every control character left written out (decision C183). */
+ *  characters with `…` (never inside a letter or symbol written with several, #845 1b-ii-c), then
+ *  every control character left written out (decision C183). */
 function shown(text: string): string {
   const oneLine = text.replace(/\s+/gu, ' ').trim();
   const chars = Array.from(oneLine);
   const head =
-    chars.length > QUOTE_HEAD_CHARS ? `${chars.slice(0, QUOTE_HEAD_CHARS).join('')}…` : oneLine;
+    chars.length > QUOTE_HEAD_CHARS ? `${chars.slice(0, headLength(oneLine)).join('')}…` : oneLine;
   // eslint-disable-next-line no-control-regex -- the control characters are what is escaped
   return head.replace(/[\u0000-\u001f\u007f-\u009f]/g, controlEscape);
 }
@@ -137,6 +162,36 @@ function shown(text: string): string {
 /** Whether a prior step's output is in the run's evidence — checked by key, before its field. */
 function hasStep(resources: Record<string, unknown> | undefined, stepId: string): boolean {
   return resources !== undefined && Object.prototype.hasOwnProperty.call(resources, stepId);
+}
+
+/** #845 1b-ii-c (A1): the fault of a step (`role` `source` or `candidates`) whose output is not
+ *  an object with at least one field, so no field of it can be pointed at — or `undefined`. `{}`,
+ *  `[]`, and `null` or `undefined` from a library caller gave no output; any other list, a string,
+ *  a number or a boolean gave that. */
+function outputFault(
+  role: string,
+  stepId: string,
+  output: unknown,
+  holds: string,
+): Fault | undefined {
+  const isObject = output !== null && typeof output === 'object' && !Array.isArray(output);
+  if (isObject && Object.keys(output).length > 0) return undefined;
+  const empty =
+    output === null || output === undefined
+      ? 'null'
+      : isObject
+        ? 'an empty object'
+        : Array.isArray(output) && output.length === 0
+          ? 'an empty list'
+          : undefined;
+  return {
+    validity:
+      empty !== undefined
+        ? `the ${role} step '${stepId}' gave no output (got ${empty})`
+        : `the ${role} step '${stepId}' gave ${kindOf(output)}, not an object with fields`,
+    remedy: `Make '${stepId}' put ${holds} in a field of its output (register the workflow again if you change it)`,
+    readmission: NEW_RUN_READMISSION,
+  };
 }
 
 /** H1: a value is empty only when the candidate HAS a `value` key holding `null`, or a string that
@@ -200,6 +255,13 @@ export class CheckQuotesHandler implements StepHandler {
         },
       ]);
     }
+    const sourceFault = outputFault(
+      'source',
+      sourceStep,
+      resources![sourceStep],
+      "the document's text",
+    );
+    if (sourceFault !== undefined) throw refuse([sourceFault]);
     const source = resolveResource(resources, sourceStep, sourceField);
     if (typeof source !== 'string') {
       throw refuse([
@@ -217,6 +279,13 @@ export class CheckQuotesHandler implements StepHandler {
         },
       ]);
     }
+    const candidatesFault = outputFault(
+      'candidates',
+      candidatesStep,
+      resources![candidatesStep],
+      'the list of extracted values',
+    );
+    if (candidatesFault !== undefined) throw refuse([candidatesFault]);
     const candidates = resolveResource(resources, candidatesStep, candidatesField);
     if (!Array.isArray(candidates)) {
       throw refuse([
